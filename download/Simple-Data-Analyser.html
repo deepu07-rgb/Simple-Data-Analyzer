@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simple Data Analyser</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--sidebar-w:52px;--toolbar-h:44px;--status-h:28px;--sidebar-bg:#1e293b;--sidebar-hover:#334155;--sidebar-active:#3b82f6;--main-bg:#f8fafc;--card-bg:#fff;--border:#e2e8f0;--text:#1e293b;--text-light:#64748b;--accent:#3b82f6;--accent-hover:#2563eb;--danger:#ef4444;--success:#22c55e;--warning:#f59e0b}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:var(--text);overflow:hidden}
+#app{display:flex;height:100vh;width:100vw}
+/* Sidebar */
+#sidebar{width:var(--sidebar-w);background:var(--sidebar-bg);display:flex;flex-direction:column;align-items:center;padding:6px 0;z-index:100;flex-shrink:0;transition:width .3s}
+#sidebar.expanded{width:220px;align-items:flex-start}
+#sidebar .sb-icon{width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:#94a3b8;cursor:pointer;border-radius:8px;margin:2px 0;transition:all .2s;flex-shrink:0;position:relative}
+#sidebar .sb-icon:hover{background:var(--sidebar-hover);color:#e2e8f0}
+#sidebar .sb-icon.active{background:var(--sidebar-active);color:#fff}
+#sidebar .sb-icon svg{width:20px;height:20px;pointer-events:none}
+#sidebar.expanded .sb-icon{width:100%;padding:0 12px;justify-content:flex-start;gap:10px;border-radius:0;margin:0}
+#sidebar.expanded .sb-label{display:inline}
+.sb-label{display:none;font-size:13px;white-space:nowrap}
+#sidebar .divider{width:32px;height:1px;background:#334155;margin:4px 0;flex-shrink:0}
+#sidebar.expanded .divider{width:calc(100% - 24px);margin:4px 12px}
+/* Main */
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+/* Toolbar */
+#toolbar{height:var(--toolbar-h);background:var(--card-bg);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;gap:6px;flex-shrink:0;overflow-x:auto}
+.tb-btn{height:30px;padding:0 10px;font-size:12px;border:1px solid var(--border);background:var(--card-bg);border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;white-space:nowrap;color:var(--text);transition:all .15s}
+.tb-btn:hover{background:#f1f5f9;border-color:#cbd5e1}
+.tb-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.tb-btn.primary:hover{background:var(--accent-hover)}
+.tb-btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
+.tb-btn svg{width:14px;height:14px;flex-shrink:0}
+.tb-sep{width:1px;height:20px;background:var(--border);flex-shrink:0}
+/* Content */
+#content{flex:1;overflow:hidden;position:relative;background:var(--main-bg)}
+/* Welcome screen */
+#welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:20px;text-align:center}
+#welcome h1{font-size:28px;font-weight:700;margin-bottom:8px;color:var(--text)}
+#welcome p{color:var(--text-light);margin-bottom:24px;font-size:14px}
+.drop-zone{width:100%;max-width:500px;border:2px dashed var(--border);border-radius:12px;padding:40px 20px;text-align:center;cursor:pointer;transition:all .2s;background:var(--card-bg)}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:#eff6ff}
+.drop-zone svg{width:48px;height:48px;color:var(--accent);margin-bottom:12px}
+.drop-zone h3{font-size:16px;margin-bottom:6px}
+.drop-zone p{font-size:13px;color:var(--text-light)}
+/* Table container */
+#table-wrap{display:none;height:100%;overflow:hidden;position:relative}
+#table-wrap.visible{display:flex;flex-direction:column}
+.table-header{display:flex;align-items:center;padding:6px 12px;background:var(--card-bg);border-bottom:1px solid var(--border);gap:8px;flex-shrink:0}
+.table-header select,.table-header input{height:28px;font-size:12px;border:1px solid var(--border);border-radius:4px;padding:0 6px}
+#virtual-table-container{flex:1;overflow:auto;position:relative}
+#virtual-table{width:100%;border-collapse:collapse;table-layout:fixed}
+#virtual-table thead{position:sticky;top:0;z-index:10;background:#f1f5f9}
+#virtual-table th{padding:6px 10px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-light);border-bottom:2px solid var(--border);text-align:left;white-space:nowrap;cursor:pointer;user-select:none;position:relative;min-width:80px}
+#virtual-table th:hover{color:var(--text)}
+#virtual-table th .sort-icon{font-size:10px;margin-left:2px;opacity:.5}
+#virtual-table th .filter-icon{position:absolute;right:4px;top:50%;transform:translateY(-50%);cursor:pointer;opacity:.4;font-size:12px}
+#virtual-table th .filter-icon:hover,.has-filter .filter-icon{opacity:1;color:var(--accent)}
+#virtual-table td{padding:4px 10px;font-size:12px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:80px}
+#virtual-table tr:hover td{background:#f8fafc}
+#virtual-table td.cell-edited{outline:2px solid var(--accent)}
+/* Scroll spacer */
+.scroll-spacer{pointer-events:none}
+/* Panels */
+.panel{position:absolute;top:0;right:0;width:360px;height:100%;background:var(--card-bg);border-left:1px solid var(--border);z-index:50;display:none;flex-direction:column;box-shadow:-4px 0 16px rgba(0,0,0,.08)}
+.panel.visible{display:flex}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+.panel-header h3{font-size:14px;font-weight:600}
+.panel-close{width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:6px;border:none;background:transparent;color:var(--text-light);font-size:18px}
+.panel-close:hover{background:#f1f5f9}
+.panel-body{flex:1;overflow-y:auto;padding:16px}
+.panel-body label{display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:var(--text-light)}
+.panel-body select,.panel-body input[type="text"],.panel-body input[type="number"]{width:100%;height:32px;font-size:13px;border:1px solid var(--border);border-radius:6px;padding:0 8px;margin-bottom:12px}
+.panel-body .btn-row{display:flex;gap:8px;margin-top:8px}
+.panel-body .btn-row .tb-btn{flex:1;justify-content:center}
+/* Filter panel */
+.filter-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;font-size:11px;margin:2px;cursor:pointer}
+.filter-chip .remove{font-weight:700;color:var(--danger);cursor:pointer}
+/* Conditional formatting rules list */
+.cf-rule{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;font-size:12px}
+.cf-rule .cf-color{width:16px;height:16px;border-radius:4px;flex-shrink:0}
+.cf-rule .cf-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-rule .cf-del{cursor:pointer;color:var(--danger);font-size:16px;flex-shrink:0}
+/* Stats */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat-card{padding:10px;background:#f8fafc;border-radius:8px;text-align:center}
+.stat-card .stat-val{font-size:18px;font-weight:700;color:var(--accent)}
+.stat-card .stat-label{font-size:11px;color:var(--text-light);margin-top:2px}
+/* Chart panel */
+#chart-panel{width:420px}
+#chart-canvas-wrap{padding:12px;position:relative;height:300px}
+/* Find & Replace */
+.find-row{display:flex;gap:6px;margin-bottom:8px;align-items:center}
+.find-row input{flex:1}
+/* Color presets */
+.color-presets{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.color-preset{width:28px;height:28px;border-radius:6px;cursor:pointer;border:2px solid transparent;transition:all .15s}
+.color-preset:hover,.color-preset.selected{border-color:var(--text);transform:scale(1.1)}
+/* Drag slots */
+.drag-slot{min-height:40px;border:2px dashed var(--border);border-radius:8px;padding:8px;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;color:var(--text-light);transition:all .2s}
+.drag-slot.drag-over{border-color:var(--accent);background:#eff6ff}
+.drag-slot .slot-label{font-weight:600}
+.drag-slot .slot-field{background:var(--accent);color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;cursor:pointer}
+.drag-slot .slot-field .remove-slot{margin-left:4px;cursor:pointer}
+.col-draggable{padding:4px 10px;background:#f1f5f9;border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:grab;margin:2px;display:inline-block;user-select:none}
+.col-draggable:active{cursor:grabbing}
+/* Status bar */
+#statusbar{height:var(--status-h);background:var(--sidebar-bg);color:#94a3b8;display:flex;align-items:center;padding:0 12px;font-size:11px;gap:16px;flex-shrink:0}
+#statusbar .status-accent{color:#60a5fa}
+/* Modal */
+.modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:200;display:none;align-items:center;justify-content:center}
+.modal-overlay.visible{display:flex}
+.modal{background:var(--card-bg);border-radius:12px;padding:20px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.15)}
+.modal h3{font-size:16px;margin-bottom:12px}
+.modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+/* Toast */
+#toast-container{position:fixed;bottom:40px;right:16px;z-index:300;display:flex;flex-direction:column;gap:8px}
+.toast{padding:10px 16px;background:var(--sidebar-bg);color:#fff;border-radius:8px;font-size:13px;animation:slideIn .3s ease;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+.toast.success{border-left:4px solid var(--success)}
+.toast.error{border-left:4px solid var(--danger)}
+.toast.info{border-left:4px solid var(--accent)}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+/* Responsive */
+@media(max-width:768px){
+#sidebar{width:0;overflow:hidden;position:fixed;top:0;left:0;height:100vh}
+#sidebar.expanded{width:220px}
+.panel{width:100%!important}
+#chart-panel{width:100%!important}
+.mobile-toggle{display:flex!important}
+}
+.mobile-toggle{display:none;width:36px;height:36px;align-items:center;justify-content:center;cursor:pointer;border:none;background:transparent;color:var(--text)}
+/* Font selector */
+.font-selector{display:flex;gap:6px;align-items:center;margin-bottom:12px}
+.font-selector select{flex:1}
+/* Scrollbar */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:#f1f5f9}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+/* Loading */
+.loading-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.8);display:flex;align-items:center;justify-content:center;z-index:60;font-size:14px;color:var(--text-light)}
+.spinner{width:24px;height:24px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="sb-icon" onclick="toggleSidebar()" title="Toggle Menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      <span class="sb-label">Menu</span>
+    </div>
+    <div class="divider"></div>
+    <div class="sb-icon active" onclick="switchTool('import')" title="Import Data" data-tool="import">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span class="sb-label">Import Data</span>
+    </div>
+    <div class="sb-icon" onclick="switchTool('analysis')" title="Analysis" data-tool="analysis">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span class="sb-label">Analysis</span>
+    </div>
+    <div class="sb-icon" onclick="switchTool('filter')" title="Filter" data-tool="filter">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+      <span class="sb-label">Filter</span>
+    </div>
+    <div class="sb-icon" onclick="switchTool('format')" title="Conditional Format" data-tool="format">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+      <span class="sb-label">Cond. Format</span>
+    </div>
+    <div class="sb-icon" onclick="switchTool('cleanup')" title="Data Cleanup" data-tool="cleanup">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+      <span class="sb-label">Cleanup</span>
+    </div>
+    <div class="sb-icon" onclick="switchTool('chart')" title="Charts" data-tool="chart">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+      <span class="sb-label">Charts</span>
+    </div>
+    <div class="sb-icon" onclick="switchTool('hindi')" title="Hindi Fonts" data-tool="hindi">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+      <span class="sb-label">Hindi Fonts</span>
+    </div>
+    <div class="divider"></div>
+    <div class="sb-icon" onclick="saveState()" title="Save" data-tool="save">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      <span class="sb-label">Save</span>
+    </div>
+    <div class="sb-icon" onclick="loadState()" title="Load" data-tool="load">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="sb-label">Load</span>
+    </div>
+  </div>
+
+  <!-- Main area -->
+  <div id="main">
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <button class="mobile-toggle" onclick="toggleSidebar()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <span style="font-weight:700;font-size:14px;color:var(--accent);margin-right:8px">Simple Data Analyser</span>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="switchTool('import')" title="Import"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import</button>
+      <button class="tb-btn" onclick="pasteFromClipboard()" title="Paste CSV/TSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Paste</button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="exportExcel()" title="Export Excel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Excel</button>
+      <button class="tb-btn" onclick="exportPDF()" title="Export PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PDF</button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="undoAction()" title="Undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-12.36L1 10"/></svg></button>
+      <div style="flex:1"></div>
+      <span style="font-size:11px;color:var(--text-light)">Neeraj Purohit, Senior Assistant, Rajasthan Police</span>
+    </div>
+
+    <!-- Content -->
+    <div id="content">
+      <!-- Welcome -->
+      <div id="welcome">
+        <h1>Simple Data Analyser</h1>
+        <p>Import your data to get started — paste CSV/TSV, or drag & drop a file</p>
+        <div class="drop-zone" id="dropZone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <h3>Drop your CSV/Excel file here</h3>
+          <p>or click to browse &bull; Supports CSV, TSV, XLSX, XLS</p>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.tsv,.xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+        <div style="margin-top:16px">
+          <button class="tb-btn primary" onclick="pasteFromClipboard()" style="height:36px;padding:0 20px;font-size:13px">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            Paste from Clipboard
+          </button>
+          <button class="tb-btn" onclick="loadSampleData()" style="height:36px;padding:0 20px;font-size:13px;margin-left:8px">Load Sample Data</button>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div id="table-wrap">
+        <div class="table-header">
+          <span style="font-size:12px;font-weight:600" id="colInfo">0 columns</span>
+          <div style="flex:1"></div>
+          <input type="text" id="searchInput" placeholder="Search all columns..." style="width:200px" oninput="applySearch()">
+        </div>
+        <div id="virtual-table-container">
+          <table id="virtual-table">
+            <thead id="vthead"></thead>
+            <tbody id="vtbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panels -->
+      <!-- Analysis Panel -->
+      <div class="panel" id="analysis-panel">
+        <div class="panel-header"><h3>Column Analysis</h3><button class="panel-close" onclick="closePanel('analysis')">&times;</button></div>
+        <div class="panel-body">
+          <label>Select Column</label>
+          <select id="analysisCol" onchange="runAnalysis()"></select>
+          <div id="analysisResults"></div>
+        </div>
+      </div>
+
+      <!-- Filter Panel -->
+      <div class="panel" id="filter-panel">
+        <div class="panel-header"><h3>Filter Data</h3><button class="panel-close" onclick="closePanel('filter')">&times;</button></div>
+        <div class="panel-body">
+          <label>Filter Column</label>
+          <select id="filterCol" onchange="loadFilterValues()"></select>
+          <label>Filter Type</label>
+          <select id="filterType" onchange="onFilterTypeChange()">
+            <option value="values">Select Values</option>
+            <option value="text">Text Contains</option>
+            <option value="gt">Greater Than</option>
+            <option value="lt">Less Than</option>
+            <option value="eq">Equal To</option>
+            <option value="between">Between</option>
+          </select>
+          <div id="filterValuesWrap">
+            <label>Values (click to toggle)</label>
+            <div id="filterValuesList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;margin-bottom:12px"></div>
+          </div>
+          <div id="filterTextWrap" style="display:none">
+            <label>Text Search</label>
+            <input type="text" id="filterTextVal" placeholder="Enter text...">
+          </div>
+          <div id="filterNumWrap" style="display:none">
+            <label>Value</label>
+            <input type="number" id="filterNumVal" placeholder="Enter number">
+          </div>
+          <div id="filterBetweenWrap" style="display:none">
+            <label>From</label>
+            <input type="number" id="filterBetweenFrom" placeholder="Min">
+            <label>To</label>
+            <input type="number" id="filterBetweenTo" placeholder="Max">
+          </div>
+          <div class="btn-row">
+            <button class="tb-btn primary" onclick="applyFilter()">Apply Filter</button>
+            <button class="tb-btn danger" onclick="clearFilter()">Clear Filter</button>
+          </div>
+          <div id="activeFilters" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- Conditional Formatting Panel -->
+      <div class="panel" id="format-panel">
+        <div class="panel-header"><h3>Conditional Formatting</h3><button class="panel-close" onclick="closePanel('format')">&times;</button></div>
+        <div class="panel-body">
+          <label>Column</label>
+          <select id="cfCol"></select>
+          <label>Condition</label>
+          <select id="cfCond">
+            <option value="gt">Greater Than</option>
+            <option value="lt">Less Than</option>
+            <option value="eq">Equal To</option>
+            <option value="neq">Not Equal</option>
+            <option value="contains">Contains</option>
+            <option value="between">Between</option>
+          </select>
+          <label>Value</label>
+          <input type="text" id="cfValue" placeholder="Enter value">
+          <div id="cfBetweenWrap" style="display:none">
+            <label>Value 2 (for Between)</label>
+            <input type="text" id="cfValue2" placeholder="Second value">
+          </div>
+          <label>Color</label>
+          <div class="color-presets" id="cfColorPresets">
+            <div class="color-preset selected" style="background:#ef4444" data-color="#ef4444" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#f59e0b" data-color="#f59e0b" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#22c55e" data-color="#22c55e" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#3b82f6" data-color="#3b82f6" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#f97316" data-color="#f97316" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#a855f7" data-color="#a855f7" onclick="selectCFColor(this)"></div>
+          </div>
+          <label>Or pick custom color</label>
+          <input type="color" id="cfCustomColor" value="#ef4444" style="width:100%;height:32px;border:1px solid var(--border);border-radius:6px;margin-bottom:12px;cursor:pointer">
+          <div class="btn-row">
+            <button class="tb-btn primary" onclick="addCFRule()">Apply Formatting</button>
+            <button class="tb-btn danger" onclick="clearCFRules()">Clear All</button>
+          </div>
+          <div style="margin-top:12px">
+            <label>Active Rules</label>
+            <div id="cfRulesList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cleanup Panel -->
+      <div class="panel" id="cleanup-panel">
+        <div class="panel-header"><h3>Data Cleanup</h3><button class="panel-close" onclick="closePanel('cleanup')">&times;</button></div>
+        <div class="panel-body">
+          <button class="tb-btn" onclick="removeDuplicates()" style="width:100%;justify-content:center;margin-bottom:8px">Remove Duplicate Rows</button>
+          <button class="tb-btn" onclick="removeEmptyRows()" style="width:100%;justify-content:center;margin-bottom:8px">Remove Empty Rows</button>
+          <button class="tb-btn" onclick="trimWhitespace()" style="width:100%;justify-content:center;margin-bottom:8px">Trim Whitespace</button>
+          <div style="margin-top:12px">
+            <label>Find & Replace</label>
+            <div class="find-row"><input type="text" id="findVal" placeholder="Find..."></div>
+            <div class="find-row"><input type="text" id="replaceVal" placeholder="Replace with..."></div>
+            <div class="find-row">
+              <select id="findCol" style="flex:1"><option value="all">All Columns</option></select>
+            </div>
+            <button class="tb-btn primary" onclick="findReplace()" style="width:100%;justify-content:center">Replace All</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart Panel -->
+      <div class="panel" id="chart-panel">
+        <div class="panel-header"><h3>Chart Builder</h3><button class="panel-close" onclick="closePanel('chart')">&times;</button></div>
+        <div class="panel-body">
+          <label>Chart Type</label>
+          <select id="chartType" onchange="buildChart()">
+            <option value="bar">Bar</option>
+            <option value="line">Line</option>
+            <option value="pie">Pie</option>
+            <option value="scatter">Scatter</option>
+            <option value="area">Area</option>
+          </select>
+          <label>Drag columns to axis slots</label>
+          <div id="chartColumns" style="margin-bottom:8px"></div>
+          <div class="drag-slot" id="xSlot" ondrop="dropAxis(event,'x')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <span class="slot-label">X-Axis:</span> <span id="xSlotField">Drop here</span>
+          </div>
+          <div class="drag-slot" id="ySlot" ondrop="dropAxis(event,'y')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <span class="slot-label">Y-Axis:</span> <span id="ySlotField">Drop here</span>
+          </div>
+          <button class="tb-btn primary" onclick="buildChart()" style="width:100%;justify-content:center;margin-bottom:8px">Create Chart</button>
+          <div id="chart-canvas-wrap" style="height:280px;position:relative">
+            <canvas id="chartCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hindi Font Panel -->
+      <div class="panel" id="hindi-panel">
+        <div class="panel-header"><h3>Hindi Font Support</h3><button class="panel-close" onclick="closePanel('hindi')">&times;</button></div>
+        <div class="panel-body">
+          <label>Source Font</label>
+          <select id="hindiSrcFont">
+            <option value="krutidev">Krutidev</option>
+            <option value="devlys">Devlys</option>
+            <option value="unicode">Unicode / Mangal</option>
+          </select>
+          <label>Target Font</label>
+          <select id="hindiTgtFont">
+            <option value="unicode">Unicode / Mangal</option>
+            <option value="krutidev">Krutidev</option>
+            <option value="devlys">Devlys</option>
+          </select>
+          <label>Apply to Column</label>
+          <select id="hindiCol"><option value="all">All Text Columns</option></select>
+          <button class="tb-btn primary" onclick="convertHindi()" style="width:100%;justify-content:center;margin-top:8px">Convert Fonts</button>
+          <div style="margin-top:16px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px;color:var(--text-light)">
+            <strong>Note:</strong> Krutidev/Devlys are legacy Hindi encodings. This tool converts them to Unicode (Mangal) and vice-versa. Make sure your data is in the correct source encoding.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div id="statusbar">
+      <span id="statusRows">0 rows</span>
+      <span id="statusCols">0 columns</span>
+      <span id="statusFilter" class="status-accent"></span>
+      <span id="statusFormat" class="status-accent"></span>
+      <div style="flex:1"></div>
+      <span>Simple Data Analyser &bull; Neeraj Purohit, Rajasthan Police</span>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+// ====================== STATE ======================
+let rawData = []; // array of arrays
+let headers = [];
+let colTypes = []; // 'number','text','date'
+let filteredData = null; // null or array of filtered row indices
+let searchTerm = '';
+let sortCol = -1;
+let sortDir = 'asc';
+let cfRules = []; // {col, cond, value, value2, color}
+let activeFilters = []; // {col, type, values, text, numVal, from, to}
+let chartInstance = null;
+let chartXCol = -1;
+let chartYCol = -1;
+let undoStack = [];
+let selectedCFColor = '#ef4444';
+
+// Virtual scroll
+const ROW_HEIGHT = 28;
+const VISIBLE_BUFFER = 20;
+
+// ====================== INIT ======================
+document.addEventListener('DOMContentLoaded', () => {
+  // Load saved state
+  tryAutoLoad();
+});
+
+function tryAutoLoad() {
+  try {
+    const saved = localStorage.getItem('sda_state');
+    if (saved) {
+      const s = JSON.parse(saved);
+      if (s.headers && s.rawData && s.rawData.length > 0) {
+        headers = s.headers;
+        rawData = s.rawData;
+        colTypes = s.colTypes || [];
+        cfRules = s.cfRules || [];
+        activeFilters = s.activeFilters || [];
+        showTable();
+        toast('Previous session loaded', 'info');
+      }
+    }
+  } catch(e) {}
+}
+
+// ====================== TOAST ======================
+function toast(msg, type='info') {
+  const c = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
+}
+
+// ====================== SIDEBAR ======================
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('expanded');
+}
+
+function switchTool(tool) {
+  // Update sidebar icons
+  document.querySelectorAll('#sidebar .sb-icon').forEach(el => el.classList.remove('active'));
+  const toolIcon = document.querySelector(`#sidebar .sb-icon[data-tool="${tool}"]`);
+  if (toolIcon) toolIcon.classList.add('active');
+
+  // Close all panels
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+
+  if (tool === 'import') {
+    if (rawData.length === 0) {
+      document.getElementById('welcome').style.display = 'flex';
+    } else {
+      document.getElementById('fileInput').click();
+    }
+  } else if (tool === 'analysis') {
+    openPanel('analysis');
+  } else if (tool === 'filter') {
+    openPanel('filter');
+  } else if (tool === 'format') {
+    openPanel('format');
+  } else if (tool === 'cleanup') {
+    openPanel('cleanup');
+  } else if (tool === 'chart') {
+    openPanel('chart');
+  } else if (tool === 'hindi') {
+    openPanel('hindi');
+  } else if (tool === 'save') {
+    saveState();
+  } else if (tool === 'load') {
+    loadState();
+  }
+}
+
+function openPanel(name) {
+  if (rawData.length === 0) { toast('Import data first', 'error'); return; }
+  populatePanelSelects();
+  document.getElementById(name + '-panel').classList.add('visible');
+  if (name === 'analysis') runAnalysis();
+  if (name === 'filter') loadFilterValues();
+  if (name === 'chart') initChartPanel();
+  if (name === 'format') renderCFRules();
+}
+
+function closePanel(name) {
+  document.getElementById(name + '-panel').classList.remove('visible');
+}
+
+// ====================== DATA IMPORT ======================
+function handleDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }
+function handleDragLeave(e) { e.currentTarget.classList.remove('drag-over'); }
+function handleDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) processFile(file);
+}
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) processFile(file);
+  e.target.value = '';
+}
+
+function processFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'xlsx' || ext === 'xls') {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+        importData(json);
+      } catch(err) { toast('Error reading Excel: ' + err.message, 'error'); }
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      parseCSVTSV(text);
+    };
+    reader.readAsText(file);
+  }
+}
+
+async function pasteFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text && text.trim()) {
+      parseCSVTSV(text);
+    } else {
+      toast('Clipboard is empty', 'error');
+    }
+  } catch(e) {
+    toast('Cannot access clipboard. Please use Ctrl+V in the import area.', 'error');
+  }
+}
+
+function parseCSVTSV(text) {
+  let sep = ',';
+  const firstLine = text.split('\n')[0];
+  const tabs = (firstLine.match(/\t/g)||[]).length;
+  const commas = (firstLine.match(/,/g)||[]).length;
+  const semis = (firstLine.match(/;/g)||[]).length;
+  if (tabs > commas && tabs > semis) sep = '\t';
+  else if (semis > commas) sep = ';';
+
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const data = lines.map(line => {
+    const row = [];
+    let inQuote = false, cell = '';
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuote = !inQuote; continue; }
+      if (ch === sep && !inQuote) { row.push(cell.trim()); cell = ''; continue; }
+      cell += ch;
+    }
+    row.push(cell.trim());
+    return row;
+  });
+  importData(data);
+}
+
+function importData(data) {
+  if (data.length < 2) { toast('Need at least header + 1 row', 'error'); return; }
+  pushUndo();
+  headers = data[0].map((h,i) => h || ('Column ' + (i+1)));
+  rawData = data.slice(1).filter(r => r.some(c => c !== ''));
+  // Normalize row lengths
+  const maxCols = headers.length;
+  rawData = rawData.map(r => {
+    while (r.length < maxCols) r.push('');
+    return r.slice(0, maxCols);
+  });
+  detectTypes();
+  filteredData = null;
+  activeFilters = [];
+  sortCol = -1;
+  showTable();
+  toast(`Imported ${rawData.length} rows x ${headers.length} columns`, 'success');
+}
+
+function detectTypes() {
+  colTypes = headers.map((_, ci) => {
+    let numCount = 0, dateCount = 0, total = 0;
+    for (let ri = 0; ri < Math.min(rawData.length, 100); ri++) {
+      const v = rawData[ri][ci];
+      if (v === '' || v === null || v === undefined) continue;
+      total++;
+      if (!isNaN(Number(v)) && v !== '') numCount++;
+      else if (!isNaN(Date.parse(v)) && String(v).length > 4) dateCount++;
+    }
+    if (total === 0) return 'text';
+    if (numCount / total > 0.8) return 'number';
+    if (dateCount / total > 0.8) return 'date';
+    return 'text';
+  });
+}
+
+// ====================== TABLE DISPLAY ======================
+function showTable() {
+  document.getElementById('welcome').style.display = 'none';
+  document.getElementById('table-wrap').classList.add('visible');
+  renderTableHeader();
+  renderTable();
+  updateStatus();
+}
+
+function getDisplayData() {
+  let indices = filteredData ? filteredData.slice() : rawData.map((_, i) => i);
+
+  // Apply search
+  if (searchTerm) {
+    const s = searchTerm.toLowerCase();
+    indices = indices.filter(ri => rawData[ri].some(c => String(c).toLowerCase().includes(s)));
+  }
+
+  // Apply sort
+  if (sortCol >= 0) {
+    indices.sort((a, b) => {
+      let va = rawData[a][sortCol], vb = rawData[b][sortCol];
+      if (colTypes[sortCol] === 'number') { va = Number(va) || 0; vb = Number(vb) || 0; }
+      else { va = String(va).toLowerCase(); vb = String(vb).toLowerCase(); }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+
+  return indices;
+}
+
+function renderTableHeader() {
+  const thead = document.getElementById('vthead');
+  let html = '<tr><th style="width:50px;min-width:50px">#</th>';
+  headers.forEach((h, i) => {
+    const sortIcon = sortCol === i ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    const hasFilter = activeFilters.some(f => f.col === i);
+    html += `<th class="${hasFilter?'has-filter':''}" onclick="handleSort(${i})" style="min-width:100px">${escHtml(h)}${sortIcon}<span class="filter-icon" onclick="event.stopPropagation();quickFilter(${i})">▼</span></th>`;
+  });
+  html += '</tr>';
+  thead.innerHTML = html;
+  document.getElementById('colInfo').textContent = headers.length + ' columns';
+}
+
+function renderTable() {
+  const indices = getDisplayData();
+  const tbody = document.getElementById('vtbody');
+  const container = document.getElementById('virtual-table-container');
+
+  // Set total height for scrollbar
+  const totalHeight = indices.length * ROW_HEIGHT;
+
+  // Render visible rows
+  const scrollTop = container.scrollTop;
+  const viewHeight = container.clientHeight;
+  const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - VISIBLE_BUFFER);
+  const endIdx = Math.min(indices.length, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + VISIBLE_BUFFER);
+
+  let html = '';
+  // Top spacer
+  if (startIdx > 0) {
+    html += `<tr style="height:${startIdx * ROW_HEIGHT}px"><td colspan="${headers.length + 1}" style="padding:0;border:0"></td></tr>`;
+  }
+
+  for (let vi = startIdx; vi < endIdx; vi++) {
+    const ri = indices[vi];
+    const row = rawData[ri];
+    html += `<tr style="height:${ROW_HEIGHT}px" data-ridx="${ri}">`;
+    html += `<td style="width:50px;min-width:50px;color:var(--text-light);font-size:10px;text-align:center">${ri + 1}</td>`;
+    for (let ci = 0; ci < headers.length; ci++) {
+      const cellStyle = getCellStyle(ri, ci);
+      html += `<td style="${cellStyle}" ondblclick="editCell(${ri},${ci},this)">${escHtml(String(row[ci] || ''))}</td>`;
+    }
+    html += '</tr>';
+  }
+
+  // Bottom spacer
+  if (endIdx < indices.length) {
+    const remaining = indices.length - endIdx;
+    html += `<tr style="height:${remaining * ROW_HEIGHT}px"><td colspan="${headers.length + 1}" style="padding:0;border:0"></td></tr>`;
+  }
+
+  tbody.innerHTML = html;
+}
+
+function getCellStyle(ri, ci) {
+  let style = '';
+  for (const rule of cfRules) {
+    if (rule.col !== ci) continue;
+    const val = String(rawData[ri][ci] || '');
+    const numVal = Number(val);
+    const ruleVal = rule.value;
+    const ruleNum = Number(ruleVal);
+    let match = false;
+    switch(rule.cond) {
+      case 'gt': if (colTypes[ci]==='number' && !isNaN(numVal) && !isNaN(ruleNum)) match = numVal > ruleNum; else match = val > ruleVal; break;
+      case 'lt': if (colTypes[ci]==='number' && !isNaN(numVal) && !isNaN(ruleNum)) match = numVal < ruleNum; else match = val < ruleVal; break;
+      case 'eq': match = val === ruleVal || (colTypes[ci]==='number' && numVal === ruleNum); break;
+      case 'neq': match = val !== ruleVal && !(colTypes[ci]==='number' && numVal === ruleNum); break;
+      case 'contains': match = val.toLowerCase().includes(ruleVal.toLowerCase()); break;
+      case 'between': {
+        const r2 = rule.value2;
+        const rn2 = Number(r2);
+        if (colTypes[ci]==='number' && !isNaN(numVal) && !isNaN(ruleNum) && !isNaN(rn2)) match = numVal >= ruleNum && numVal <= rn2;
+        else match = val >= ruleVal && val <= r2;
+        break;
+      }
+    }
+    if (match) {
+      style += `background-color:${rule.color}80;color:${darkenColor(rule.color)};border-left:3px solid ${rule.color};`;
+    }
+  }
+  return style;
+}
+
+function darkenColor(hex) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgb(${Math.max(0,r-80)},${Math.max(0,g-80)},${Math.max(0,b-80)})`;
+}
+
+// Virtual scroll listener
+document.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById('virtual-table-container');
+  let scrollTimeout;
+  container.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(renderTable, 16);
+  });
+});
+
+function editCell(ri, ci, el) {
+  const cur = rawData[ri][ci];
+  const input = document.createElement('input');
+  input.value = cur;
+  input.style.cssText = 'width:100%;height:100%;border:1px solid var(--accent);padding:2px 6px;font-size:12px;outline:none';
+  el.textContent = '';
+  el.appendChild(input);
+  input.focus();
+  const finish = () => {
+    pushUndo();
+    rawData[ri][ci] = input.value;
+    renderTable();
+  };
+  input.addEventListener('blur', finish);
+  input.addEventListener('keydown', (e) => { if(e.key==='Enter') input.blur(); if(e.key==='Escape'){input.value=cur;input.blur();} });
+}
+
+// ====================== SORT ======================
+function handleSort(ci) {
+  pushUndo();
+  if (sortCol === ci) {
+    sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortCol = ci;
+    sortDir = 'asc';
+  }
+  renderTableHeader();
+  renderTable();
+}
+
+// ====================== SEARCH ======================
+function applySearch() {
+  searchTerm = document.getElementById('searchInput').value;
+  renderTable();
+  updateStatus();
+}
+
+// ====================== STATUS ======================
+function updateStatus() {
+  const total = rawData.length;
+  const shown = getDisplayData().length;
+  document.getElementById('statusRows').textContent = shown === total ? `${total} rows` : `${shown} of ${total} rows`;
+  document.getElementById('statusCols').textContent = `${headers.length} columns`;
+  document.getElementById('statusFilter').textContent = activeFilters.length ? `Filters: ${activeFilters.length}` : '';
+  document.getElementById('statusFormat').textContent = cfRules.length ? `Format rules: ${cfRules.length}` : '';
+}
+
+// ====================== PANEL SELECTS ======================
+function populatePanelSelects() {
+  const selects = ['analysisCol','filterCol','cfCol','hindiCol','findCol'];
+  selects.forEach(sid => {
+    const sel = document.getElementById(sid);
+    if (!sel) return;
+    const prev = sel.value;
+    let html = sid === 'hindiCol' || sid === 'findCol' ? '<option value="all">All Columns</option>' : '';
+    headers.forEach((h, i) => {
+      html += `<option value="${i}">${h} (${colTypes[i]})</option>`;
+    });
+    sel.innerHTML = html;
+    if (prev) sel.value = prev;
+  });
+}
+
+// ====================== ANALYSIS ======================
+function runAnalysis() {
+  const ci = parseInt(document.getElementById('analysisCol').value);
+  if (isNaN(ci)) return;
+  const col = rawData.map(r => r[ci]);
+  const type = colTypes[ci];
+  let html = '<div class="stat-grid">';
+
+  if (type === 'number') {
+    const nums = col.map(Number).filter(n => !isNaN(n));
+    const sum = nums.reduce((a,b) => a+b, 0);
+    const avg = nums.length ? sum / nums.length : 0;
+    const min = nums.length ? Math.min(...nums) : 0;
+    const max = nums.length ? Math.max(...nums) : 0;
+    html += statCard('Count', nums.length);
+    html += statCard('Sum', sum.toFixed(2));
+    html += statCard('Average', avg.toFixed(2));
+    html += statCard('Min', min);
+    html += statCard('Max', max);
+    html += statCard('Missing', col.filter(c => c===''||c===null||c===undefined).length);
+  } else {
+    const nonEmpty = col.filter(c => c !== '' && c !== null && c !== undefined);
+    const unique = new Set(nonEmpty);
+    html += statCard('Count', nonEmpty.length);
+    html += statCard('Unique', unique.size);
+    html += statCard('Missing', col.length - nonEmpty.length);
+    html += statCard('Most Common', mode(nonEmpty) || 'N/A');
+  }
+  html += '</div>';
+
+  html += '<div style="margin-top:16px"><label>Quick Actions</label>';
+  html += `<button class="tb-btn" onclick="findDuplicates(${ci})" style="width:100%;justify-content:center;margin-bottom:6px">Find Duplicates in Column</button>`;
+  html += `<button class="tb-btn" onclick="findMissing(${ci})" style="width:100%;justify-content:center">Find Missing Values</button>`;
+  html += '</div>';
+
+  document.getElementById('analysisResults').innerHTML = html;
+}
+
+function statCard(label, val) {
+  return `<div class="stat-card"><div class="stat-val">${val}</div><div class="stat-label">${label}</div></div>`;
+}
+
+function mode(arr) {
+  const freq = {};
+  arr.forEach(v => freq[v] = (freq[v]||0) + 1);
+  let maxF = 0, modeVal = '';
+  for (const k in freq) { if (freq[k] > maxF) { maxF = freq[k]; modeVal = k; } }
+  return modeVal;
+}
+
+function findDuplicates(ci) {
+  const col = rawData.map(r => r[ci]);
+  const freq = {};
+  col.forEach((v,i) => { if (v !== '') { if(!freq[v]) freq[v]=[]; freq[v].push(i); } });
+  const dupVals = Object.entries(freq).filter(([_,arr]) => arr.length > 1);
+  if (dupVals.length === 0) { toast('No duplicates found', 'info'); return; }
+
+  // Add conditional formatting for duplicates
+  const color = '#f59e0b';
+  dupVals.forEach(([val]) => {
+    cfRules.push({col: ci, cond: 'eq', value: val, value2: '', color: color});
+  });
+  renderCFRules();
+  renderTable();
+  toast(`Found ${dupVals.length} duplicate values`, 'success');
+}
+
+function findMissing(ci) {
+  // Add formatting for empty cells
+  cfRules.push({col: ci, cond: 'eq', value: '', value2: '', color: '#ef4444'});
+  renderCFRules();
+  renderTable();
+  toast('Missing values highlighted in red', 'success');
+}
+
+// ====================== FILTER ======================
+function quickFilter(ci) {
+  switchTool('filter');
+  document.getElementById('filterCol').value = ci;
+  loadFilterValues();
+}
+
+function loadFilterValues() {
+  const ci = parseInt(document.getElementById('filterCol').value);
+  if (isNaN(ci)) return;
+  const type = document.getElementById('filterType').value;
+
+  document.getElementById('filterValuesWrap').style.display = type === 'values' ? '' : 'none';
+  document.getElementById('filterTextWrap').style.display = type === 'text' ? '' : 'none';
+  document.getElementById('filterNumWrap').style.display = (type === 'gt' || type === 'lt' || type === 'eq') ? '' : 'none';
+  document.getElementById('filterBetweenWrap').style.display = type === 'between' ? '' : 'none';
+
+  if (type === 'values') {
+    const uniqueVals = [...new Set(rawData.map(r => r[ci]))].sort();
+    const list = document.getElementById('filterValuesList');
+    let html = '';
+    uniqueVals.forEach(v => {
+      const checked = true; // default all checked
+      html += `<label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0;cursor:pointer">
+        <input type="checkbox" value="${escAttr(String(v))}" checked> ${escHtml(String(v) || '(empty)')}</label>`;
+    });
+    list.innerHTML = html;
+  }
+}
+
+function onFilterTypeChange() {
+  loadFilterValues();
+}
+
+function applyFilter() {
+  const ci = parseInt(document.getElementById('filterCol').value);
+  const type = document.getElementById('filterType').value;
+  if (isNaN(ci)) return;
+
+  const filter = { col: ci, type };
+
+  if (type === 'values') {
+    const checks = document.querySelectorAll('#filterValuesList input[type=checkbox]');
+    const selected = [];
+    checks.forEach(cb => { if (cb.checked) selected.push(cb.value); });
+    filter.values = selected;
+    if (selected.length === checks.length) {
+      toast('All values selected — no filtering applied', 'info');
+      return;
+    }
+  } else if (type === 'text') {
+    filter.text = document.getElementById('filterTextVal').value;
+    if (!filter.text) { toast('Enter search text', 'error'); return; }
+  } else if (type === 'gt' || type === 'lt' || type === 'eq') {
+    filter.numVal = document.getElementById('filterNumVal').value;
+    if (filter.numVal === '') { toast('Enter a number', 'error'); return; }
+  } else if (type === 'between') {
+    filter.from = document.getElementById('filterBetweenFrom').value;
+    filter.to = document.getElementById('filterBetweenTo').value;
+    if (filter.from === '' || filter.to === '') { toast('Enter both values', 'error'); return; }
+  }
+
+  // Remove existing filter on same column
+  activeFilters = activeFilters.filter(f => f.col !== ci);
+  activeFilters.push(filter);
+
+  applyAllFilters();
+  renderTableHeader();
+  renderTable();
+  updateStatus();
+  renderActiveFilters();
+  toast('Filter applied', 'success');
+}
+
+function applyAllFilters() {
+  let indices = rawData.map((_, i) => i);
+
+  for (const f of activeFilters) {
+    indices = indices.filter(ri => {
+      const val = String(rawData[ri][f.col] || '');
+      const numVal = Number(val);
+
+      switch(f.type) {
+        case 'values': return f.values.includes(val);
+        case 'text': return val.toLowerCase().includes(f.text.toLowerCase());
+        case 'gt': return !isNaN(numVal) && numVal > Number(f.numVal);
+        case 'lt': return !isNaN(numVal) && numVal < Number(f.numVal);
+        case 'eq': return colTypes[f.col]==='number' ? numVal === Number(f.numVal) : val === f.numVal;
+        case 'between': return !isNaN(numVal) && numVal >= Number(f.from) && numVal <= Number(f.to);
+      }
+      return true;
+    });
+  }
+
+  filteredData = indices.length < rawData.length ? indices : null;
+}
+
+function clearFilter() {
+  activeFilters = [];
+  filteredData = null;
+  renderTableHeader();
+  renderTable();
+  updateStatus();
+  renderActiveFilters();
+  toast('Filters cleared', 'info');
+}
+
+function removeFilter(ci) {
+  activeFilters = activeFilters.filter(f => f.col !== ci);
+  if (activeFilters.length === 0) filteredData = null;
+  else applyAllFilters();
+  renderTableHeader();
+  renderTable();
+  updateStatus();
+  renderActiveFilters();
+}
+
+function renderActiveFilters() {
+  const el = document.getElementById('activeFilters');
+  if (activeFilters.length === 0) { el.innerHTML = '<p style="font-size:12px;color:var(--text-light)">No active filters</p>'; return; }
+  let html = '';
+  activeFilters.forEach(f => {
+    const colName = headers[f.col];
+    let desc = '';
+    switch(f.type) {
+      case 'values': desc = `${f.values.length} values selected`; break;
+      case 'text': desc = `contains "${f.text}"`; break;
+      case 'gt': desc = `> ${f.numVal}`; break;
+      case 'lt': desc = `< ${f.numVal}`; break;
+      case 'eq': desc = `= ${f.numVal}`; break;
+      case 'between': desc = `${f.from} to ${f.to}`; break;
+    }
+    html += `<div class="filter-chip">${colName}: ${desc} <span class="remove" onclick="removeFilter(${f.col})">&times;</span></div>`;
+  });
+  el.innerHTML = html;
+}
+
+// ====================== CONDITIONAL FORMATTING ======================
+function selectCFColor(el) {
+  document.querySelectorAll('#cfColorPresets .color-preset').forEach(p => p.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedCFColor = el.dataset.color;
+  document.getElementById('cfCustomColor').value = selectedCFColor;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const condSel = document.getElementById('cfCond');
+  if (condSel) condSel.addEventListener('change', () => {
+    document.getElementById('cfBetweenWrap').style.display = condSel.value === 'between' ? '' : 'none';
+  });
+  const customColor = document.getElementById('cfCustomColor');
+  if (customColor) customColor.addEventListener('input', () => {
+    selectedCFColor = customColor.value;
+    document.querySelectorAll('#cfColorPresets .color-preset').forEach(p => p.classList.remove('selected'));
+  });
+});
+
+function addCFRule() {
+  const ci = parseInt(document.getElementById('cfCol').value);
+  const cond = document.getElementById('cfCond').value;
+  const value = document.getElementById('cfValue').value;
+  const value2 = document.getElementById('cfValue2').value;
+  if (isNaN(ci)) return;
+  if (!value && cond !== 'eq') { toast('Enter a value', 'error'); return; }
+
+  cfRules.push({ col: ci, cond, value, value2, color: selectedCFColor });
+  renderCFRules();
+  renderTable();
+  updateStatus();
+  toast('Formatting rule added', 'success');
+}
+
+function removeCFRule(idx) {
+  cfRules.splice(idx, 1);
+  renderCFRules();
+  renderTable();
+  updateStatus();
+}
+
+function clearCFRules() {
+  cfRules = [];
+  renderCFRules();
+  renderTable();
+  updateStatus();
+  toast('All formatting cleared', 'info');
+}
+
+function renderCFRules() {
+  const el = document.getElementById('cfRulesList');
+  if (cfRules.length === 0) { el.innerHTML = '<p style="font-size:12px;color:var(--text-light)">No active rules</p>'; return; }
+  let html = '';
+  cfRules.forEach((r, i) => {
+    const condText = {gt:'>',lt:'<',eq:'=',neq:'≠',contains:'contains',between:'between'}[r.cond] || r.cond;
+    const valText = r.cond === 'between' ? `${r.value} & ${r.value2}` : r.value;
+    html += `<div class="cf-rule"><div class="cf-color" style="background:${r.color}"></div><div class="cf-text">${headers[r.col]} ${condText} "${valText}"</div><span class="cf-del" onclick="removeCFRule(${i})">&times;</span></div>`;
+  });
+  el.innerHTML = html;
+}
+
+// ====================== DATA CLEANUP ======================
+function removeDuplicates() {
+  pushUndo();
+  const seen = new Set();
+  const before = rawData.length;
+  rawData = rawData.filter(row => {
+    const key = JSON.stringify(row);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  filteredData = null;
+  applyAllFilters();
+  renderTable();
+  updateStatus();
+  toast(`Removed ${before - rawData.length} duplicate rows`, 'success');
+}
+
+function removeEmptyRows() {
+  pushUndo();
+  const before = rawData.length;
+  rawData = rawData.filter(row => row.some(c => c !== '' && c !== null && c !== undefined));
+  filteredData = null;
+  applyAllFilters();
+  renderTable();
+  updateStatus();
+  toast(`Removed ${before - rawData.length} empty rows`, 'success');
+}
+
+function trimWhitespace() {
+  pushUndo();
+  let count = 0;
+  rawData = rawData.map(row => row.map(c => {
+    const trimmed = String(c).trim();
+    if (trimmed !== c) count++;
+    return trimmed;
+  }));
+  renderTable();
+  toast(`Trimmed ${count} cells`, 'success');
+}
+
+function findReplace() {
+  const find = document.getElementById('findVal').value;
+  const replace = document.getElementById('replaceVal').value;
+  const colVal = document.getElementById('findCol').value;
+  if (!find) { toast('Enter find value', 'error'); return; }
+
+  pushUndo();
+  let count = 0;
+  const cols = colVal === 'all' ? headers.map((_,i) => i) : [parseInt(colVal)];
+  rawData = rawData.map(row => {
+    cols.forEach(ci => {
+      if (String(row[ci]).includes(find)) {
+        row[ci] = String(row[ci]).split(find).join(replace);
+        count++;
+      }
+    });
+    return row;
+  });
+  renderTable();
+  toast(`Replaced ${count} occurrences`, 'success');
+}
+
+// ====================== CHART BUILDER ======================
+function initChartPanel() {
+  const el = document.getElementById('chartColumns');
+  let html = '';
+  headers.forEach((h, i) => {
+    html += `<span class="col-draggable" draggable="true" ondragstart="event.dataTransfer.setData('text/plain','${i}')" title="${h} (${colTypes[i]})">${h}</span>`;
+  });
+  el.innerHTML = html;
+
+  // Show current axis assignments
+  document.getElementById('xSlotField').innerHTML = chartXCol >= 0 ? `<span class="slot-field">${headers[chartXCol]}<span class="remove-slot" onclick="chartXCol=-1;document.getElementById('xSlotField').textContent='Drop here'">&times;</span></span>` : 'Drop here';
+  document.getElementById('ySlotField').innerHTML = chartYCol >= 0 ? `<span class="slot-field">${headers[chartYCol]}<span class="remove-slot" onclick="chartYCol=-1;document.getElementById('ySlotField').textContent='Drop here'">&times;</span></span>` : 'Drop here';
+}
+
+function dropAxis(e, axis) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  const ci = parseInt(e.dataTransfer.getData('text/plain'));
+  if (isNaN(ci)) return;
+  if (axis === 'x') {
+    chartXCol = ci;
+    document.getElementById('xSlotField').innerHTML = `<span class="slot-field">${headers[ci]}<span class="remove-slot" onclick="chartXCol=-1;document.getElementById('xSlotField').textContent='Drop here'">&times;</span></span>`;
+  } else {
+    chartYCol = ci;
+    document.getElementById('ySlotField').innerHTML = `<span class="slot-field">${headers[ci]}<span class="remove-slot" onclick="chartYCol=-1;document.getElementById('ySlotField').textContent='Drop here'">&times;</span></span>`;
+  }
+}
+
+function buildChart() {
+  if (chartXCol < 0 || chartYCol < 0) { toast('Drag columns to both X and Y axis', 'error'); return; }
+
+  const indices = getDisplayData();
+  const labels = indices.map(ri => String(rawData[ri][chartXCol]));
+  const values = indices.map(ri => {
+    const v = Number(rawData[ri][chartYCol]);
+    return isNaN(v) ? 0 : v;
+  });
+
+  // Aggregate if too many points for pie
+  const chartType = document.getElementById('chartType').value;
+  let chartLabels = labels;
+  let chartValues = values;
+  let actualType = chartType === 'area' ? 'line' : chartType;
+
+  if (chartType === 'pie' && labels.length > 20) {
+    // Aggregate top 15 + Others
+    const map = {};
+    labels.forEach((l, i) => { map[l] = (map[l] || 0) + values[i]; });
+    const sorted = Object.entries(map).sort((a,b) => b[1] - a[1]);
+    chartLabels = sorted.slice(0, 15).map(s => s[0]);
+    chartValues = sorted.slice(0, 15).map(s => s[1]);
+    const otherSum = sorted.slice(15).reduce((a,b) => a + b[1], 0);
+    if (otherSum > 0) { chartLabels.push('Others'); chartValues.push(otherSum); }
+  } else if (labels.length > 200) {
+    // Sample for performance
+    const step = Math.ceil(labels.length / 200);
+    chartLabels = labels.filter((_, i) => i % step === 0);
+    chartValues = values.filter((_, i) => i % step === 0);
+  }
+
+  const colors = ['#3b82f6','#ef4444','#22c55e','#f59e0b','#a855f7','#f97316','#06b6d4','#ec4899','#14b8a6','#e11d48','#84cc16','#8b5cf6','#0ea5e9','#d946ef','#facc15','#64748b'];
+
+  if (chartInstance) chartInstance.destroy();
+
+  const ctx = document.getElementById('chartCanvas').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: actualType,
+    data: {
+      labels: chartLabels,
+      datasets: [{
+        label: headers[chartYCol],
+        data: chartValues,
+        backgroundColor: chartType === 'pie' ? colors : chartType === 'bar' ? '#3b82f6' : 'rgba(59,130,246,0.1)',
+        borderColor: chartType === 'pie' ? '#fff' : '#3b82f6',
+        borderWidth: chartType === 'pie' ? 2 : 2,
+        fill: chartType === 'area',
+        tension: 0.3,
+        pointRadius: chartType === 'scatter' ? 4 : 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: {
+        duration: 1000,
+        easing: 'easeOutQuart'
+      },
+      plugins: {
+        legend: { display: chartType === 'pie', position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
+      },
+      scales: chartType === 'pie' ? {} : {
+        x: { display: true, ticks: { maxTicksLimit: 15, font: { size: 10 } } },
+        y: { display: true, ticks: { font: { size: 10 } } }
+      }
+    }
+  });
+}
+
+// ====================== HINDI FONT CONVERSION ======================
+// Krutidev to Unicode mapping (simplified but functional)
+const krutidevToUnicode = {
+  'à':'अ','á':'आ','â':'इ','ã':'ई','ä':'उ','å':'ऊ','æ':'ऋ','ç':'ए','è':'ऐ','é':'ओ','ê':'औ',
+  'ð':'क','ñ':'ख','ò':'ग','ó':'घ','ô':'ङ','õ':'च','ö':'छ','÷':'ज','ø':'झ','ù':'ञ',
+  'ú':'ट','û':'ठ','ü':'ड','ý':'ढ','þ':'ण','ÿ':'त','€':'थ','':'द','':'ध','':'न',
+  '¡':'प','¢':'फ','£':'ब','¤':'भ','¥':'म','¦':'य','§':'र','¨':'ल','©':'व','ª':'श',
+  '«':'ष','¬':'स','­':'ह',
+  'A':'ा','B':'ि','C':'ी','D':'ु','E':'ू','F':'ृ','G':'े','H':'ै','I':'ो','J':'ौ',
+  'K':'क्','L':'ख्','M':'ग्','N':'घ्','O':'ङ्','P':'च्','Q':'छ्','R':'ज्','S':'झ्','T':'ञ्',
+  'U':'ट्','V':'ठ्','W':'ड्','X':'ढ्','Y':'ण्','Z':'त्','[':'थ्','\\':'द्',']':'ध्','^':'न्',
+  '_':'प्','`':'फ्','a':'ब्','b':'भ्','c':'म्','d':'य्','e':'र्','f':'ल्','g':'व्',
+  'h':'श्','i':'ष्','j':'स्','k':'ह्',
+  '0':'०','1':'१','2':'२','3':'३','4':'४','5':'५','6':'६','7':'७','8':'८','9':'९'
+};
+
+// Devlys to Unicode (similar mapping, slight differences)
+const devlysToUnicode = {...krutidevToUnicode};
+
+function convertKrutidevToUnicode(str) {
+  let result = '';
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    result += krutidevToUnicode[ch] || ch;
+  }
+  return result;
+}
+
+function convertUnicodeToKrutidev(str) {
+  const reverseMap = {};
+  for (const [k, v] of Object.entries(krutidevToUnicode)) {
+    if (!reverseMap[v]) reverseMap[v] = k;
+  }
+  let result = '';
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    result += reverseMap[ch] || ch;
+  }
+  return result;
+}
+
+function convertHindi() {
+  const srcFont = document.getElementById('hindiSrcFont').value;
+  const tgtFont = document.getElementById('hindiTgtFont').value;
+  const colVal = document.getElementById('hindiCol').value;
+
+  if (srcFont === tgtFont) { toast('Source and target fonts are the same', 'error'); return; }
+
+  pushUndo();
+  const cols = colVal === 'all' ? headers.map((_,i) => i).filter(i => colTypes[i] === 'text') : [parseInt(colVal)];
+  let count = 0;
+
+  rawData = rawData.map(row => {
+    cols.forEach(ci => {
+      const original = String(row[ci]);
+      let converted = original;
+      if (srcFont === 'krutidev' && tgtFont === 'unicode') {
+        converted = convertKrutidevToUnicode(original);
+      } else if (srcFont === 'devlys' && tgtFont === 'unicode') {
+        converted = convertKrutidevToUnicode(original); // Similar mapping
+      } else if (srcFont === 'unicode' && tgtFont === 'krutidev') {
+        converted = convertUnicodeToKrutidev(original);
+      } else if (srcFont === 'unicode' && tgtFont === 'devlys') {
+        converted = convertUnicodeToKrutidev(original);
+      } else if (srcFont === 'krutidev' && tgtFont === 'devlys') {
+        converted = convertUnicodeToKrutidev(convertKrutidevToUnicode(original));
+      } else if (srcFont === 'devlys' && tgtFont === 'krutidev') {
+        converted = convertUnicodeToKrutidev(convertKrutidevToUnicode(original));
+      }
+      if (converted !== original) count++;
+      row[ci] = converted;
+    });
+    return row;
+  });
+
+  renderTable();
+  toast(`Converted ${count} cells`, 'success');
+}
+
+// ====================== EXPORT ======================
+function exportExcel() {
+  if (rawData.length === 0) { toast('No data to export', 'error'); return; }
+  try {
+    const wb = XLSX.utils.book_new();
+    const indices = getDisplayData();
+
+    // Build data with headers
+    const exportData = [headers, ...indices.map(ri => rawData[ri])];
+    const ws = XLSX.utils.aoa_to_sheet(exportData);
+
+    // Apply conditional formatting colors as cell styles
+    if (cfRules.length > 0) {
+      for (let vi = 0; vi < indices.length; vi++) {
+        const ri = indices[vi];
+        for (let ci = 0; ci < headers.length; ci++) {
+          const style = getCellStyle(ri, ci);
+          if (style) {
+            const cellRef = XLSX.utils.encode_cell({r: vi + 1, c: ci});
+            if (!ws[cellRef]) ws[cellRef] = {t:'s', v:''};
+            if (!ws[cellRef].s) ws[cellRef].s = {};
+            // Extract background color from style
+            const bgColorMatch = style.match(/background-color:(#[0-9a-f]{6})([0-9a-f]{2})?/i);
+            if (bgColorMatch) {
+              ws[cellRef].s = {
+                fill: { fgColor: { rgb: bgColorMatch[1].replace('#','') } }
+              };
+            }
+          }
+        }
+      }
+    }
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Data');
+    XLSX.writeFile(wb, 'Simple-Data-Analyser-Export.xlsx');
+    toast('Excel exported successfully', 'success');
+  } catch(err) {
+    toast('Export error: ' + err.message, 'error');
+  }
+}
+
+function exportPDF() {
+  if (rawData.length === 0) { toast('No data to export', 'error'); return; }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
+    const indices = getDisplayData();
+    const maxRows = Math.min(indices.length, 500); // PDF limit
+
+    const head = [headers.map(h => h.substring(0, 20))];
+    const body = indices.slice(0, maxRows).map(ri => rawData[ri].map(c => String(c).substring(0, 30)));
+
+    // Collect cell styles from conditional formatting
+    const styles = [];
+    for (let vi = 0; vi < maxRows; vi++) {
+      const ri = indices[vi];
+      const rowStyles = [];
+      for (let ci = 0; ci < headers.length; ci++) {
+        const style = getCellStyle(ri, ci);
+        const bgColorMatch = style.match(/background-color:(#[0-9a-f]{6})([0-9a-f]{2})?/i);
+        if (bgColorMatch) {
+          rowStyles.push({ fillColor: bgColorMatch[1] });
+        } else {
+          rowStyles.push(null);
+        }
+      }
+      styles.push(rowStyles);
+    }
+
+    doc.setFontSize(14);
+    doc.text('Simple Data Analyser', 14, 15);
+    doc.setFontSize(9);
+    doc.text('Neeraj Purohit, Senior Assistant, Rajasthan Police', 14, 20);
+    doc.text(`Rows: ${indices.length} | Columns: ${headers.length}`, 14, 25);
+
+    doc.autoTable({
+      head,
+      body,
+      startY: 28,
+      styles: { fontSize: 7, cellPadding: 2, overflow: 'lineclip' },
+      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255] },
+      didParseCell: function(data) {
+        if (data.section === 'body') {
+          const ri = data.row.index;
+          const ci = data.column.index;
+          if (styles[ri] && styles[ri][ci]) {
+            const hex = styles[ri][ci].fillColor;
+            const r = parseInt(hex.slice(1,3),16);
+            const g = parseInt(hex.slice(3,5),16);
+            const b = parseInt(hex.slice(5,7),16);
+            data.cell.styles.fillColor = [r, g, b];
+          }
+        }
+      }
+    });
+
+    doc.save('Simple-Data-Analyser-Export.pdf');
+    toast('PDF exported successfully', 'success');
+  } catch(err) {
+    toast('Export error: ' + err.message, 'error');
+  }
+}
+
+// ====================== SAVE/LOAD ======================
+function saveState() {
+  try {
+    const state = { headers, rawData, colTypes, cfRules, activeFilters, sortCol, sortDir };
+    localStorage.setItem('sda_state', JSON.stringify(state));
+    toast('State saved to localStorage', 'success');
+  } catch(e) {
+    toast('Save error: ' + e.message, 'error');
+  }
+}
+
+function loadState() {
+  try {
+    const saved = localStorage.getItem('sda_state');
+    if (!saved) { toast('No saved state found', 'error'); return; }
+    const s = JSON.parse(saved);
+    headers = s.headers || [];
+    rawData = s.rawData || [];
+    colTypes = s.colTypes || [];
+    cfRules = s.cfRules || [];
+    activeFilters = s.activeFilters || [];
+    sortCol = s.sortCol || -1;
+    sortDir = s.sortDir || 'asc';
+    if (activeFilters.length) applyAllFilters();
+    else filteredData = null;
+    showTable();
+    toast('State loaded from localStorage', 'success');
+  } catch(e) {
+    toast('Load error: ' + e.message, 'error');
+  }
+}
+
+// ====================== UNDO ======================
+function pushUndo() {
+  undoStack.push({ headers: [...headers], rawData: rawData.map(r => [...r]), colTypes: [...colTypes] });
+  if (undoStack.length > 20) undoStack.shift();
+}
+
+function undoAction() {
+  if (undoStack.length === 0) { toast('Nothing to undo', 'info'); return; }
+  const prev = undoStack.pop();
+  headers = prev.headers;
+  rawData = prev.rawData;
+  colTypes = prev.colTypes;
+  filteredData = null;
+  activeFilters = [];
+  showTable();
+  toast('Undo successful', 'info');
+}
+
+// ====================== SAMPLE DATA ======================
+function loadSampleData() {
+  const sampleHeaders = ['Name', 'Department', 'Salary', 'Age', 'Join Date', 'City'];
+  const depts = ['Police','Admin','Accounts','IT','Legal','HR','Operations','Security'];
+  const cities = ['Jaipur','Jodhpur','Udaipur','Kota','Ajmer','Bikaner','Alwar','Sikar'];
+  const names = ['Rajesh Kumar','Sunil Sharma','Amit Patel','Priya Singh','Neeraj Purohit','Deepak Joshi','Kavita Meena','Suresh Yadav','Anita Verma','Vikram Chauhan','Pooja Agarwal','Manish Gupta','Rakesh Bohra','Lalita Devi','Harish Saini','Geeta Rajput','Dinesh Kumawat','Sunita Jain','Bhagwan Das','Kamla Sharma','Om Prakash','Rameshwar Lal','Shyam Sunder','Gopal Krishna','Mohan Lal','Hanuman Prasad','Shiv Raj','Durga Prasad','Laxmi Narayan','Ram Niwas'];
+
+  const sampleData = [];
+  for (let i = 0; i < 200; i++) {
+    const name = names[Math.floor(Math.random() * names.length)];
+    sampleData.push([
+      name + (i > 30 ? ' ' + (i+1) : ''),
+      depts[Math.floor(Math.random() * depts.length)],
+      (15000 + Math.floor(Math.random() * 85000)).toString(),
+      (22 + Math.floor(Math.random() * 38)).toString(),
+      `${2015 + Math.floor(Math.random()*9)}-${String(1+Math.floor(Math.random()*12)).padStart(2,'0')}-${String(1+Math.floor(Math.random()*28)).padStart(2,'0')}`,
+      cities[Math.floor(Math.random() * cities.length)]
+    ]);
+  }
+  // Add some duplicates and empty cells
+  sampleData.push([...sampleData[0]]);
+  sampleData.push(['', 'Admin', '', '30', '2020-01-15', 'Jaipur']);
+
+  importData([sampleHeaders, ...sampleData]);
+}
+
+// ====================== HELPERS ======================
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ====================== KEYBOARD SHORTCUTS ======================
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undoAction(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveState(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'v' && !e.target.closest('input,textarea')) { e.preventDefault(); pasteFromClipboard(); }
+});
+</script>
+</body>
+</html>
