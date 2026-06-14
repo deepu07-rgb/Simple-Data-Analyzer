@@ -19,6 +19,12 @@ import math
 import uuid
 import html as _html
 import webbrowser
+
+# Force UTF-8 output on Windows so Devanagari in print() doesn't crash
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 import threading
 import tempfile
 from pathlib import Path
