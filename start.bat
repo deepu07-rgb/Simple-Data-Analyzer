@@ -4,6 +4,7 @@ cd /d "%~dp0"
 title DataDrishti Launcher
 
 set PYTHON=runtime\python\python.exe
+set PYTHONW=runtime\python\pythonw.exe
 set OLLAMA=runtime\ollama\ollama.exe
 set MODEL=gemma3:4b
 set MODEL_SMALL=gemma3:2b
@@ -58,7 +59,7 @@ echo  [OK] Ollama AI engine ready
 tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /I "ollama.exe" >nul 2>&1
 if not errorlevel 1 goto :ollama_running
 echo  [..] Starting Ollama service...
-start /b "" "%OLLAMA%" serve
+start /min "Ollama" "%OLLAMA%" serve
 timeout /t 4 /nobreak >nul
 :ollama_running
 echo  [OK] Ollama service running
@@ -85,7 +86,7 @@ echo  [OK] AI model ready
 :start_flask
 echo  [..] Starting DataDrishti server...
 taskkill /F /FI "WINDOWTITLE eq DataDrishti*" >nul 2>&1
-start /b "" "%PYTHON%" app.py
+start "" "%PYTHONW%" app.py
 timeout /t 3 /nobreak >nul
 
 :: ---------- STEP 8: Open browser ----------------------------
