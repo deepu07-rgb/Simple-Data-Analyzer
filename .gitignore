@@ -52,3 +52,23 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Python & environments
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary office lock files
+~$*.docx
+~$*.xlsx
+
+# Runtime: keep Python interpreter, ignore installed packages (pip installs on first run)
+runtime/python/Lib/
+runtime/python/Scripts/
+runtime/python/__pycache__/
+# Keep ollama placeholder folder but ignore the actual exe (downloaded on first run)
+runtime/ollama/*.exe
+# Ignore model cache
+runtime/.ollama/

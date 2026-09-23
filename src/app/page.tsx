@@ -41,7 +41,7 @@ export default function Home() {
             animation: 'spin 0.6s linear infinite',
             margin: '0 auto 12px'
           }} />
-          <p>Loading Simple Data Analyser...</p>
+          <p>Loading Pragya Data Studio...</p>
           <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
         </div>
       </div>
@@ -74,7 +74,7 @@ export default function Home() {
         top: 0,
         left: 0,
       }}
-      title="Simple Data Analyser"
+      title="Pragya Data Studio"
     />
   )
 }
