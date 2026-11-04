@@ -48,7 +48,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_FONTS_DIR = BASE_DIR / "static" / "fonts"
-DOWNLOAD_DIR = BASE_DIR / "download"
+DIST_DIR = BASE_DIR / "dist"
+APP_HTML = "Stellura.html"
 
 app = Flask(__name__, static_folder="static")
 
@@ -474,19 +475,28 @@ def _build_dashboard_html(title, accent, row_count, col_count, gen_date,
 # Routes
 # ---------------------------------------------------------------------------
 
+def _ensure_built():
+    """Rebuild dist/Stellura.html from web/ when the sources are newer (development).
+    In a packaged install web/ is absent and the shipped dist/ file is used as-is."""
+    if not (BASE_DIR / "web" / "manifest.txt").exists():
+        return
+    try:
+        from tools import build
+        if build.is_stale():
+            build.build()
+    except Exception as exc:  # never block the app on a build problem if a build exists
+        print(f"  [WARN] Could not rebuild the web app: {exc}")
+
+
 @app.route("/")
 def serve_index():
-    """Serve the main Single-Page Application HTML file."""
-    html_path = DOWNLOAD_DIR / "Simple-Data-Analyser.html"
-    if not html_path.exists():
-        abort(404, description="Simple-Data-Analyser.html not found in /download folder.")
-    return send_from_directory(str(DOWNLOAD_DIR), "Simple-Data-Analyser.html")
-
-
-@app.route("/download/<path:filename>")
-def serve_download(filename):
-    """Serve static files from the download directory."""
-    return send_from_directory(str(DOWNLOAD_DIR), filename)
+    """Serve the main single-page application."""
+    _ensure_built()
+    if not (DIST_DIR / APP_HTML).exists():
+        abort(404, description="Web app not built. Run: python tools/build.py")
+    resp = send_from_directory(str(DIST_DIR), APP_HTML)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ---------------------------------------------------------------------------

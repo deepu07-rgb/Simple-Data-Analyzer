@@ -134,15 +134,32 @@ def test_vendored_libraries_exist():
     assert (ROOT / "static" / "alasql.min.js").exists()
 
 
+def _built_html():
+    import sys
+    sys.path.insert(0, str(ROOT))
+    from tools import build
+
+    return build.build_text()
+
+
 def test_frontend_references_no_external_hosts():
     """Offline promise: the page must not load anything from the internet."""
-    html = (ROOT / "public" / "Simple-Data-Analyser.html").read_text(encoding="utf-8")
+    html = _built_html()
     refs = re.findall(r"""(?:src|href)\s*=\s*["'](https?://[^"']+)["']""", html)
     refs += re.findall(r"""script\.src\s*=\s*['"](https?://[^'"]+)['"]""", html)
     assert refs == [], refs
 
 
-def test_both_html_copies_identical():
-    a = (ROOT / "public" / "Simple-Data-Analyser.html").read_bytes()
-    b = (ROOT / "download" / "Simple-Data-Analyser.html").read_bytes()
-    assert a == b
+def test_build_is_deterministic_and_served(client):
+    from tools import build
+
+    out = build.build()
+    assert out.read_bytes() == build.build_text().encode("utf-8")
+    assert client.get("/").data == out.read_bytes()
+
+
+def test_every_manifest_part_exists_and_none_is_orphaned():
+    manifest = (ROOT / "web" / "manifest.txt").read_text(encoding="utf-8")
+    listed = {l.split(" ", 1)[1].strip() for l in manifest.splitlines() if l.startswith("@file ")}
+    on_disk = {p.relative_to(ROOT / "web").as_posix() for p in (ROOT / "web").rglob("*") if p.is_file()} - {"manifest.txt"}
+    assert listed == on_disk

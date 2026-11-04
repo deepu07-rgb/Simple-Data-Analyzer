@@ -1,7 +1,7 @@
 /*
- * Stellura end-to-end checks (Phase 0). Needs: a running server and Playwright.
+ * Stellura end-to-end checks (offline promise, translations, X-Ray, audit, imports). Needs: a running server and Playwright.
  *   python app.py            (or PORT=5055 python app.py)
- *   BASE=http://127.0.0.1:5000 node tests/e2e/phase0.e2e.js
+ *   BASE=http://127.0.0.1:5000 node tests/e2e/core.e2e.js
  * Every request that leaves this PC is blocked and counted: the offline promise is a test.
  */
 const { chromium } = require('playwright');
@@ -11,7 +11,7 @@ const os = require('os');
 const XLSX = require(path.join(__dirname, '..', '..', 'static', 'js', 'xlsx.full.min.js'));
 
 const BASE = process.env.BASE || 'http://127.0.0.1:5000';
-const HTML = path.join(__dirname, '..', '..', 'public', 'Simple-Data-Analyser.html');
+const HTML = path.join(__dirname, '..', '..', 'dist', 'Stellura.html');
 let failures = 0;
 const ok = (cond, msg, extra) => {
   console.log((cond ? 'PASS ' : 'FAIL ') + msg + (cond || extra === undefined ? '' : '  -> ' + JSON.stringify(extra)));

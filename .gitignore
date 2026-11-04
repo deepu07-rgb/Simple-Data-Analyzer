@@ -76,3 +76,4 @@ runtime/.ollama/
 runtime/stellura.pid
 runtime/ollama_started_by_stellura
 .pytest_cache/
+dist/
