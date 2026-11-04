@@ -81,6 +81,13 @@ def test_profile(eng, tmp_path):
     assert eng.top_values(ds, 1)[0] == {"value": "वित्त", "count": 2}
 
 
+def test_codes_with_leading_zeros_are_text_not_numbers(eng):
+    ds = eng.load_rows(["phone", "salary"], [["0912345678", "100"], ["0987654321", "200"], ["0911111111", "300"]])["id"]
+    cols = {c["name"]: c["type"] for c in eng.profile(ds)["columns"]}
+    assert cols["phone"] != "number"          # kept as text so it is left-aligned and never summed
+    assert cols["salary"] == "number"
+
+
 def test_aggregate(eng, tmp_path):
     ds = eng.load_csv(_csv(tmp_path))["id"]
     r = eng.aggregate(ds, [1], [{"fn": "sum", "col": 2}, {"fn": "count"}])

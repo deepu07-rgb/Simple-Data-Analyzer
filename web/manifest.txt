@@ -9,6 +9,7 @@
 @file css/07-cosmos-and-constellation-p4-p5.css
 @file css/08-polish-p6.css
 @file css/09-agents-xray-whatif-audit-views.css
+@file css/10-large-file-and-projects.css
 @file html/10-layout.html
 @text "<script>\n"
 @file js/app/01-state-management.js
@@ -41,4 +42,7 @@
 @file js/xray/22-sql-engine-and-audit-trail.js
 @file js/xray/23-what-if-simulation.js
 @file js/xray/24-cognition-verification-tone.js
+@text "</script>\n<script>\n"
+@file js/engine/25-large-file-mode.js
+@file js/engine/26-projects-ui.js
 @file html/90-tail.html

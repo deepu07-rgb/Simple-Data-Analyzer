@@ -304,15 +304,17 @@ class Engine:
                 f"approx_count_distinct({c})",
                 f"count({_num(i)})",
                 f"min({_num(i)})", f"max({_num(i)})", f"avg({_num(i)})", f"sum({_num(i)})",
+                # codes such as phone numbers or file numbers keep leading zeros: they are text, not quantities
+                f"count(*) FILTER (WHERE regexp_matches({c}, '^0[0-9]+$'))",
             ]
         cur = self.db.cursor()
         r = cur.execute(f"SELECT {', '.join(sel)} FROM {d['table']}").fetchone()
         total = d["rows"]
         cols = []
         for i in range(n):
-            empty, distinct, numcount, mn, mx, avg, sm = r[i * 7:(i + 1) * 7]
+            empty, distinct, numcount, mn, mx, avg, sm, lead0 = r[i * 8:(i + 1) * 8]
             filled = total - empty
-            is_num = filled > 0 and numcount / filled >= 0.9
+            is_num = filled > 0 and numcount / filled >= 0.9 and lead0 / filled < 0.5
             cols.append({
                 "index": i, "name": d["headers"][i],
                 "type": "number" if is_num else ("categorical" if distinct <= max(20, total * 0.05) else "text"),

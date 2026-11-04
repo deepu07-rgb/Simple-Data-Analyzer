@@ -12,6 +12,7 @@ from engine import EngineError, get_engine, json_safe
 bp = Blueprint("engine", __name__)
 
 INLINE_ROWS = int(os.environ.get("STELLURA_INLINE_ROWS", 100_000))   # larger tables open in Large File mode
+COPY_MAX = 100_000                                                     # rows "Work on a copy" brings into the editor
 
 
 def _err(exc, code=400):
@@ -60,6 +61,27 @@ def load():
     if not body.get("headers"):
         return _err("Send a file, or headers and data.")
     return jsonify(eng.load_rows(body["headers"], body.get("data", []), body.get("name", "data")))
+
+
+@bp.route("/api/engine/<ds>/info")
+def info(ds):
+    """Used by the page to re-attach to a dataset after a refresh."""
+    return jsonify(get_engine().describe(ds))
+
+
+@bp.route("/api/engine/<ds>/copy", methods=["POST"])
+def copy_rows(ds):
+    """Up to COPY_MAX rows of the current view, for 'Work on a copy' in the normal editor."""
+    b = _body()
+    eng = get_engine()
+    limit = min(int(b.get("limit") or COPY_MAX), COPY_MAX)
+    t = eng.to_arrow(ds, b.get("search") or None, b.get("filters"), b.get("sort"),
+                     bool(b.get("desc")), bool(b.get("numeric")), limit + 1)
+    truncated = t.num_rows > limit
+    t = t.slice(0, limit)
+    cols = [c.to_pylist() for c in t.columns]
+    return jsonify({"headers": t.column_names, "rows": [list(r) for r in zip(*cols)] if cols else [],
+                    "truncated": truncated, "limit": limit})
 
 
 @bp.route("/api/engine/<ds>/drop", methods=["POST"])

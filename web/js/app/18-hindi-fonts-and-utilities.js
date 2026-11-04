@@ -37,7 +37,13 @@ function autoSave() {
     localStorage.setItem('sda_state_v2', JSON.stringify(state));
     const saveText = document.getElementById('saveStateText');
     if (saveText) saveText.textContent = 'Auto-saved';
-  } catch(e) { /* quota exceeded, silently fail */ }
+  } catch(e) {
+    // Browser storage is full (about 5 MB). Say so instead of pretending the work is saved.
+    const saveText = document.getElementById('saveStateText');
+    if (saveText) saveText.textContent = (typeof uiLanguage !== 'undefined' && uiLanguage === 'hi')
+      ? 'ऑटो-सेव नहीं हुआ (डेटा बड़ा है) — प्रोजेक्ट सहेजें'
+      : 'Not auto-saved (data too big) — Save project';
+  }
 }
 
 // =====================================================================

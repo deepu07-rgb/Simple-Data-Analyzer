@@ -13,12 +13,21 @@ python app.py            # http://127.0.0.1:5000  (this PC only)
 Windows users run `start.bat` (installs the local AI engine on first run) and `stop.bat`.
 The server listens on this PC only. To let other PCs on the office network connect, set `STELLURA_HOST=0.0.0.0` deliberately.
 
+## Large files and projects
+
+- **Large File mode:** files of 10 MB or more (CSV, TSV, XLSX), or *More → Open large file*, open in the local DuckDB engine instead of the browser. You get a fast scrolling grid, sort, search, filters, column profile, group-by with chart, a read-only SQL box, CSV/Excel export of the filtered view, and *Work on a copy* (up to 100,000 matching rows into the full editor).
+- **Projects:** *More → Projects* saves the table plus formatting, filters, steps and the audit trail as one `.stellura` file in `~/Stellura/Projects` (change with `STELLURA_HOME`). The file is a zip (`manifest.json`, `state.json`, `data.parquet`); the previous save is kept as `.bak`.
+- Settings (environment variables): `STELLURA_ENGINE_MEMORY` (default `1500MB`), `STELLURA_MAX_UPLOAD_MB` (default 1024), `STELLURA_INLINE_ROWS` (projects above this open in Large File mode, default 100000).
+- Benchmark: `python tests/bench_engine.py 1000000`.
+
 ## Test it
 
 ```bash
 pip install pytest
 python -m pytest tests -q                       # backend + offline-promise checks
-BASE=http://127.0.0.1:5000 node tests/e2e/core.e2e.js   # browser checks, all external network blocked
+BASE=http://127.0.0.1:5000 node tests/e2e/core.e2e.js    # browser checks, all external network blocked
+STELLURA_HOME=/tmp/stl-home python app.py                  # throw-away projects folder for the next test
+BASE=http://127.0.0.1:5000 node tests/e2e/large.e2e.js   # 250,000-row Large File mode + projects
 ```
 
 The browser test needs Node.js and Playwright. It fails if any request leaves the PC.
@@ -28,6 +37,8 @@ The browser test needs Node.js and Playwright. It fails if any request leaves th
 | Path | What |
 |---|---|
 | `app.py` | Local server: file upload, Excel/PDF/report export, AI proxy |
+| `engine.py`, `engine_api.py` | DuckDB analytics engine and its HTTP API |
+| `projects.py` | `.stellura` project files |
 | `web/` | Source of the web app: CSS, HTML and JavaScript parts listed in `web/manifest.txt`. **Edit these.** |
 | `tools/build.py` | Builds `dist/Stellura.html` (one offline file) from `web/`. `app.py` rebuilds automatically when sources change |
 | `static/` | Libraries and fonts served locally (no internet needed). Licences in `static/js/THIRD_PARTY_LICENSES.txt` |
