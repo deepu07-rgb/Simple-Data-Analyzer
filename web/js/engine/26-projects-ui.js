@@ -56,6 +56,7 @@
       s.ddConfirmed = (DD.model && DD.model.confirmed) || [];
     }
     s.stlSteps = (window.STL && STL.steps) || [];
+    s.stlPendency = (window.STL && STL.pendSnaps) || [];
     return s;
   }
 
@@ -69,6 +70,7 @@
       if (DD.model && Array.isArray(s.ddConfirmed)) DD.model.confirmed = s.ddConfirmed;
     }
     if (window.STL && Array.isArray(s.stlSteps)) { STL.steps = s.stlSteps; }
+    if (window.STL && Array.isArray(s.stlPendency)) { STL.pendSnaps = s.stlPendency; }
     if (s.documentName && $('documentName')) $('documentName').textContent = s.documentName;
     try { filteredData = null; populatePanelSelects(); showTable(); } catch (e) {}
     try { if (typeof renderCFRules === 'function') renderCFRules(); if (typeof renderActiveFilters === 'function') renderActiveFilters(); if (typeof renderValidationRules === 'function') renderValidationRules(); } catch (e) {}

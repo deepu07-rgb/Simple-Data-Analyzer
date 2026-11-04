@@ -412,11 +412,6 @@ function checkHindiEncodingInData() {
       `Krutidev/Devlys Hindi detected in ${krutidevCells} cells. Use Hindi panel → Convert to Unicode, or select cells and set Krutidev 010 font.`,
       'info'
     ), 1200);
-  } else if (unicodeHindiCells >= 3) {
-    setTimeout(() => toast(
-      `Unicode Hindi detected in ${unicodeHindiCells} cells. Select cells and choose Mangal/Nirmala font for best display.`,
-      'info'
-    ), 1200);
   }
 }
 

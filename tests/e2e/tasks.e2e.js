@@ -45,7 +45,7 @@ const MESSY_EXPECT = [['1', 'थाना 1', '11', '150000', '2025-04-01'], ['2
   }));
   ok(first.theme === 'light', 'new users get the light Office theme', first.theme);
   ok(first.mode === 'simple' && first.fmt === 'none' && first.formula === 'none', 'Simple mode hides the formatting bar and formula bar', first);
-  ok(first.tiles === 6, 'Home shows six task tiles', first.tiles);
+  ok(first.tiles === 11, 'Home shows eleven task tiles (6 everyday + 5 report tools)', first.tiles);
   ok(JSON.stringify(first.tabs) === JSON.stringify(['Data', 'Reports', 'Insights']) || JSON.stringify(first.tabs) === JSON.stringify(['Data', 'Insights', 'Reports']), 'Simple mode shows only Data, Insights and Reports', first.tabs);
 
   // ---- 2. command palette

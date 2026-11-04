@@ -24,7 +24,10 @@
     $('stlBusyMsg').textContent = msg;
   }
   function overlay(id, inner, wide) {
-    var old = $(id); if (old) old.remove();
+    // Removing a dialog whose input has focus fires blur/change handlers that may redraw it again: let those run first,
+    // then remove every old copy, so exactly one dialog is left.
+    var act = document.activeElement; if (act && act !== document.body && act.blur && $(id) && $(id).contains(act)) act.blur();
+    document.querySelectorAll('[id="' + id + '"]').forEach(function (e) { if (e.parentNode) e.parentNode.removeChild(e); });
     var o = document.createElement('div');
     o.id = id; o.className = 'big-busy prj-overlay stl-overlay';
     o.innerHTML = '<div class="prj-box stl-box' + (wide ? ' wide' : '') + '" role="dialog" aria-modal="true">' + inner + '</div>';
@@ -498,10 +501,15 @@
       ['🗃️', 'Open a large file', 'बड़ी फ़ाइल खोलें', 'Up to millions of rows', 'लाखों पंक्तियों तक', function () { BIG.pickFile(); }],
       ['💾', 'Open a project', 'प्रोजेक्ट खोलें', 'Continue saved work', 'सहेजा हुआ काम जारी रखें', function () { PRJ.openDialog(); }]
     ];
+    var extra = STL.extraTiles || [];                                                // tiles added by later modules: flagship tools first
+    tiles = extra.filter(function (t) { return t[6]; }).concat(tiles, extra.filter(function (t) { return !t[6]; }));
     home.innerHTML = '<div class="stl-home-t">' + T('What do you want to do?', 'आप क्या करना चाहते हैं?') + '</div><div class="stl-tiles">' +
       tiles.map(function (t, i) { return '<button class="stl-tile" data-i="' + i + '"><span class="stl-tile-i">' + t[0] + '</span><b>' + esc(T(t[1], t[2])) + '</b><span>' + esc(T(t[3], t[4])) + '</span></button>'; }).join('') + '</div>';
     home.querySelectorAll('.stl-tile').forEach(function (b) { b.onclick = tiles[+b.dataset.i][5]; });
   }
+
+  // shared with the report tools (web/js/reports/50-*.js)
+  STL.ui = { T: T, TT: TT, esc: esc, busy: busy, overlay: overlay, fmt: fmt, hasData: hasData, loadGrid: loadGrid, readGrid: readGrid, cleanFile: cleanFile, logStep: STL.logStep };
 
   // ================================================================= start-up
   function init() {

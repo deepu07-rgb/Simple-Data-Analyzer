@@ -65,6 +65,8 @@ HOST = os.environ.get("STELLURA_HOST", "127.0.0.1")
 # tools. Never allow arbitrary websites to call the local API.
 from engine_api import bp as engine_bp  # noqa: E402
 app.register_blueprint(engine_bp)
+from office_api import bp as office_bp  # noqa: E402
+app.register_blueprint(office_bp)
 
 CORS(app, origins=[
     f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}",

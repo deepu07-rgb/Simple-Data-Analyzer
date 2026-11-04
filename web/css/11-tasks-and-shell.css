@@ -71,8 +71,9 @@ html[data-stel-mode="pro"] #stlInsights{display:none}
 /* Simple mode: keep the screen calm. The live inspector is a Pro tool. */
 html[data-stel-mode="simple"] #live-inspector{display:none !important}
 .stl-fix > div{flex:1;min-width:0}
-/* messages must never cover the buttons of an open dialog: move them to the top while one is open */
-body:has(.stl-overlay) #toast-container,body:has(.prj-overlay) #toast-container{bottom:auto;top:14px}
+/* never more than the two newest messages: a pile of old ones covered dialog buttons */
+#toast-container .toast:nth-last-child(n+3){display:none}
 /* light theme: messages need dark text on a light card (they were near-white on white) */
 html[data-theme="light"] .toast{background:#ffffff !important;color:#1e293b !important;box-shadow:0 8px 24px rgba(30,41,59,.18) !important;border-top-color:#cbd5e1 !important;border-right-color:#cbd5e1 !important;border-bottom-color:#cbd5e1 !important}
 html[data-theme="light"] .toast *{color:inherit !important}
+html[data-theme="light"] .tb-btn.primary,html[data-theme="light"] .tb-btn.primary:hover,html[data-theme="light"] .tb-btn.primary:focus,html[data-theme="light"] .tb-btn.primary:active{color:#fff !important}

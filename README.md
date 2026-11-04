@@ -20,6 +20,14 @@ The server listens on this PC only. To let other PCs on the office network conne
 - **Clean a messy file** finds title rows, two-row headers, totals, repeated headers, merged-cell blanks, Hindi digits, "2.5 लाख" / "₹1,00,000/-" numbers, mixed dates and old Krutidev text, and shows before → after before changing anything. Steps can be saved as a **recipe** and repeated on next month's file.
 - **Combine files** stacks many Excel/CSV files and matches columns by meaning ("थाना" = "Police Station" = "PS Name"), showing anything uncertain for review.
 
+## Report tools
+
+- **Report Autopilot:** show it last month's filled Excel proforma and last month's data once. It works out which calculation produced each cell (count of rows per station, how many were pending, totals, averages, percentages, the total row), proves each rule against last month's numbers, then fills the same proforma from this month's data and keeps your formatting. Recipes remember it for next month. Charts or pictures inside the proforma may be lost when filling.
+- **Change Radar:** "what is different this month?" compares two files: how each number moved, where the movement is concentrated, and which records are new, gone or changed.
+- **Pendency Radar:** ageing of pending cases by station or officer (0-30, 31-90, 91-180, 181-365, over 365 days), deadline alerts and weekly snapshots.
+- **Letters from Data:** one letter per row, or one covering letter with the list, as Word (.docx) or through *Print / Save as PDF* (the browser shapes Hindi correctly).
+- **Find the same person:** Hindi/English spelling-tolerant name matching with father's name, place, age and mobile as extra evidence; you confirm every match.
+
 ## Large files and projects
 
 - **Large File mode:** files of 10 MB or more (CSV, TSV, XLSX), or *More → Open large file*, open in the local DuckDB engine instead of the browser. You get a fast scrolling grid, sort, search, filters, column profile, group-by with chart, a read-only SQL box, CSV/Excel export of the filtered view, and *Work on a copy* (up to 100,000 matching rows into the full editor).
@@ -32,11 +40,12 @@ The server listens on this PC only. To let other PCs on the office network conne
 ```bash
 pip install pytest
 python -m pytest tests -q                       # backend + offline-promise checks
-node --test tests/unit/*.test.js                # Messy File Fixer + Merge Anything logic (no browser needed)
+node --test tests/unit/*.test.js                # Fixer, Merge, Name Match, Pendency, Change Radar, Autopilot logic (no browser needed)
 BASE=http://127.0.0.1:5000 node tests/e2e/core.e2e.js    # browser checks, all external network blocked
 STELLURA_HOME=/tmp/stl-home python app.py                  # throw-away projects folder for the next test
 BASE=http://127.0.0.1:5000 node tests/e2e/large.e2e.js   # 250,000-row Large File mode + projects
 BASE=http://127.0.0.1:5000 node tests/e2e/tasks.e2e.js   # Home, Simple/Pro, command palette, Clean a messy file, Combine files
+BASE=http://127.0.0.1:5000 PY=python node tests/e2e/reports.e2e.js  # Autopilot, Change Radar, Pendency Radar, Letters, Name Match
 ```
 
 The browser test needs Node.js and Playwright. It fails if any request leaves the PC.
