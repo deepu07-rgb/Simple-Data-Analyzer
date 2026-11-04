@@ -58,12 +58,12 @@ const UI_TEXT = {
     suggestionsTitle:'Smart recommendations',
     suggestionsSubtitle:'Local rules inspect your data and suggest useful next actions. No data leaves this device.',
     // Batch 2 labels
-    viewSheet:'Sheet', viewAgents:'Agents', viewReports:'Reports',
+    viewSheet:'Data', viewAgents:'Recipes', viewReports:'Reports',
     modules:'Modules', dragToWorkspace:'Drag to Workspace',
     agentsTitle:'Agents', dragModuleHere:'Drag a module here to begin',
     modAvg:'Find the average', modChart:'Make a chart',
     modFilter:'Filter rows', modReport:'Write a report',
-    viewXray:'X-Ray', viewWhatif:'What-If', viewAudit:'Audit',
+    viewXray:'Structure', viewWhatif:'What-If', viewAudit:'History',
     xrayFindings:'Findings', xrayTrustBanner:'Detected automatically — please verify',
     showLineage:'Show lineage'
   },
@@ -95,12 +95,12 @@ const UI_TEXT = {
     suggestionsTitle:'स्मार्ट सुझाव',
     suggestionsSubtitle:'स्थानीय नियम डेटा देखकर उपयोगी अगला कदम सुझाते हैं। डेटा इस डिवाइस से बाहर नहीं जाता।',
     // Batch 2 labels (Hindi)
-    viewSheet:'शीट', viewAgents:'एजेंट', viewReports:'रिपोर्ट',
+    viewSheet:'डेटा', viewAgents:'रेसिपी', viewReports:'रिपोर्ट',
     modules:'मॉड्यूल', dragToWorkspace:'वर्कस्पेस में खींचें',
     agentsTitle:'एजेंट', dragModuleHere:'शुरू करने के लिए मॉड्यूल खींचें',
     modAvg:'औसत निकालें', modChart:'चार्ट बनाएं',
     modFilter:'पंक्तियाँ फ़िल्टर करें', modReport:'रिपोर्ट लिखें',
-    viewXray:'एक्स-रे', viewWhatif:'क्या-अगर', viewAudit:'ऑडिट',
+    viewXray:'संरचना', viewWhatif:'क्या-अगर', viewAudit:'इतिहास',
     xrayFindings:'खोज', xrayTrustBanner:'स्वतः पहचाना गया — कृपया जाँचें',
     showLineage:'स्रोत देखें'
   }

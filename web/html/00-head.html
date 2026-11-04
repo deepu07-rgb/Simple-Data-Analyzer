@@ -17,10 +17,11 @@
   • Debounced _ddSaveNodes() with 400 ms timer (reduces localStorage churn)
   • RAF-gated _ddRedrawEdges() inside _ddNodeDragMove() (one redraw/frame)
 ================================================================ -->
-<html lang="en" data-theme="dark" data-stel-view="sheet">
+<html lang="en" data-theme="light" data-stel-mode="simple" data-stel-view="sheet">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try{if(localStorage.getItem('sda_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');var m=localStorage.getItem('stellura_mode');if(m)document.documentElement.setAttribute('data-stel-mode',m)}catch(e){}</script>
 <title>Stellura — Living Data Intelligence</title>
 <!-- Chart.js loaded dynamically on demand -->
 <script src="/static/js/xlsx.full.min.js"></script>

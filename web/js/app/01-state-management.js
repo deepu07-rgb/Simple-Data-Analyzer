@@ -90,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function loadThemePreference() {
   // Aetheris is dark-first: cosmic dark by default, light only if the user explicitly chose it.
   const saved = localStorage.getItem('sda_theme');
-  const theme = saved === 'light' ? 'light' : 'dark';
+  const theme = saved === 'dark' ? 'dark' : 'light';          // Office (light) by default, Cosmos (dark) if chosen
   document.documentElement.setAttribute('data-theme', theme);
   updateThemeIcon();
 }

@@ -55,6 +55,7 @@
       s.ddEdges = (DD.workspace && DD.workspace.edges) || [];
       s.ddConfirmed = (DD.model && DD.model.confirmed) || [];
     }
+    s.stlSteps = (window.STL && STL.steps) || [];
     return s;
   }
 
@@ -67,6 +68,7 @@
       if (DD.workspace) { DD.workspace.nodes = s.ddNodes || []; DD.workspace.edges = s.ddEdges || []; }
       if (DD.model && Array.isArray(s.ddConfirmed)) DD.model.confirmed = s.ddConfirmed;
     }
+    if (window.STL && Array.isArray(s.stlSteps)) { STL.steps = s.stlSteps; }
     if (s.documentName && $('documentName')) $('documentName').textContent = s.documentName;
     try { filteredData = null; populatePanelSelects(); showTable(); } catch (e) {}
     try { if (typeof renderCFRules === 'function') renderCFRules(); if (typeof renderActiveFilters === 'function') renderActiveFilters(); if (typeof renderValidationRules === 'function') renderValidationRules(); } catch (e) {}
@@ -140,7 +142,8 @@
       close();
       if (r.data) {                                        // normal editor
         if (window.BIG && BIG.active) BIG.exit();
-        importData([r.dataset.headers].concat(r.data));
+        if (window.STL) STL._quiet = true;
+        try { importData([r.dataset.headers].concat(r.data)); } finally { if (window.STL) STL._quiet = false; }
         applyState(r.state);
         try { if (window.DD) { DD.provenance = r.state.ddProvenance || DD.provenance; } } catch (e) {}
       } else {                                             // too big for the editor -> Large File mode
