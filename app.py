@@ -53,7 +53,7 @@ APP_HTML = "Stellura.html"
 
 app = Flask(__name__, static_folder="static")
 
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload limit
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("STELLURA_MAX_UPLOAD_MB", 1024)) * 1024 * 1024  # default 1 GB
 
 PORT = int(os.environ.get("PORT", 5000))
 
@@ -63,6 +63,9 @@ HOST = os.environ.get("STELLURA_HOST", "127.0.0.1")
 
 # The app is served from the same origin, so CORS is only needed for local dev
 # tools. Never allow arbitrary websites to call the local API.
+from engine_api import bp as engine_bp  # noqa: E402
+app.register_blueprint(engine_bp)
+
 CORS(app, origins=[
     f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}",
 ])
@@ -2677,7 +2680,7 @@ def not_found(e):
 
 @app.errorhandler(413)
 def too_large(e):
-    return jsonify({"error": "File too large. Maximum upload size is 50 MB."}), 413
+    return jsonify({"error": "File too large for this PC setting (STELLURA_MAX_UPLOAD_MB)."}), 413
 
 
 @app.errorhandler(500)
