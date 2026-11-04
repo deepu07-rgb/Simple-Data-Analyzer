@@ -51,11 +51,22 @@ STATIC_FONTS_DIR = BASE_DIR / "static" / "fonts"
 DOWNLOAD_DIR = BASE_DIR / "download"
 
 app = Flask(__name__, static_folder="static")
-CORS(app)
 
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload limit
 
 PORT = int(os.environ.get("PORT", 5000))
+
+# Security: listen on this PC only. Set STELLURA_HOST=0.0.0.0 only if you
+# deliberately want other PCs on the office network to reach the app.
+HOST = os.environ.get("STELLURA_HOST", "127.0.0.1")
+
+# The app is served from the same origin, so CORS is only needed for local dev
+# tools. Never allow arbitrary websites to call the local API.
+CORS(app, origins=[
+    f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}",
+])
+
+PID_FILE = BASE_DIR / "runtime" / "stellura.pid"
 
 # ---------------------------------------------------------------------------
 # Async Export Job Store
@@ -90,14 +101,20 @@ def _safe_value(val):
             return None
         return val
     if isinstance(val, datetime):
-        return val.isoformat()
+        if val.hour == 0 and val.minute == 0 and val.second == 0:
+            return val.date().isoformat()
+        return val.isoformat(sep=" ")
     return str(val)
 
 
 def _parse_excel(file_bytes, filename, sheet_name=None):
-    """Parse an Excel file and return headers, rows, and sheet names."""
+    """Parse an .xlsx workbook: return headers, rows, sheet names and per-sheet size."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
     sheet_names = wb.sheetnames
+    sheet_info = [
+        {"name": n, "rows": max((wb[n].max_row or 1) - 1, 0), "cols": wb[n].max_column or 0}
+        for n in sheet_names
+    ]
 
     # Select the requested sheet (default: first)
     if sheet_name and sheet_name in sheet_names:
@@ -108,7 +125,8 @@ def _parse_excel(file_bytes, filename, sheet_name=None):
 
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
-        return {"headers": [], "data": [], "sheets": sheet_names, "activeSheet": sheet_name}
+        return {"headers": [], "data": [], "sheets": sheet_names,
+                "sheetInfo": sheet_info, "activeSheet": sheet_name}
 
     headers = [str(h) if h is not None else f"Column {i+1}" for i, h in enumerate(rows[0])]
     data = [[_safe_value(cell) for cell in row] for row in rows[1:]]
@@ -117,6 +135,7 @@ def _parse_excel(file_bytes, filename, sheet_name=None):
         "headers": headers,
         "data": data,
         "sheets": sheet_names,
+        "sheetInfo": sheet_info,
         "activeSheet": sheet_name,
     }
 
@@ -491,7 +510,10 @@ def upload_file():
     file_bytes = file.read()
 
     try:
-        if filename.endswith((".xlsx", ".xls")):
+        if filename.endswith(".xls"):
+            return jsonify({"error": "legacy_xls",
+                            "message": "Legacy .xls is read in the browser."}), 415
+        if filename.endswith(".xlsx"):
             sheet = request.form.get("sheet") or request.args.get("sheet")
             result = _parse_excel(file_bytes, file.filename, sheet_name=sheet)
         elif filename.endswith(".csv"):
@@ -1179,7 +1201,7 @@ def ollama_status():
         r = req.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
         if r.status_code == 200:
             models = [m["name"] for m in r.json().get("models", [])]
-            active = next((m for m in models if "gemma" in m.lower()), models[0] if models else OLLAMA_MODEL)
+            active = OLLAMA_MODEL if OLLAMA_MODEL in models else (models[0] if models else OLLAMA_MODEL)
             return jsonify({"status": "running", "model": active, "models": models})
         return jsonify({"status": "error"}), 502
     except Exception:
@@ -2536,8 +2558,8 @@ def health_check():
     """Simple health-check endpoint."""
     return jsonify({
         "status": "ok",
-        "server": "Stellura — Data Vision Studio v2.1",
-        "version": "2.1.0",
+        "server": "Stellura — Data Vision Studio v2.3",
+        "version": "2.3.0",
         "port": PORT,
         "timestamp": datetime.now().isoformat(),
         "features": ["excel_export", "pdf_export", "dashboard_html_export", "async_export", "hindi_support", "watermarks", "cell_formatting"]
@@ -2691,10 +2713,10 @@ def _open_browser():
 if __name__ == "__main__":
     print()
     print("  +------------------------------------------------------+")
-    print("  |   Stellura (स्टेल्यूरा) v2.2 - Backend          |")
+    print("  |   Stellura (स्टेल्यूरा) v2.3 - Backend          |")
     print("  |   Intelligent Data Analyzer — Made in India          |")
     print("  +------------------------------------------------------+")
-    print(f"  |  Server  : http://localhost:{PORT}                      |")
+    print(f"  |  Server  : http://localhost:{PORT}  (this PC only)       |")
     print(f"  |  AI Model: {OLLAMA_MODEL} (local, offline)        |")
     print("  |  Dev: Neeraj Purohit, Sr. Asst, Rajasthan Police     |")
     print("  |  Press Ctrl+C to stop                                |")
@@ -2707,4 +2729,13 @@ if __name__ == "__main__":
     # Open browser in background thread
     threading.Thread(target=_open_browser, daemon=True).start()
 
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    # Record our own PID so stop.bat stops only this app, never other programs.
+    try:
+        PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError as exc:
+        print(f"  [WARN] Could not write PID file: {exc}")
+    import atexit
+    atexit.register(lambda: PID_FILE.unlink(missing_ok=True))
+
+    app.run(host=HOST, port=PORT, debug=False)

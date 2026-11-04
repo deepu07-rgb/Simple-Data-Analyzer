@@ -23,10 +23,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stellura — Living Data Intelligence</title>
 <!-- Chart.js loaded dynamically on demand -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="/static/js/xlsx.full.min.js"></script>
+<script src="/static/js/jspdf.umd.min.js"></script>
+<script src="/static/js/jspdf.plugin.autotable.min.js"></script>
+<script src="/static/js/html2canvas.min.js"></script>
 <style>
 /* ===== CSS DESIGN SYSTEM ===== */
 /* ===== OFFLINE FONT STACK (Batch 1) — NO CDN. Inter/Sora aliased to Segoe UI Variable ===== */
@@ -7864,7 +7864,10 @@ const UI_TEXT = {
     modules:'Modules', dragToWorkspace:'Drag to Workspace',
     agentsTitle:'Agents', dragModuleHere:'Drag a module here to begin',
     modAvg:'Find the average', modChart:'Make a chart',
-    modFilter:'Filter rows', modReport:'Write a report'
+    modFilter:'Filter rows', modReport:'Write a report',
+    viewXray:'X-Ray', viewWhatif:'What-If', viewAudit:'Audit',
+    xrayFindings:'Findings', xrayTrustBanner:'Detected automatically — please verify',
+    showLineage:'Show lineage'
   },
   hi: {
     import:'आयात',analysis:'विश्लेषण',filter:'फ़िल्टर',format:'फॉर्मेट',cleanup:'सफाई',chart:'चार्ट',
@@ -7898,7 +7901,10 @@ const UI_TEXT = {
     modules:'मॉड्यूल', dragToWorkspace:'वर्कस्पेस में खींचें',
     agentsTitle:'एजेंट', dragModuleHere:'शुरू करने के लिए मॉड्यूल खींचें',
     modAvg:'औसत निकालें', modChart:'चार्ट बनाएं',
-    modFilter:'पंक्तियाँ फ़िल्टर करें', modReport:'रिपोर्ट लिखें'
+    modFilter:'पंक्तियाँ फ़िल्टर करें', modReport:'रिपोर्ट लिखें',
+    viewXray:'एक्स-रे', viewWhatif:'क्या-अगर', viewAudit:'ऑडिट',
+    xrayFindings:'खोज', xrayTrustBanner:'स्वतः पहचाना गया — कृपया जाँचें',
+    showLineage:'स्रोत देखें'
   }
 };
 
@@ -7966,37 +7972,16 @@ function setUiLanguage(lang, persist = true) {
 function toggleSidebar() { /* Sidebar retired in Batch 14 — no-op */ }
 
 function ensureChartLibrary(callback) {
-  if (window.Chart) {
-    Chart.defaults.devicePixelRatio = Math.max(window.devicePixelRatio || 1, 3);
+  const ready = () => {
+    if (window.Chart) Chart.defaults.devicePixelRatio = Math.max(window.devicePixelRatio || 1, 3);
     if (callback) callback();
-    return;
-  }
-  toast('Loading charting library...', 'info');
+  };
+  if (window.Chart) { ready(); return; }
+  // Chart.js ships with the app (static/js) - no internet needed.
   const script = document.createElement('script');
-  script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
-  script.onload = () => {
-    toast('Charting library loaded', 'success');
-    if (window.Chart) {
-      Chart.defaults.devicePixelRatio = Math.max(window.devicePixelRatio || 1, 3);
-    }
-    if (callback) callback();
-  };
-  script.onerror = () => {
-    toast('Failed to load Chart.js from CDN. Attempting offline fallback...', 'warning');
-    const fallback = document.createElement('script');
-    fallback.src = '/static/js/chart.js';
-    fallback.onload = () => {
-      toast('Charting library loaded from offline fallback', 'success');
-      if (window.Chart) {
-        Chart.defaults.devicePixelRatio = Math.max(window.devicePixelRatio || 1, 3);
-      }
-      if (callback) callback();
-    };
-    fallback.onerror = () => {
-      toast('Could not load Chart.js offline.', 'error');
-    };
-    document.head.appendChild(fallback);
-  };
+  script.src = '/static/js/chart.min.js';
+  script.onload = ready;
+  script.onerror = () => toast('Charting library is missing from static/js — please reinstall Stellura.', 'error');
   document.head.appendChild(script);
 }
 
@@ -8216,26 +8201,80 @@ function processFile(file) {
   const documentName = document.getElementById('documentName');
   if (documentName) documentName.textContent = file.name.replace(/\.[^.]+$/, '');
   const ext = file.name.split('.').pop().toLowerCase();
-  if (ext === 'xlsx' || ext === 'xls') {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: 'array' });
-        if (wb.SheetNames.length > 1) {
-          showSheetSelector(wb);
-        } else {
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-          importData(json);
-        }
-      } catch(err) { toast('Error reading Excel: ' + err.message, 'error'); }
-    };
-    reader.readAsArrayBuffer(file);
+  if (ext === 'xlsx') {
+    importXlsxViaServer(file);
+  } else if (ext === 'xls') {
+    readWorkbookInBrowser(file);
   } else {
     const reader = new FileReader();
     reader.onload = (e) => parseCSVTSV(e.target.result);
     reader.readAsText(file);
   }
+}
+
+// Browser-side reader (used for legacy .xls, and if the local server is unreachable)
+function readWorkbookInBrowser(file) {
+  if (!window.XLSX) { toast('Excel reader is missing from static/js — please reinstall Stellura.', 'error'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      if (wb.SheetNames.length > 1) {
+        showSheetSelector(wb);
+      } else {
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        importData(json);
+      }
+    } catch(err) { toast('Error reading Excel: ' + err.message, 'error'); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// .xlsx files are parsed by the local Python server (openpyxl): safer and faster than
+// parsing untrusted workbooks inside the page.
+let pendingServerFile = null;
+
+function _importServerResult(res) {
+  const rows = (res.data || []).map(r => r.map(c => (c == null ? '' : c)));
+  importData([res.headers || []].concat(rows));
+}
+
+function importXlsxViaServer(file, sheetName) {
+  const fd = new FormData();
+  fd.append('file', file);
+  if (sheetName) fd.append('sheet', sheetName);
+  fetch('/api/upload', { method: 'POST', body: fd })
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => {
+      if (!ok) throw new Error(j.message || j.error || 'Upload failed');
+      if (!sheetName && (j.sheets || []).length > 1) showServerSheetSelector(file, j);
+      else _importServerResult(j);
+    })
+    .catch(err => {
+      if (window.XLSX) readWorkbookInBrowser(file);
+      else toast('Error reading Excel: ' + err.message, 'error');
+    });
+}
+
+function showServerSheetSelector(file, res) {
+  pendingServerFile = file;
+  pendingWorkbook = null;
+  pendingSheets = res.sheets;
+  selectedSheetIdx = 0;
+  const info = res.sheetInfo || [];
+  let html = '';
+  res.sheets.forEach((name, i) => {
+    const meta = info[i] || {};
+    html += `<div class="sheet-item ${i===0?'selected':''}" onclick="selectSheet(${i})" data-idx="${i}">
+      <div>
+        <div class="sheet-name">📄 ${escHtml(name)}</div>
+        <div class="sheet-info">${meta.rows || 0} rows × ${meta.cols || 0} columns</div>
+      </div>
+    </div>`;
+  });
+  document.getElementById('sheetList').innerHTML = html;
+  showModal('sheetModal');
 }
 
 // Multi-sheet Excel import
@@ -8270,6 +8309,14 @@ function selectSheet(idx) {
 }
 
 function importSelectedSheet() {
+  if (pendingServerFile) {
+    const file = pendingServerFile;
+    const name = pendingSheets[selectedSheetIdx];
+    pendingServerFile = null;
+    closeModal('sheetModal');
+    importXlsxViaServer(file, name);
+    return;
+  }
   if (!pendingWorkbook) return;
   const ws = pendingWorkbook.Sheets[pendingSheets[selectedSheetIdx]];
   const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -12051,7 +12098,7 @@ function exportDashboardPNG() {
     toast('Open Dashboard first', 'error'); return;
   }
   if (typeof html2canvas === 'undefined') {
-    toast('html2canvas not loaded — check your internet connection', 'error'); return;
+    toast('html2canvas is missing from static/js — please reinstall Stellura', 'error'); return;
   }
   const exportBar = document.getElementById('dash-export-bar');
   if (exportBar) exportBar.style.visibility = 'hidden';
@@ -12082,7 +12129,7 @@ function exportDashboardPDF() {
     toast('Open Dashboard first', 'error'); return;
   }
   if (typeof html2canvas === 'undefined') {
-    toast('html2canvas not loaded — check your internet connection', 'error'); return;
+    toast('html2canvas is missing from static/js — please reinstall Stellura', 'error'); return;
   }
   const exportBar = document.getElementById('dash-export-bar');
   if (exportBar) exportBar.style.visibility = 'hidden';
@@ -17201,6 +17248,16 @@ function _xFindKeys(){
 }
 
 // ── Relationship discovery (approx inclusion dependency) ─────────────────
+// Names overlap only if they share an informative word (generic words such as
+// "id", "no", "code" or "name" do not count) or one name contains the other.
+var _X_GENERIC={id:1,no:1,sr:1,sl:1,code:1,name:1,date:1,of:1,num:1,number:1,type:1};
+function _xNameOverlap(x,y){
+  var nx=String(x).toLowerCase().replace(/[\s_\-\.\/]+/g,''),ny=String(y).toLowerCase().replace(/[\s_\-\.\/]+/g,'');
+  if(nx.length>=4&&ny.length>=4&&(nx.includes(ny)||ny.includes(nx))) return true;
+  var tx=String(x).toLowerCase().split(/[\s_\-\.\/]+/).filter(function(t){return t.length>=3&&!_X_GENERIC[t];});
+  var ty=String(y).toLowerCase().split(/[\s_\-\.\/]+/).filter(function(t){return t.length>=3&&!_X_GENERIC[t];});
+  return tx.some(function(t){return ty.indexOf(t)>=0;});
+}
 function _xFindRel(){
   DD.model.relationships=[];
   var cols=DD.model.columns;
@@ -17222,17 +17279,13 @@ function _xFindRel(){
     for(var j=0;j<cols.length;j++){
       if(i===j||pairs.length>=MAX_PAIRS) break;
       var a=cols[i],b=cols[j];
-      if(a.cardinalityRatio<0.05||a.distinct<2) continue;
-      var na=a.key.toLowerCase().replace(/[\s_\-]/g,'');
-      var nb=b.key.toLowerCase().replace(/[\s_\-]/g,'');
+      // A foreign key must point at a real key (unique, filled) and must repeat
+      // enough to be meaningful. Small numbers inside a 1..n serial column are not links.
+      if(a.distinct<8||b.cardinalityRatio<0.98||b.nullRate>0.02) continue;
       var sameSem=((a.semantic==='id'||a.semantic==='code')&&(b.semantic==='id'||b.semantic==='code'));
-      var nameOvlp=(na.length>2&&nb.length>2)&&(
-        na.startsWith(nb.slice(0,3))||nb.startsWith(na.slice(0,3))||
-        na.endsWith(nb.slice(-3))||nb.endsWith(na.slice(-3))||
-        na.includes(nb)||nb.includes(na)
-      );
-      var isKey=keySet.has(a.key)||keySet.has(b.key);
-      if(!sameSem&&!nameOvlp&&!isKey) continue;
+      var nameOvlp=_xNameOverlap(a.key,b.key);
+      if(!sameSem&&!nameOvlp) continue;
+      if(a.type==='number'&&a.semantic!=='id'&&!nameOvlp) continue;
       if(!pairs.some(function(p){return p[0]===i&&p[1]===j;})) pairs.push([i,j]);
     }
     if(pairs.length>=MAX_PAIRS) break;
@@ -17258,9 +17311,12 @@ function _xFindDep(){
   for(var ai=0;ai<cols.length;ai++){
     var ca=cols[ai];
     if(ca.distinct<2||ca.distinct>MAX_A) continue;
+    // a numeric measure (rating, salary) does not "determine" a category
+    if(ca.type==='number'&&ca.semantic!=='code'&&ca.semantic!=='id') continue;
     for(var bi=0;bi<cols.length;bi++){
       if(ai===bi) continue;
-      var grp={},gsz={};
+      if(cols[bi].distinct<2) continue;
+      var grp={},gsz={},gb={};
       for(var ri=0;ri<SAMPLE;ri++){
         var av=rows[ri][ai],bv=rows[ri][bi];
         var as=(av==null)?'':String(av).trim();
@@ -17268,7 +17324,7 @@ function _xFindDep(){
         if(!as) continue;
         if(!grp[as]){grp[as]={};gsz[as]=0;}
         grp[as][bs]=(grp[as][bs]||0)+1;
-        gsz[as]++;
+        gsz[as]++;gb[bs]=(gb[bs]||0)+1;
       }
       var totalR=0,confR=0;
       Object.keys(grp).forEach(function(gk){
@@ -17278,7 +17334,11 @@ function _xFindDep(){
         if(mx/sz>=0.95) confR+=sz;
       });
       var conf=totalR>0?confR/totalR:0;
-      if(conf>=0.95){
+      // must beat what chance alone gives (share of the most common value) and have real group sizes
+      var gbMax=0;Object.keys(gb).forEach(function(k){if(gb[k]>gbMax)gbMax=gb[k];});
+      var baseline=totalR>0?gbMax/totalR:1;
+      var nGroups=Object.keys(grp).length;
+      if(conf>=0.95&&(conf-baseline)>=0.2&&nGroups>0&&totalR/nGroups>=3){
         DD.model.dependencies.push({id:'dep_'+(id++),from:ca.key,to:cols[bi].key,confidence:Math.round(conf*1000)/1000});
       }
     }
@@ -17704,7 +17764,57 @@ var _pvFilterActor='all';
 var _pvSelectedId=null;
 var _pvLastLoadSig='';
 
-// FNV-1a 32-bit hash (synchronous, tamper-evident)
+// SHA-256 (synchronous, pure JS) - used for the audit hash chain
+var _PV_GENESIS='0'.repeat(64);
+var _PV_SHA={K:null,H0:null};
+function _pvSHA256(str){
+  if(!_PV_SHA.K){
+    var K=[],H=[],n=2;
+    while(K.length<64){
+      var pr=true;for(var d=2;d*d<=n;d++){if(n%d===0){pr=false;break;}}
+      if(pr){K.push(Math.floor((Math.cbrt(n)%1)*4294967296)>>>0);if(H.length<8)H.push(Math.floor((Math.sqrt(n)%1)*4294967296)>>>0);}
+      n++;
+    }
+    _PV_SHA.K=K;_PV_SHA.H0=H;
+  }
+  var KK=_PV_SHA.K,h=_PV_SHA.H0.slice();
+  var bytes=new TextEncoder().encode(str),len=bytes.length;
+  var total=((len+9+63)>>6)<<6,m=new Uint8Array(total);
+  m.set(bytes);m[len]=0x80;
+  var dv=new DataView(m.buffer);
+  dv.setUint32(total-8,Math.floor(len*8/4294967296));dv.setUint32(total-4,(len*8)>>>0);
+  var w=new Uint32Array(64),i;
+  for(var off=0;off<total;off+=64){
+    for(i=0;i<16;i++)w[i]=dv.getUint32(off+i*4);
+    for(i=16;i<64;i++){
+      var x=w[i-15],y=w[i-2];
+      var s0=((x>>>7)|(x<<25))^((x>>>18)|(x<<14))^(x>>>3);
+      var s1=((y>>>17)|(y<<15))^((y>>>19)|(y<<13))^(y>>>10);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;
+    }
+    var a=h[0],b=h[1],c=h[2],dd=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+    for(i=0;i<64;i++){
+      var S1=((e>>>6)|(e<<26))^((e>>>11)|(e<<21))^((e>>>25)|(e<<7));
+      var ch=(e&f)^(~e&g);
+      var t1=(hh+S1+ch+KK[i]+w[i])>>>0;
+      var S0=((a>>>2)|(a<<30))^((a>>>13)|(a<<19))^((a>>>22)|(a<<10));
+      var mj=(a&b)^(a&c)^(b&c);
+      var t2=(S0+mj)>>>0;
+      hh=g;g=f;f=e;e=(dd+t1)>>>0;dd=c;c=b;b=a;a=(t1+t2)>>>0;
+    }
+    h[0]=(h[0]+a)>>>0;h[1]=(h[1]+b)>>>0;h[2]=(h[2]+c)>>>0;h[3]=(h[3]+dd)>>>0;
+    h[4]=(h[4]+e)>>>0;h[5]=(h[5]+f)>>>0;h[6]=(h[6]+g)>>>0;h[7]=(h[7]+hh)>>>0;
+  }
+  return h.map(function(v){return v.toString(16).padStart(8,'0');}).join('');
+}
+// Hash of one event. Old logs (8-hex-digit FNV hashes) still verify; new events use SHA-256.
+function _pvHashFor(e){
+  var payload=JSON.stringify({id:e.id,ts:e.ts,actor:e.actor,action:e.action,method:e.method||'',target:e.target||'',inputs:(e.inputs||[]).join(','),output:e.output||'',label:e.label||'',dataVersion:e.dataVersion,prevHash:e.prevHash});
+  return (e.hash&&e.hash.length===8)?_pvFNV(payload):_pvSHA256(payload);
+}
+function _pvIsGenesis(h){return h==='00000000'||h===_PV_GENESIS;}
+
+// FNV-1a 32-bit hash - legacy, kept only to verify logs written by older versions
 function _pvFNV(str){
   var h=0x811c9dc5>>>0;
   for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h=(h*0x01000193)>>>0;}
@@ -17715,10 +17825,10 @@ function _pvFNV(str){
 function _pvLog(ev){
   window.DD=window.DD||{};DD.provenance=DD.provenance||[];
   var prev=DD.provenance.length?DD.provenance[DD.provenance.length-1]:null;
-  var prevHash=prev?prev.hash:'00000000';
+  var prevHash=prev?prev.hash:_PV_GENESIS;
   var id='pv_'+Date.now()+'_'+(++_pvSeq);
   var entry=Object.assign({},ev,{id:id,ts:Date.now(),dataVersion:DD.pvVersion||0,prevHash:prevHash});
-  entry.hash=_pvFNV(JSON.stringify({id:entry.id,ts:entry.ts,actor:entry.actor,action:entry.action,method:entry.method||'',target:entry.target||'',inputs:(entry.inputs||[]).join(','),output:entry.output||'',label:entry.label||'',dataVersion:entry.dataVersion,prevHash:prevHash}));
+  entry.hash=_pvSHA256(JSON.stringify({id:entry.id,ts:entry.ts,actor:entry.actor,action:entry.action,method:entry.method||'',target:entry.target||'',inputs:(entry.inputs||[]).join(','),output:entry.output||'',label:entry.label||'',dataVersion:entry.dataVersion,prevHash:prevHash}));
   DD.provenance.push(entry);
   // Compact if > 500 events
   if(DD.provenance.length>500) _pvCheckpoint();
@@ -17774,10 +17884,8 @@ function _pvVerify(){
   for(var i=0;i<pv.length;i++){
     var e=pv[i];
     if(e.action==='CHECKPOINT') continue; // skip checkpoint meta-events
-    var prevHash=(i===0)?'00000000':(pv[i-1].action==='CHECKPOINT'?pv[i-1].hash:pv[i-1].hash);
-    if(e.prevHash!==prevHash){broken=i;break;}
-    var expectedHash=_pvFNV(JSON.stringify({id:e.id,ts:e.ts,actor:e.actor,action:e.action,method:e.method||'',target:e.target||'',inputs:(e.inputs||[]).join(','),output:e.output||'',label:e.label||'',dataVersion:e.dataVersion,prevHash:e.prevHash}));
-    if(e.hash!==expectedHash){broken=i;break;}
+    if(i===0?!_pvIsGenesis(e.prevHash):e.prevHash!==pv[i-1].hash){broken=i;break;}
+    if(e.hash!==_pvHashFor(e)){broken=i;break;}
   }
   banner.style.display='block';
   if(broken<0){
@@ -17977,9 +18085,8 @@ function _pvGetChain(id,pv){
 function _pvGetVerifyStatus(pv){
   for(var i=0;i<pv.length;i++){
     var e=pv[i];if(e.action==='CHECKPOINT') continue;
-    var prevHash=(i===0)?'00000000':pv[i-1].hash;
-    if(e.prevHash!==prevHash) return false;
-    var exp=_pvFNV(JSON.stringify({id:e.id,ts:e.ts,actor:e.actor,action:e.action,method:e.method||'',target:e.target||'',inputs:(e.inputs||[]).join(','),output:e.output||'',label:e.label||'',dataVersion:e.dataVersion,prevHash:e.prevHash}));
+    if(i===0?!_pvIsGenesis(e.prevHash):e.prevHash!==pv[i-1].hash) return false;
+    var exp=_pvHashFor(e);
     if(e.hash!==exp) return false;
   }
   return true;
