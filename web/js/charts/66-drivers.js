@@ -113,12 +113,13 @@
     return Object.keys(by).map(function (q) { return by[q]; });
   };
   // which columns to test, and against which stronger ones: the 3 strongest real causes
+  // every real factor (1% or more) against EVERY stronger real factor; stand-ins found on the way are not used as
+  // the stronger column for others (markStandIns goes strongest first)
   D.standInPairs = function (ranked) {
-    var real = ranked.filter(function (r) { return !r.derived && !r.walls; }), strong = real.slice(0, 3), pairs = [];
-    real.slice(1).forEach(function (r) { if (r.omega2 < 0.01) return; strong.forEach(function (z) { if (z !== r && z.omega2 > r.omega2) pairs.push({ x: r, z: z }); }); });
+    var real = ranked.filter(function (r) { return !r.derived && !r.walls && r.omega2 >= 0.01; }), pairs = [];
+    real.forEach(function (r, i) { for (var k = 0; k < i; k++) if (real[k].omega2 > r.omega2) pairs.push({ x: r, z: real[k] }); });
     return pairs;
   };
-  // results: [{ x, z, within }] -> marks r.standIn = { col, name, within } when almost nothing is left inside z
   D.markStandIns = function (ranked, results) {
     // strongest first, so a column that is itself a stand-in is never used to explain another one
     ranked.forEach(function (r) {
@@ -128,64 +129,210 @@
     return ranked;
   };
   D.findStandIns = function (ranked, rows, idx, y, noZero) {
-    return D.markStandIns(ranked, D.standInPairs(ranked).map(function (p) { return { x: p.x, z: p.z, within: D.within(D.pairCells(rows, idx, y, p.x, p.z, noZero)).omega2 }; }));
+    var C = CH(), pairs = D.standInPairs(ranked); if (!pairs.length) return ranked;
+    // each column's group of every row, as a small whole number, once; then a pair is one pass over typed arrays
+    var keep = [], ys = [];
+    for (var k = 0; k < idx.length; k++) { var v = C.num(rows[idx[k]][y]); if (v === null || (noZero && v === 0)) continue; keep.push(idx[k]); ys.push(v); }
+    var codes = {}, sizes = {};
+    pairs.forEach(function (p) { [p.x, p.z].forEach(function (c) { if (codes[c.col]) return; var map = {}, m = 0, a = new Int32Array(keep.length); for (var t = 0; t < keep.length; t++) { var key = keyOf(rows[keep[t]], c, C); a[t] = key in map ? map[key] : (map[key] = m++); } codes[c.col] = a; sizes[c.col] = m; }); });
+    return D.markStandIns(ranked, pairs.map(function (p) {
+      var ax = codes[p.x.col], az = codes[p.z.col], kx = sizes[p.x.col], cells = {};
+      for (var t = 0; t < keep.length; t++) { var key = az[t] * kx + ax[t], o = cells[key] || (cells[key] = { z: az[t], x: ax[t], n: 0, sy: 0, syy: 0 }); o.n++; o.sy += ys[t]; o.syy += ys[t] * ys[t]; }
+      return { x: p.x, z: p.z, within: D.within(Object.keys(cells).map(function (q) { return cells[q]; })).omega2 };
+    }));
   };
 
   // ---------------------------------------------------------------- rule finder
-  // How is a label made? A small decision tree (Gini, like CART) on the number columns, then one readable rule per
-  // leaf: "Exemplary: plate waste ≤ 9.9 and arrival temperature ≥ 55 and local sourcing ≥ 75".
-  //   features: [{ col, name }]   opt: { depth: 5, minLeaf }   ->  { rules, accuracy, n, used: [names], classes }
+  // How is a label made? A small decision tree (Gini, like CART) on the number columns, cut at ROUND numbers
+  // ("waste < 10", "waste ≥ 10": no value falls between two rules), then turned into a SHORT ORDERED LIST - the first
+  // rule that fits gives the label, the rest is "otherwise" - with every condition that does not help dropped:
+  //   1. temperature < 48 → Non-compliant   2. waste < 10 and temperature ≥ 60 and sourcing ≥ 75 → Exemplary
+  //   3. waste ≥ 20, or temperature < 55, or cost ≥ 14,000 → Marginal          otherwise → Standard
+  // Large inputs are learned from a sample that keeps every label (weighted back) and then checked on every row.
+  //   features: [{ col, name }]   opt: { depth: 5, minLeaf, weights: { label: w }, maxRows: 20000 }
+  //   -> { list: [{ label, conds: [{ col, name, min?, max? }], n, right }], otherwise: { label, n, right },
+  //        accuracy, n, used, usedCols, classes, learnedOn }
+  D.niceCut = function (a, b) {                                   // the roundest number c with a < c <= b
+    if (!(b > a)) return b;
+    for (var k = 9; k >= -9; k--) {
+      var steps = [Math.pow(10, k) * 5, Math.pow(10, k) * 2, Math.pow(10, k)];
+      for (var t = 0; t < steps.length; t++) {
+        var st = steps[t], c = Math.ceil(a / st) * st; c = +c.toPrecision(12); if (c <= a) c = +(c + st).toPrecision(12);
+        if (c > a && c <= b) return c;
+      }
+    }
+    return b;
+  };
+  function fits(conds, X, i) { for (var q = 0; q < conds.length; q++) { var c = conds[q], v = X[c.j][i]; if (c.min !== undefined && !(v >= c.min)) return false; if (c.max !== undefined && !(v < c.max)) return false; } return true; }
   D.findRule = function (rows, idx, labelCol, features, opt) {
-    opt = opt || {}; var C = CH(), maxDepth = opt.depth || 5;
-    var lab = [], X = features.map(function () { return []; }), cls = {}, names = [];
-    idx.forEach(function (i) { var r = rows[i], l = s(r[labelCol]).trim(); if (!l) return; if (!(l in cls)) { cls[l] = names.length; names.push(l); } lab.push(cls[l]); features.forEach(function (f, j) { var v = C.num(r[f.col]); X[j].push(v === null ? Infinity : v); }); });
-    var n = lab.length, K = names.length, minLeaf = opt.minLeaf || Math.max(10, Math.round(n * 0.003));
-    if (n < 30 || K < 2) return null;
-    function counts(ids) { var c = new Array(K).fill(0); ids.forEach(function (i) { c[lab[i]]++; }); return c; }
-    function gini(c, m) { if (!m) return 0; var g = 1; c.forEach(function (x) { g -= (x / m) * (x / m); }); return g; }
-    function major(c) { var b = 0; c.forEach(function (x, i) { if (x > c[b]) b = i; }); return b; }
+    opt = opt || {}; var C = CH(), maxDepth = opt.depth || 5, W = opt.weights || null;
+    // the rows to learn from: all of them, or (over maxRows) an equal share of every label, weighed back
+    var byLab = {}, order = [];
+    idx.forEach(function (i) { var l = s(rows[i][labelCol]).trim(); if (!l) return; if (!byLab[l]) { byLab[l] = []; order.push(l); } byLab[l].push(i); });
+    var all = 0; order.forEach(function (l) { all += byLab[l].length; });
+    var maxRows = opt.maxRows || 20000, learn = [], wOf = {};
+    if (all > maxRows && !W) {
+      var per = Math.max(50, Math.floor(maxRows / Math.max(1, order.length)));
+      order.forEach(function (l) { var list = byLab[l], take = Math.min(per, list.length), step = list.length / take; for (var t = 0; t < take; t++) learn.push(list[Math.floor(t * step)]); wOf[l] = list.length / take; });
+    } else { order.forEach(function (l) { learn = learn.concat(byLab[l]); wOf[l] = W && W[l] ? W[l] : 1; }); }
+    var names = order.slice(), cls = {}; names.forEach(function (l, k) { cls[l] = k; });
+    var K = names.length, n = learn.length; if (n < 30 || K < 2) return null;
+    var lab = new Int32Array(n), w = new Float64Array(n), X = features.map(function () { return new Float64Array(n); });
+    learn.forEach(function (ri, k) { var l = s(rows[ri][labelCol]).trim(); lab[k] = cls[l]; w[k] = wOf[l]; features.forEach(function (f, j) { var v = C.num(rows[ri][f.col]); X[j][k] = v === null ? Infinity : v; }); });
+    var minLeaf = opt.minLeaf || Math.max(10, Math.round(n * 0.003));
+    function counts(ids) { var c = new Float64Array(K); for (var t = 0; t < ids.length; t++) c[lab[ids[t]]] += w[ids[t]]; return c; }
+    function sum(c) { var x = 0; for (var t = 0; t < c.length; t++) x += c[t]; return x; }
+    function gini(c, m) { if (!(m > 0)) return 0; var g = 1; for (var t = 0; t < c.length; t++) g -= (c[t] / m) * (c[t] / m); return g; }
+    function major(c) { var b = 0; for (var t = 1; t < c.length; t++) if (c[t] > c[b]) b = t; return b; }
     function grow(ids, depth) {
-      var c = counts(ids), m = ids.length, node = { n: m, cls: major(c), right: c[major(c)] };
-      if (depth >= maxDepth || node.right === m || m < 2 * minLeaf) return node;
+      var c = counts(ids), m = sum(c), node = { cls: major(c) };
+      if (depth >= maxDepth || c[node.cls] >= m - 1e-9 || ids.length < 2 * minLeaf) return node;
       var g0 = gini(c, m), best = null;
       features.forEach(function (f, j) {
-        var col = X[j], ord = ids.slice().sort(function (a, b) { return col[a] - col[b]; }), L = new Array(K).fill(0), R = c.slice();
-        for (var t = 0; t < m - 1; t++) {
-          var i = ord[t]; L[lab[i]]++; R[lab[i]]--;
-          var a = col[i], b = col[ord[t + 1]]; if (a === b || t + 1 < minLeaf || m - t - 1 < minLeaf || b === Infinity) continue;
-          var gain = g0 - ((t + 1) * gini(L, t + 1) + (m - t - 1) * gini(R, m - t - 1)) / m;
-          if (!best || gain > best.gain + 1e-12) best = { gain: gain, j: j, lo: a, hi: b, cut: t + 1, ord: ord };
+        var col = X[j], ord = Array.prototype.slice.call(ids).sort(function (a, b) { return col[a] - col[b]; }), L = new Float64Array(K), R = Float64Array.from(c), lm = 0;
+        for (var t = 0; t < ids.length - 1; t++) {
+          var i = ord[t]; L[lab[i]] += w[i]; R[lab[i]] -= w[i]; lm += w[i];
+          var a = col[i], b = col[ord[t + 1]]; if (a === b || t + 1 < minLeaf || ids.length - t - 1 < minLeaf || b === Infinity) continue;
+          var gain = g0 - (lm * gini(L, lm) + (m - lm) * gini(R, m - lm)) / m;
+          if (!best || gain > best.gain + 1e-12) best = { gain: gain, j: j, a: a, b: b, cut: t + 1, ord: ord };
         }
       });
       if (!best || best.gain < 1e-4) return node;
-      node.f = best.j; node.lo = best.lo; node.hi = best.hi;
+      node.f = best.j; node.v = D.niceCut(best.a, best.b);
       node.l = grow(best.ord.slice(0, best.cut), depth + 1); node.r = grow(best.ord.slice(best.cut), depth + 1);
-      if (!node.l.f && node.l.f !== 0 && !node.r.f && node.r.f !== 0 && node.l.cls === node.r.cls) { delete node.f; delete node.l; delete node.r; }   // both sides say the same: one leaf
+      if (node.l.f === undefined && node.r.f === undefined && node.l.cls === node.r.cls) { delete node.f; delete node.l; delete node.r; }
       return node;
     }
-    var root = grow(lab.map(function (_, i) { return i; }), 0), leaves = [], used = {};
-    (function walk(nd, conds) {
-      if (nd.f === undefined) { leaves.push({ cls: nd.cls, n: nd.n, right: nd.right, conds: conds }); return; }
-      used[nd.f] = 1;
-      walk(nd.l, conds.concat([{ j: nd.f, op: '<=', v: nd.lo }])); walk(nd.r, conds.concat([{ j: nd.f, op: '>=', v: nd.hi }]));
-    })(root, []);
-    var right = 0; leaves.forEach(function (l) { right += l.right; });
-    var rules = leaves.map(function (l) {
-      var b = {}; l.conds.forEach(function (c) { var o = b[c.j] || (b[c.j] = {}); if (c.op === '<=') o.max = o.max === undefined ? c.v : Math.min(o.max, c.v); else o.min = o.min === undefined ? c.v : Math.max(o.min, c.v); });
-      return { label: names[l.cls], n: l.n, right: l.right, conds: Object.keys(b).map(function (j) { return { col: features[j].col, name: features[j].name, min: b[j].min, max: b[j].max }; }) };
-    }).sort(function (a, b) { return a.label < b.label ? -1 : a.label > b.label ? 1 : b.n - a.n; });
-    return { rules: rules, accuracy: right / n, n: n, used: Object.keys(used).map(function (j) { return features[j].name; }), usedCols: Object.keys(used).map(function (j) { return features[j].col; }), classes: names };
+    var root = grow(Array.from({ length: n }, function (_, k) { return k; }), 0), leaves = [];
+    (function walk(nd, b) {
+      if (nd.f === undefined) { var cs = []; Object.keys(b).forEach(function (j) { if (isFinite(b[j].min)) cs.push({ j: +j, min: b[j].min }); if (isFinite(b[j].max)) cs.push({ j: +j, max: b[j].max }); }); leaves.push({ cls: nd.cls, conds: cs }); return; }   // each end of a range on its own, so either can be dropped
+      var lb = JSON.parse(JSON.stringify(b)), rb = JSON.parse(JSON.stringify(b));
+      (lb[nd.f] = lb[nd.f] || {}).max = Math.min(lb[nd.f].max === undefined ? Infinity : lb[nd.f].max, nd.v);
+      var r0 = (rb[nd.f] = rb[nd.f] || {}); r0.min = Math.max(r0.min === undefined ? -Infinity : r0.min, nd.v);
+      walk(nd.l, lb); walk(nd.r, rb);
+    })(root, {});
+    // the ordered list: again and again take the rule that labels most rows (among the nearly most precise ones) on
+    // the rows not yet labelled, after dropping every condition that costs (almost) no precision there. Every label is
+    // tried as "otherwise"; the simplest list that is (nearly) as accurate as the best one wins.
+    var tol = opt.tol || 0.002, ALL = Array.from({ length: n }, function (_, k) { return k; });
+    function score(conds, k, ids) { var cov = 0, ok = 0; for (var t = 0; t < ids.length; t++) { var i = ids[t]; if (fits(conds, X, i)) { cov += w[i]; if (lab[i] === k) ok += w[i]; } } return { cov: cov, ok: ok, p: cov > 0 ? ok / cov : 0 }; }
+    function simplify(rule, ids) {
+      var conds = rule.conds.slice(), cur = score(conds, rule.cls, ids), changed = true;
+      while (changed && conds.length) {
+        changed = false; var best = null;
+        for (var q = 0; q < conds.length; q++) { var tr = conds.slice(0, q).concat(conds.slice(q + 1)), sc = score(tr, rule.cls, ids); if (sc.p >= cur.p - tol && (!best || sc.p > best.sc.p + 1e-12 || (Math.abs(sc.p - best.sc.p) <= 1e-12 && sc.cov > best.sc.cov))) best = { conds: tr, sc: sc }; }
+        if (best) { conds = best.conds; cur = best.sc; changed = true; }
+      }
+      return { cls: rule.cls, conds: conds, sc: cur };
+    }
+    function acc(L, dflt) { var ok = 0, tot = 0; for (var i = 0; i < n; i++) { var p = dflt; for (var q = 0; q < L.length; q++) if (fits(L[q].conds, X, i)) { p = L[q].cls; break; } tot += w[i]; if (p === lab[i]) ok += w[i]; } return ok / tot; }
+    function build(dflt) {
+      var left = ALL.slice(), list = [], cand = leaves.filter(function (r) { return r.cls !== dflt; });
+      while (left.length && cand.length && list.length < 12) {
+        var opts = cand.map(function (r, ci) { var sr = simplify(r, left), dw = score(sr.conds, dflt, left).ok; return { ci: ci, sr: sr, gain: sr.sc.ok - dw }; }).filter(function (o) { return o.gain > 0 && o.sr.sc.cov >= minLeaf * 0.5; });
+        if (!opts.length) break;
+        var maxP = Math.max.apply(null, opts.map(function (o) { return o.sr.sc.p; }));
+        var pick = opts.filter(function (o) { return o.sr.sc.p >= maxP - 0.01; }).sort(function (a, b) { return b.sr.sc.cov - a.sr.sc.cov; })[0];
+        list.push({ cls: pick.sr.cls, conds: pick.sr.conds }); cand.splice(pick.ci, 1);
+        left = left.filter(function (i) { return !fits(pick.sr.conds, X, i); });
+      }
+      var a0 = acc(list, dflt);
+      for (var q = list.length - 1; q >= 0; q--) { var tr = list.slice(0, q).concat(list.slice(q + 1)), a1 = acc(tr, dflt); if (a1 >= a0 - 0.0005) { list = tr; a0 = a1; } }   // drop rules the rest already gets right
+      return { list: list, dflt: dflt, acc: a0, size: list.reduce(function (a, r) { return a + r.conds.length + 1; }, 0) };
+    }
+    var tries = names.map(function (_, k) { return build(k); }), bestAcc = Math.max.apply(null, tries.map(function (t) { return t.acc; }));
+    var chosen = tries.filter(function (t) { return t.acc >= bestAcc - 0.003; }).sort(function (a, b) { return a.size - b.size || b.acc - a.acc; })[0];
+    var list = chosen.list, dflt = chosen.dflt;
+    // a cut inherited from a split made for other rows may sit a little off: slide every cut to the nearby round
+    // values (25 distinct values either side) and keep a move that makes the whole list more accurate
+    var sorted = features.map(function (_, j) { var u = {}; for (var i = 0; i < n; i++) if (isFinite(X[j][i])) u[X[j][i]] = 1; return Object.keys(u).map(Number).sort(function (a, b) { return a - b; }); });
+    var cur = acc(list, dflt);
+    list.forEach(function (r) { r.conds.forEach(function (c) {
+      ['min', 'max'].forEach(function (side) {
+        if (c[side] === undefined) return; var u = sorted[c.j], at = 0; while (at < u.length && u[at] < c[side]) at++;
+        var best = c[side];
+        for (var d = -25; d <= 25; d++) { var k = at + d; if (k <= 0 || k >= u.length || d === 0) continue; var v = D.niceCut(u[k - 1], u[k]); if (v === best) continue; var keep = c[side]; c[side] = v; var a = acc(list, dflt); if (a > cur + 1e-12) { cur = a; best = v; } c[side] = keep; }
+        c[side] = best;
+      });
+    }); });
+    // polish: drop any condition the whole list does not need; move a line up when that lets a condition go, and next
+    // to a line with the same label (they then read as one line with "or")
+    var floor = acc(list, dflt) - 0.002, pass = 0;
+    function dropAll(L) {
+      var a = acc(L, dflt), did = false;
+      L.forEach(function (r) { for (var q = r.conds.length - 1; q >= 0; q--) { var keep = r.conds.splice(q, 1)[0], b = acc(L, dflt); if (b >= a - 0.0005 && b >= floor) { a = b; did = true; } else r.conds.splice(q, 0, keep); } });
+      return did;
+    }
+    var size = function (L) { return L.reduce(function (a, r) { return a + r.conds.length; }, 0); };
+    dropAll(list);
+    for (var moved = true; moved && pass < 20; pass++) {
+      moved = false; var a0 = acc(list, dflt);
+      for (var i = 1; i < list.length && !moved; i++) {
+        for (var to = 0; to < i && !moved; to++) {
+          var tr = list.slice(); var it = tr.splice(i, 1)[0]; tr.splice(to, 0, it); tr = tr.map(function (r) { return { cls: r.cls, conds: r.conds.slice() }; });
+          var a1 = acc(tr, dflt); if (a1 < a0 - 1e-9) continue;
+          var before = size(tr); dropAll(tr);
+          var groups = function (L) { var g = 0; L.forEach(function (r, k) { if (!k || L[k - 1].cls !== r.cls) g++; }); return g; };
+          if (size(tr) < before || groups(tr) < groups(list)) { list = tr; moved = true; }
+        }
+      }
+    }
+    var used = {}; list.forEach(function (r) { r.conds.forEach(function (c) { used[c.j] = 1; }); });
+    var out = {
+      list: list.map(function (r) { var by = {}, ord = []; r.conds.forEach(function (c) { var o = by[c.j]; if (!o) { o = by[c.j] = { col: features[c.j].col, name: features[c.j].name }; ord.push(o); } if (c.min !== undefined) o.min = c.min; if (c.max !== undefined) o.max = c.max; }); return { label: names[r.cls], conds: ord, n: 0, right: 0 }; }),
+      otherwise: { label: names[dflt], n: 0, right: 0 }, classes: names,
+      used: Object.keys(used).map(function (j) { return features[j].name; }), usedCols: Object.keys(used).map(function (j) { return features[j].col; }),
+      learnedOn: n, sampled: n < all
+    };
+    // how the list does on EVERY row given (not only the ones it learned from)
+    D.checkRule(out, rows, idx, labelCol);
+    return out;
   };
-  // for every column flagged as a possible label: the rule that makes it, from the number and the other number columns
-  D.addRules = function (ranked, rows, idx, y, yName, cands) {
-    var feats = [{ col: y, name: yName }].concat(cands.filter(function (c) { return c.kind === 'num' && c.col !== y && !D.sharesName(c.name, yName).length; }).map(function (c) { return { col: c.col, name: c.name }; }));
-    ranked.forEach(function (r) { if (r.walls) { try { r.rule = D.findRule(rows, idx, r.col, feats); } catch (e) { r.rule = null; } } });
-    return ranked;
+  D.checkRule = function (q, rows, idx, labelCol) {
+    var C = CH(), tot = 0, ok = 0;
+    q.list.forEach(function (r) { r.n = 0; r.right = 0; }); q.otherwise.n = 0; q.otherwise.right = 0;
+    idx.forEach(function (i) {
+      var r = rows[i], l = s(r[labelCol]).trim(); if (!l) return;
+      var hit = q.otherwise;
+      for (var k = 0; k < q.list.length; k++) { var ru = q.list[k], good = true; for (var c = 0; c < ru.conds.length && good; c++) { var cd = ru.conds[c], v = C.num(r[cd.col]); v = v === null ? Infinity : v; if (cd.min !== undefined && !(v >= cd.min)) good = false; if (cd.max !== undefined && !(v < cd.max)) good = false; } if (good) { hit = ru; break; } }
+      hit.n++; tot++; if (l === hit.label) { hit.right++; ok++; }
+    });
+    q.n = tot; q.accuracy = tot ? ok / tot : 0; q.checkedOn = tot;
+    return q;
+  };
+  // the same check on every row of a large file, by the engine
+  D.applyCheck = function (q, res) {
+    q.list.forEach(function (r, k) { r.n = res.rules[k].n; r.right = res.rules[k].right; });
+    q.otherwise.n = res.otherwise.n; q.otherwise.right = res.otherwise.right; q.n = res.n; q.accuracy = res.n ? res.right / res.n : 0; q.checkedOn = res.n;
+    return q;
+  };
+  // consecutive rules with the same label read as one line: "waste ≥ 20, or temperature < 55, or cost ≥ 14,000"
+  D.ruleLines = function (q) {
+    var out = [];
+    q.list.forEach(function (r) { var last = out[out.length - 1]; if (last && last.label === r.label) { last.parts.push(r); last.n += r.n; last.right += r.right; } else out.push({ label: r.label, parts: [r], n: r.n, right: r.right }); });
+    return out;
+  };
+  // 99.954% must not read as 100%
+  D.accText = function (a) { var p = a * 100; return (p < 100 && p >= 99.95 ? (Math.floor(p * 100) / 100).toFixed(2) : p >= 99.95 ? '100' : p.toFixed(1)) + '%'; };
+  D.condText = function (c, hi) {
+    var f = function (v) { return Math.abs(v) >= 1000 ? CH().indian(v) : String(+v.toPrecision(10)); };
+    if (c.min !== undefined && c.max !== undefined) return f(c.min) + ' ≤ ' + c.name + ' < ' + f(c.max);
+    return c.name + (c.max !== undefined ? ' < ' + f(c.max) : ' ≥ ' + f(c.min));
   };
   D.ruleText = function (rule, hi) {
-    var f = function (v) { return Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 1000) / 1000); };
     if (!rule.conds.length) return hi ? 'बाकी सभी पंक्तियाँ' : 'all other rows';
-    return rule.conds.map(function (c) { return c.min !== undefined && c.max !== undefined ? c.name + ' ' + f(c.min) + '–' + f(c.max) : c.name + (c.max !== undefined ? ' ≤ ' + f(c.max) : ' ≥ ' + f(c.min)); }).join(hi ? ' और ' : ' and ');
+    return rule.conds.map(function (c) { return D.condText(c, hi); }).join(hi ? ' और ' : ' and ');
+  };
+  D.lineText = function (line, hi) { return line.parts.map(function (r) { return D.ruleText(r, hi); }).join(hi ? ', या ' : ', or '); };
+
+  // for every column flagged as a possible label: the rule that makes it, from the number and the other number columns
+  D.ruleFeatures = function (y, yName, cands) {
+    return [{ col: y, name: yName }].concat(cands.filter(function (c) { return c.kind === 'num' && c.col !== y && !D.sharesName(c.name, yName).length; }).slice(0, 30).map(function (c) { return { col: c.col, name: c.name }; }));
+  };
+  D.addRules = function (ranked, rows, idx, y, yName, cands) {
+    var feats = D.ruleFeatures(y, yName, cands);
+    ranked.forEach(function (r) { if (r.walls) { try { r.rule = D.findRule(rows, idx, r.col, feats); } catch (e) { r.rule = null; } } });
+    return ranked;
   };
 
   D.summary = function (ranked, yName, hi) {
@@ -204,7 +351,7 @@
       var weak = causes.filter(function (r) { return r.omega2 < 0.01; }).map(function (r) { return r.name; });
       if (weak.length) out.push(hi ? 'लगभग कोई संबंध नहीं (1% से कम): ' + weak.slice(0, 6).join(', ') + (weak.length > 6 ? ' …' : '।') : 'Almost no link (under 1% each): ' + weak.slice(0, 6).join(', ') + (weak.length > 6 ? ' …' : '.'));
     } else out.push(hi ? 'किसी भी कॉलम का “' + yName + '” से स्पष्ट संबंध नहीं।' : 'No column goes clearly with “' + yName + '”.');
-    var ruleLine = function (r) { var q = r.rule; if (!q || q.accuracy < 0.8) return ''; return hi ? ' एक नियम (' + q.used.join(', ') + ' पर) इसे ' + f(q.accuracy) + ' पंक्तियों में दोहराता है — नीचे देखें।' : ' A rule on ' + q.used.join(', ') + ' reproduces it for ' + f(q.accuracy) + ' of rows — see below.'; };
+    var ruleLine = function (r) { var q = r.rule; if (!q || q.accuracy < 0.8) return ''; return hi ? ' एक नियम (' + q.used.join(', ') + ' पर) इसे ' + D.accText(q.accuracy) + ' पंक्तियों में दोहराता है — नीचे देखें।' : ' A rule on ' + q.used.join(', ') + ' reproduces it for ' + D.accText(q.accuracy) + ' of rows — see below.'; };
     lab.forEach(function (r) { var w = r.walls[0], e = n2(w.edge);
       out.push(hi ? '“' + r.name + '” शायद “' + yName + '” से तय होने वाला लेबल है: हर “' + w.label + '” पंक्ति में यह ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ' है, जबकि बाकी ' + Math.round(w.beyond * 100) + '% पंक्तियाँ इसके पार हैं। इसे कारण मानने से पहले जाँचें; निष्पक्ष तुलना इसे अपने-आप नहीं चुनती।' + ruleLine(r)
                   : '“' + r.name + '” may be a label given BY “' + yName + '”: every “' + w.label + '” row has it ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ', while ' + Math.round(w.beyond * 100) + '% of the other rows lie beyond. Check before treating it as a cause; Fair comparison does not pick it by itself.' + ruleLine(r)); });
@@ -270,15 +417,30 @@
     })).then(function (list) {
       var ranked = D.markWalls(D.finish(list, H[y]), S.rows, S.idx, y, DS.noZero), pairs = D.standInPairs(ranked);
       // stand-ins: the engine adds up every (column, stronger column) pair
-      return Promise.all(pairs.map(function (p) {
-        var body = Object.assign({ kind: 'fair', y: y, factor: p.x.col, adjusters: [p.z.col], nozero: DS.noZero }, sc), b = {};
-        [p.x, p.z].forEach(function (c) { if (c.bands) b[c.col] = c.bands.edges; }); if (Object.keys(b).length) body.bands = b;
-        return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', body).then(function (r) { return { x: p.x, z: p.z, within: D.within(r.cells.map(function (c) { return { x: c.k[0], z: c.k[1], n: c.n, sy: c.sy, syy: c.syy }; })).omega2 }; });
-      })).then(function (res) {
-        D.markStandIns(ranked, res); D.addRules(ranked, S.rows, S.idx, y, H[y], cands);
-        done(ranked, T('Calculated by the engine from all rows of the file', 'इंजन ने फ़ाइल की सभी पंक्तियों से गणना की') + (ranked.some(function (r) { return r.rule; }) ? T('; the label rule from a sample of ', '; लेबल का नियम ') + CH.indian(S.idx.length) + T(' rows.', ' पंक्तियों के नमूने से।') : '.'));
+      // stand-ins: the engine adds up every (column, stronger column) pair, in one request
+      var b = {}; ranked.forEach(function (c) { if (c.bands) b[c.col] = c.bands.edges; });
+      var pairsReq = pairs.length ? STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair_pairs', y: y, nozero: DS.noZero, bands: b, pairs: pairs.map(function (p) { return { x: p.x.col, z: p.z.col }; }) }, sc)) : Promise.resolve({ pairs: [] });
+      return pairsReq.then(function (r) {
+        D.markStandIns(ranked, r.pairs.map(function (q, k) { return { x: pairs[k].x, z: pairs[k].z, within: D.within(q.cells.map(function (c) { return { x: c.k[0], z: c.k[1], n: c.n, sy: c.sy, syy: c.syy }; })).omega2 }; }));
+        return Promise.all(ranked.filter(function (r) { return r.walls; }).map(function (r) { return bigRule(r, y, H, cands, sc); }));
+      }).then(function () {
+        done(ranked, T('Calculated by the engine from all rows of the file', 'इंजन ने फ़ाइल की सभी पंक्तियों से गणना की') + (ranked.some(function (r) { return r.rule; }) ? T('; the label rule was learned from a sample that keeps every label and then checked on all rows.', '; लेबल का नियम हर लेबल वाले नमूने से सीखा गया और फिर सभी पंक्तियों पर जाँचा गया।') : '.'));
       });
     }).catch(fail);
+  }
+  // large file: learn the rule from a sample that keeps every label (weighed back), then check it on every row
+  function bigRule(r, y, H, cands, sc) {
+    var feats = D.ruleFeatures(y, H[y], cands), api = function (body) { return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign(body, sc)); };
+    return api({ kind: 'label_sample', label: r.col, cols: feats.map(function (f) { return f.col; }), perClass: 2500, total: 20000 }).then(function (sm) {
+      var per = {}; sm.rows.forEach(function (row) { per[row[0]] = (per[row[0]] || 0) + 1; });
+      var w = {}; Object.keys(per).forEach(function (l) { w[l] = (sm.counts[l] || per[l]) / per[l]; });
+      var local = feats.map(function (f, k) { return { col: k + 1, name: f.name, real: f.col }; });
+      var q = D.findRule(sm.rows, sm.rows.map(function (_, i) { return i; }), 0, local, { weights: w });
+      if (!q) { r.rule = null; return; }
+      q.list.forEach(function (u) { u.conds.forEach(function (c) { c.col = local[c.col - 1].real; }); });
+      q.usedCols = q.usedCols.map(function (c) { return local[c - 1].real; });
+      return api({ kind: 'rule_check', label: r.col, default: q.otherwise.label, rules: q.list.map(function (u) { return { label: u.label, conds: u.conds }; }) }).then(function (res) { r.rule = D.applyCheck(q, res); r.rule.learnedOn = sm.rows.length; });
+    }).catch(function () { r.rule = null; });
   }
   function show(ranked, yName, note) {
     var out = $('drOut'); if (!out) return; dispose();
@@ -289,10 +451,12 @@
     var html = '<div class="fr-verdict" style="border-color:#6d5bd0"><b><span class="fr-ic" style="background:#6d5bd0">🔍</span>' + T('What goes with ', 'किससे जुड़ा है: ') + esc(yName) + '</b>' + lines.map(function (l) { return '<p>' + esc(l) + '</p>'; }).join('') + '</div>' +
       '<div id="drChart" class="fr-chart" style="height:' + Math.max(180, Math.min(causes.length, 12) * 26 + 50) + 'px"></div>' +
       '<table class="big-tbl fr-tbl">' + head + causes.slice(0, 15).map(row).join('') + '</table>' +
-      ranked.filter(function (r) { return r.rule && r.rule.accuracy >= 0.8; }).map(function (r) { var q = r.rule;
-        return '<div class="prj-sub dr-rule-h">🧩 ' + esc(T('How “' + r.name + '” is made — a rule found in the data (right for ', '“' + r.name + '” कैसे बनता है — डेटा में मिला नियम (')) + pct(q.accuracy) + esc(T(' of rows)', ' पंक्तियों में सही)')) + '</div>' +
-          '<table class="big-tbl fr-tbl dr-rule"><tr><th>' + T('Label', 'लेबल') + '</th><th>' + T('When', 'जब') + '</th><th>' + T('Rows', 'पंक्तियाँ') + '</th><th>' + T('Rule right', 'नियम सही') + '</th></tr>' +
-          q.rules.map(function (u) { return '<tr><td><b>' + esc(u.label) + '</b></td><td>' + esc(D.ruleText(u, hi())) + '</td><td class="num">' + CH.indian(u.n) + '</td><td class="num">' + pct(u.right / u.n) + '</td></tr>'; }).join('') + '</table>';
+      ranked.filter(function (r) { return r.rule && r.rule.accuracy >= 0.8; }).map(function (r) { var q = r.rule, lines = D.ruleLines(q);
+        return '<div class="prj-sub dr-rule-h">🧩 ' + esc(T('How “' + r.name + '” is made — a rule found in the data, right for ', '“' + r.name + '” कैसे बनता है — डेटा में मिला नियम, ')) + D.accText(q.accuracy) + esc(T(' of all ' + CH.indian(q.n) + ' rows', ' — सभी ' + CH.indian(q.n) + ' पंक्तियों में सही')) + '</div>' +
+          '<div class="big-note">' + esc(T('Read from the top: the first line that fits a row gives its label.', 'ऊपर से पढ़ें: जो पहली पंक्ति मेल खाए, वही लेबल देती है।')) + (q.sampled || q.learnedOn < q.n ? ' ' + esc(T('Learned from ' + CH.indian(q.learnedOn) + ' rows that keep every label, checked on all rows.', CH.indian(q.learnedOn) + ' पंक्तियों (हर लेबल सहित) से सीखा, सभी पंक्तियों पर जाँचा।')) : '') + '</div>' +
+          '<table class="big-tbl fr-tbl dr-rule"><tr><th>#</th><th>' + T('If', 'यदि') + '</th><th>' + T('Then', 'तो') + '</th><th>' + T('Rows', 'पंक्तियाँ') + '</th><th>' + T('Right', 'सही') + '</th></tr>' +
+          lines.map(function (u, k) { return '<tr><td class="num">' + (k + 1) + '</td><td>' + esc(D.lineText(u, hi())) + '</td><td><b>' + esc(u.label) + '</b></td><td class="num">' + CH.indian(u.n) + '</td><td class="num">' + (u.n ? D.accText(u.right / u.n) : '–') + '</td></tr>'; }).join('') +
+          '<tr><td></td><td><em>' + T('otherwise', 'अन्यथा') + '</em></td><td><b>' + esc(q.otherwise.label) + '</b></td><td class="num">' + CH.indian(q.otherwise.n) + '</td><td class="num">' + (q.otherwise.n ? D.accText(q.otherwise.right / q.otherwise.n) : '–') + '</td></tr></table>';
       }).join('') +
       (res.length ? '<div class="prj-sub">' + T('Probably results of ', 'संभवतः परिणाम: ') + esc(yName) + T(' (not causes)', ' (कारण नहीं)') + '</div><table class="big-tbl fr-tbl">' + head + res.map(row).join('') + '</table>' : '') +
       '<div class="fr-how">' + T('“Explains” is ω² (omega squared): the share of the variation in the number that lies between the groups of a column, corrected for chance. It shows which factors go together with the number, not what causes it. ', '“समझाता है” = ω² (ओमेगा स्क्वेयर्ड): संख्या की भिन्नता का वह भाग जो किसी कॉलम के समूहों के बीच है, संयोग के लिए सुधारा हुआ। यह बताता है कि कौन-से कारक संख्या के साथ चलते हैं, कारण नहीं। ') + (note ? esc(note) : '') + '</div>';

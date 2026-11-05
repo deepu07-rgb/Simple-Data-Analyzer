@@ -354,3 +354,62 @@ def test_fair_cells_with_number_bands(zm):
     res = eng.fair_cells(i, 2, 1, [3], bands={3: [0, 300, 600, 901]})
     assert {c["k"][1] for c in res["cells"]} <= {"b000", "b001", "b002"}
     assert sum(c["n"] for c in res["cells"]) == len(truth)
+
+
+# ------------------------------------------------------------------ "What explains this?": stand-ins and label rules
+@pytest.fixture()
+def tiers(eng):
+    r = random.Random(9)
+    rows, truth = [], []
+    for i in range(6000):
+        waste = round(r.uniform(1, 30), 1)
+        temp = round(r.uniform(30, 72), 1) if r.random() > 0.01 else None        # a few blank temperatures
+        rare = r.random() < 0.02                                                 # a rare label: 2% of rows
+        tier = "Rare" if rare else ("Cold" if temp is not None and temp < 48 else ("High" if waste >= 20 else "Ok"))
+        rows.append([str(waste), "" if temp is None else str(temp), tier, r.choice(["A", "B", "C"])])
+        truth.append((waste, temp, tier))
+    info = eng.load_rows(["Waste", "Temp", "Tier", "Group"], rows, "t")
+    return eng, info["id"], truth
+
+
+def test_label_sample_keeps_every_label_and_counts_the_whole_file(tiers):
+    eng, i, truth = tiers
+    res = eng.label_sample(i, 2, [0, 1], per_class=300)
+    counts = defaultdict(int)
+    for *_, t in truth:
+        counts[t] += 1
+    assert res["counts"] == dict(counts)
+    got = defaultdict(int)
+    for row in res["rows"]:
+        got[row[0]] += 1
+        assert len(row) == 3
+    assert got["Rare"] == min(300, counts["Rare"]) and all(v <= 300 for v in got.values())
+    assert eng.label_sample(i, 2, [0, 1], per_class=300)["rows"] == res["rows"], "always the same rows"
+
+
+def test_rule_check_counts_every_row_like_python(tiers):
+    eng, i, truth = tiers
+    rules = [{"label": "Cold", "conds": [{"col": 1, "max": 48}]}, {"label": "High", "conds": [{"col": 0, "min": 20}]}]
+    res = eng.rule_check(i, 2, rules, "Ok")
+    want = [{"n": 0, "right": 0}, {"n": 0, "right": 0}]
+    other = {"n": 0, "right": 0}
+    for w, t, tier in truth:
+        k = 0 if (t is not None and t < 48) else (1 if w >= 20 else -1)       # a blank temperature is not "< 48"
+        pred = rules[k]["label"] if k >= 0 else "Ok"
+        st = want[k] if k >= 0 else other
+        st["n"] += 1
+        st["right"] += pred == tier
+    assert res["rules"] == want and res["otherwise"] == other and res["n"] == len(truth)
+    assert res["right"] == sum(x["right"] for x in want) + other["right"]
+    with pytest.raises(eng_mod.EngineError):
+        eng.rule_check(i, 2, [{"label": "x", "conds": [{"col": 99, "min": 1}]}], "Ok")
+
+
+def test_fair_pairs_equal_fair_cells_one_by_one(tiers):
+    eng, i, truth = tiers
+    bands = {0: [1, 10, 20, 31], 1: [30, 48, 60, 73]}
+    res = eng.fair_pairs(i, 0, [{"x": 3, "z": 2}, {"x": 1, "z": 2}], bands=bands)["pairs"]
+    one = eng.fair_cells(i, 0, 3, [2])["cells"]
+    two = eng.fair_cells(i, 0, 1, [2], bands={1: bands[1]})["cells"]
+    key = lambda cs: sorted((tuple(c["k"]), c["n"], round(c["sy"], 6)) for c in cs)
+    assert key(res[0]["cells"]) == key(one) and key(res[1]["cells"]) == key(two)

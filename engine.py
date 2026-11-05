@@ -763,6 +763,71 @@ class Engine:
         return {"cells": [{"k": list(r[:len(dims)]), "n": r[len(dims)], "sy": r[len(dims) + 1], "syy": r[len(dims) + 2]} for r in data],
                 "matched": matched, "zeroSkipped": zeros}
 
+    def fair_pairs(self, ds_id, y, pairs, nozero=False, search=None, filters=None, bands=None):
+        """Cells for many (column, stronger column) pairs in one request: is a column still linked to the outcome
+        INSIDE the groups of a stronger one? Each pair is one grouped scan."""
+        out = []
+        for p in (pairs or [])[:200]:
+            r = self.fair_cells(ds_id, y, p.get("x"), [p.get("z")], nozero, search, filters,
+                                bands={k: v for k, v in (bands or {}).items() if int(k) in (int(p.get("x")), int(p.get("z")))})
+            out.append({"x": p.get("x"), "z": p.get("z"), "cells": r["cells"]})
+        return {"pairs": out}
+
+    def label_sample(self, ds_id, label, cols, per_class=1500, total=20000, search=None, filters=None):
+        """A sample that keeps every label: up to `per_class` rows of each value of the label column (always the same
+        ones), with how many rows each value has in the whole file, so the browser can weigh them back."""
+        d = self._ds(ds_id)
+        li = self._check_col(d, label)
+        ci = [self._check_col(d, c) for c in (cols or [])][:40]
+        where, params = self._where(d, search, filters)
+        lab = f"trim(coalesce({_col(li)}, ''))"
+        cond = f"{where}{' AND' if where else ' WHERE'} {lab} <> ''"
+        cur = self.db.cursor()
+        counts = cur.execute(f"SELECT {lab} AS l, count(*) FROM {d['table']}{cond} GROUP BY l ORDER BY count(*) DESC LIMIT 60", params).fetchall()
+        k = max(1, len(counts))
+        per = max(50, min(int(per_class), int(total) // k))
+        sel = ", ".join([lab] + [_col(i) for i in ci])
+        rows = cur.execute(
+            f"SELECT {sel} FROM (SELECT *, row_number() OVER (PARTITION BY {lab} ORDER BY hash(__rid)) AS rn FROM {d['table']}{cond}) "
+            f"WHERE rn <= {per} ORDER BY {lab}, hash(__rid), __rid", params).fetchall()
+        return {"rows": [["" if v is None else v for v in r] for r in rows], "counts": {str(l): n for l, n in counts}, "cols": [li] + ci}
+
+    def rule_check(self, ds_id, label, rules, default, search=None, filters=None):
+        """How an ordered rule list does on EVERY row: the first rule that fits gives the label, else `default`.
+        rules: [{label, conds: [{col, min?, max?}]}]   (min: value >= min, an empty value counts as above;  max: value < max)"""
+        d = self._ds(ds_id)
+        li = self._check_col(d, label)
+        where, params = self._where(d, search, filters)
+        lab = f"trim(coalesce({_col(li)}, ''))"
+        whens, wp = [], []
+        for n, r in enumerate((rules or [])[:60]):
+            parts = []
+            for c in r.get("conds") or []:
+                x = _num(self._check_col(d, c.get("col")))
+                if c.get("min") is not None:
+                    parts.append(f"({x} >= ? OR {x} IS NULL)"); wp.append(float(c["min"]))
+                if c.get("max") is not None:
+                    parts.append(f"{x} < ?"); wp.append(float(c["max"]))
+            whens.append(f"WHEN {' AND '.join(parts) or 'TRUE'} THEN {n}")
+        pred_case = "CASE " + " ".join(whens) + " ELSE -1 END" if whens else "-1"
+        labels = [str(r.get("label", "")) for r in (rules or [])[:60]]
+        cond = f"{where}{' AND' if where else ' WHERE'} {lab} <> ''"
+        sql = f"SELECT r, l, count(*) FROM (SELECT {pred_case} AS r, {lab} AS l FROM {d['table']}{cond}) GROUP BY r, l"
+        try:
+            data = self.db.cursor().execute(sql, wp + params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not check the rule: {exc}")
+        stats = [{"n": 0, "right": 0} for _ in labels]
+        other = {"n": 0, "right": 0}
+        total = right = 0
+        for r, l, n in data:
+            want = labels[r] if r >= 0 else str(default)
+            st = stats[r] if r >= 0 else other
+            st["n"] += n; total += n
+            if l == want:
+                st["right"] += n; right += n
+        return {"rules": stats, "otherwise": other, "n": total, "right": right}
+
     def sample(self, ds_id, n=4000):
         """An evenly random handful of rows (always the same ones) so the browser can tell which columns are
         numbers, dates or categories without loading the file."""

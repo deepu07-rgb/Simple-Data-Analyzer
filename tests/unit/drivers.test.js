@@ -66,16 +66,33 @@ test('D.within equals the textbook formula on hand-made cells', () => {
   const w = D.within(cells), all = [1, 1, 1, 1, 2, 2, 4, 4], m = all.reduce((a, b) => a + b) / 8, sst = all.reduce((a, v) => a + (v - m) ** 2, 0);
   assert.ok(Math.abs(w.omega2 - 4 / sst) < 1e-12);
 });
-test('the rule finder writes out how a label is made (as accurate as scikit-learn)', () => {
+test('cuts are made at the roundest number between two values', () => {
+  [[9.9, 10, 10], [47.9, 48, 48], [13900, 14000, 14000], [72, 78, 75], [0.137, 0.14, 0.14], [3, 3.4, 3.2], [59.9, 60, 60], [-5, 3, 0]].forEach(([a, b, c]) => assert.equal(D.niceCut(a, b), c, a + '…' + b));
+});
+test('the rule finder writes a SHORT ordered list (as accurate as scikit-learn, no gaps between rules)', () => {
   const feats = [{ col: 0, name: 'Waste' }, { col: 2, name: 'Calories' }, { col: 3, name: 'Temperature' }, { col: 4, name: 'Farm' }];
   const q = D.findRule(SI.rows, SIDX, 5, feats, { depth: 5, minLeaf: 10 });
   assert.ok(q.accuracy >= SI.exp.tree_acc - 0.003, 'accuracy ' + q.accuracy + ' vs sklearn ' + SI.exp.tree_acc);
-  assert.ok(q.used.includes('Waste') && q.used.includes('Temperature') && q.used.includes('Farm') && !q.used.includes('Calories'), q.used.join());
-  const nc = q.rules.filter(r => r.label === 'NC'); assert.ok(nc.length >= 1 && nc.every(r => r.conds.some(c => c.name === 'Temperature' && c.max !== undefined && c.max < 48 && c.max >= 47.9)), JSON.stringify(nc));
-  const gold = q.rules.filter(r => r.label === 'Gold');
-  assert.ok(gold.some(r => r.conds.some(c => c.name === 'Waste' && c.max >= 9.7 && c.max < 10) && r.conds.some(c => c.name === 'Farm' && c.min >= 75 && c.min < 75.1)), JSON.stringify(gold));
-  assert.match(D.ruleText(gold[0], false), /Waste ≤ 9\.7 and Temperature ≥ 55 and Farm ≥ 75/);
+  assert.equal(q.n, 3000, 'every row is given a label: rules + "otherwise" cover all rows');
+  assert.equal(q.list.reduce((a, r) => a + r.n, 0) + q.otherwise.n, 3000);
+  const lines = D.ruleLines(q), text = lines.map(l => (l.label + ': ' + D.lineText(l, false)));
+  assert.ok(lines.length <= 4, 'at most 4 lines + otherwise: ' + text.join(' | '));
+  assert.equal(q.otherwise.label, 'Standard');
+  assert.ok(text.includes('NC: Temperature < 48'), text.join(' | '));
+  assert.ok(text.some(t => /^Marginal: /.test(t) && /Waste ≥ 20/.test(t) && /Temperature < 55/.test(t)), text.join(' | '));
+  assert.ok(text.some(t => /^Gold: Waste < 10 and .*Farm ≥ 75/.test(t)), text.join(' | '));
+  assert.ok(!q.used.includes('Calories'), q.used.join());
   assert.equal(D.findRule(SI.rows.map(r => r.slice(0, 5).concat(['x'])), SIDX, 5, feats), null, 'one class: no rule');
+});
+test('a big input is learned from a sample that keeps every label, then checked on all rows', () => {
+  const feats = [{ col: 0, name: 'Waste' }, { col: 3, name: 'Temperature' }, { col: 4, name: 'Farm' }];
+  const q = D.findRule(SI.rows, SIDX, 5, feats, { maxRows: 600, minLeaf: 8 });
+  assert.ok(q.sampled && q.learnedOn <= 600 && q.n === 3000, 'learned on ' + q.learnedOn + ', checked on ' + q.n);
+  assert.ok(q.list.some(r => r.label === 'Gold'), 'the rare label (4%) is still found');
+  assert.ok(q.accuracy > 0.95, 'accuracy on all rows ' + q.accuracy);
+  // the engine's check on all rows is copied in as it comes
+  D.applyCheck(q, { rules: q.list.map(() => ({ n: 10, right: 9 })), otherwise: { n: 5, right: 5 }, n: 10 * q.list.length + 5, right: 9 * q.list.length + 5 });
+  assert.equal(q.n, 10 * q.list.length + 5); assert.equal(q.list[0].right, 9);
 });
 test('a label found to be a rule is explained in the summary', () => {
   const R = D.rank(SI.rows, SIDX, SH, 0, { candidates: [{ col: 1, name: 'Group', kind: 'cat' }, { col: 5, name: 'Tier', kind: 'cat' }] });
@@ -94,4 +111,7 @@ test('stand-in only when almost nothing is left; a real overlap is called "partl
   const a = mk(1, 0.4), b = mk(2, 0.38), c = mk(3, 0.05);
   D.markStandIns([a, b, c], [{ x: b, z: a, within: 0.001 }, { x: c, z: b, within: 0 }, { x: c, z: a, within: 0.04 }]);
   assert.ok(b.standIn && !c.standIn && c.inside.name === 'c1');
+});
+test('an accuracy just under 100% is never shown as 100%', () => {
+  assert.equal(D.accText(12994 / 13000), '99.95%'); assert.equal(D.accText(1), '100%'); assert.equal(D.accText(0.9776), '97.8%'); assert.equal(D.accText(0.99999), '99.99%');
 });
