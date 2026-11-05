@@ -72,3 +72,5 @@ runtime/python/__pycache__/
 runtime/ollama/*.exe
 # Ignore model cache
 runtime/.ollama/
+# pytest
+.pytest_cache/
