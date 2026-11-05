@@ -12,6 +12,7 @@
 @file css/10-large-file-and-projects.css
 @file css/11-tasks-and-shell.css
 @file css/12-reports.css
+@file css/13-charts.css
 @file html/10-layout.html
 @text "<script>\n"
 @file js/app/01-state-management.js
@@ -57,4 +58,7 @@
 @file js/reports/50-ui-autopilot.js
 @file js/reports/51-ui-radars.js
 @file js/reports/52-ui-letters-names.js
+@file js/charts/60-chart-engine.js
+@file js/charts/61-chart-studio.js
+@file js/charts/62-table-viz.js
 @file html/90-tail.html

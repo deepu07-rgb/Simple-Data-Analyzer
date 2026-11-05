@@ -1,0 +1,618 @@
+// =====================================================================
+//  CHART ENGINE  /  चार्ट इंजन
+//  Pure logic, no DOM and no chart library: turns table columns into chart definitions (Apache ECharts
+//  options), recommends the charts that suit the data, and writes plain-language captions from the
+//  computed numbers. The Studio (61-*.js) draws the options and wires the interactions.
+//
+//    STL.charts.TYPES                          chart gallery
+//    STL.charts.profile(headers, rows, idx)    -> per-column facts used for suggestions
+//    STL.charts.prepare(spec, headers, rows, idx) -> aggregated data (with the raw values behind every bar)
+//    STL.charts.build(type, spec, headers, rows, idx, env) -> { option, data, caption }
+//    STL.charts.recommend(headers, rows, idx)  -> [{ type, spec, why }]
+// =====================================================================
+(function (root) {
+  'use strict';
+  var STL = root.STL = root.STL || {};
+  var CH = STL.charts = {};
+  function s(v) { return v == null ? '' : String(v); }
+  function blank(v) { return s(v).trim() === ''; }
+  function B(en, hi) { return { en: en, hi: hi }; }
+
+  // ------------------------------------------------------------ gallery
+  CH.TYPES = [
+    { id: 'column',  group: 'compare', name: B('Column', 'स्तंभ'),               needs: 'cat+num' },
+    { id: 'bar',     group: 'compare', name: B('Bar (horizontal)', 'पट्टी'),     needs: 'cat+num' },
+    { id: 'stackedColumn', group: 'compare', name: B('Stacked column', 'स्टैक स्तंभ'), needs: 'cat+num+split' },
+    { id: 'percentColumn', group: 'compare', name: B('100% stacked', '100% स्टैक'),   needs: 'cat+num+split' },
+    { id: 'combo',   group: 'compare', name: B('Column + line', 'स्तंभ + रेखा'), needs: 'cat+num2' },
+    { id: 'pareto',  group: 'compare', name: B('Pareto (80/20)', 'पैरेटो (80/20)'), needs: 'cat+num' },
+    { id: 'waterfall', group: 'compare', name: B('Waterfall', 'वॉटरफ़ॉल'),      needs: 'cat+num' },
+    { id: 'line',    group: 'trend',   name: B('Line', 'रेखा'),                  needs: 'cat+num' },
+    { id: 'area',    group: 'trend',   name: B('Area', 'क्षेत्र'),               needs: 'cat+num' },
+    { id: 'stackedArea', group: 'trend', name: B('Stacked area', 'स्टैक क्षेत्र'), needs: 'cat+num+split' },
+    { id: 'calendar', group: 'trend',  name: B('Calendar heat map', 'कैलेंडर हीट मैप'), needs: 'date' },
+    { id: 'pie',     group: 'share',   name: B('Pie', 'पाई'),                    needs: 'cat+num' },
+    { id: 'donut',   group: 'share',   name: B('Donut', 'डोनट'),                 needs: 'cat+num' },
+    { id: 'rose',    group: 'share',   name: B('Rose', 'गुलाब'),                 needs: 'cat+num' },
+    { id: 'funnel',  group: 'share',   name: B('Funnel', 'फ़नल'),                needs: 'cat+num' },
+    { id: 'treemap', group: 'hier',    name: B('Treemap', 'ट्रीमैप'),            needs: 'cat+num' },
+    { id: 'sunburst', group: 'hier',   name: B('Sunburst', 'सनबर्स्ट'),          needs: 'cat+num+split' },
+    { id: 'scatter', group: 'relate',  name: B('Scatter', 'बिखराव'),             needs: 'num2' },
+    { id: 'bubble',  group: 'relate',  name: B('Bubble', 'बबल'),                 needs: 'num3' },
+    { id: 'heatmap', group: 'relate',  name: B('Heat map', 'हीट मैप'),           needs: 'cat2' },
+    { id: 'radar',   group: 'relate',  name: B('Radar', 'रडार'),                 needs: 'cat+num3' },
+    { id: 'histogram', group: 'dist',  name: B('Histogram', 'हिस्टोग्राम'),      needs: 'num' },
+    { id: 'boxplot', group: 'dist',    name: B('Box plot', 'बॉक्स प्लॉट'),       needs: 'cat+num' },
+    { id: 'gauge',   group: 'kpi',     name: B('Gauge (KPI)', 'गेज (केपीआई)'),  needs: 'num' }
+  ];
+  CH.GROUPS = { compare: B('Compare', 'तुलना'), trend: B('Over time', 'समय के साथ'), share: B('Share of total', 'हिस्सेदारी'), hier: B('Hierarchy', 'पदानुक्रम'), relate: B('Relationships', 'संबंध'), dist: B('Spread', 'फैलाव'), kpi: B('Single number', 'एक संख्या') };
+  CH.FUNCS = [['sum', B('Total', 'योग')], ['avg', B('Average', 'औसत')], ['count', B('Count of rows', 'पंक्तियों की गिनती')], ['min', B('Smallest', 'न्यूनतम')], ['max', B('Largest', 'अधिकतम')], ['median', B('Median', 'माध्यिका')], ['distinct', B('Different values', 'अलग मान')]];
+  CH.PALETTES = {
+    aurora: ['#6d5bd0', '#14a38b', '#e8913a', '#d6456b', '#3b82c4', '#8f9aa8', '#9a6fd0', '#4aa3a2', '#c9a227', '#7a8cff'],
+    saffron: ['#e8791a', '#138808', '#1b3a8c', '#c43d2f', '#7a4f9a', '#f2b134', '#3a8f8f', '#8c6a43', '#d65a8a', '#5a6b7b'],
+    ocean: ['#0b6e99', '#1aa6b7', '#4fd1c5', '#2b4c7e', '#7fb7d8', '#f4a259', '#bc4b51', '#5b8e7d', '#8cb369', '#3d5a80'],
+    safe: ['#0072b2', '#e69f00', '#009e73', '#cc79a7', '#56b4e9', '#d55e00', '#f0e442', '#000000', '#999999', '#8e44ad'],
+    mono: ['#2f2a6b', '#4c46a3', '#6d5bd0', '#8f7de0', '#b2a4ee', '#d3caf7', '#5f5a8f', '#7b77a8', '#a09dc4', '#c6c4dc']
+  };
+
+  // ------------------------------------------------------------ numbers and text
+  function num(v) { var F = STL.fix && STL.fix.util; if (F) return F.parseNumber(v); var t = s(v).replace(/,/g, '').trim(); return t === '' || isNaN(Number(t)) ? null : Number(t); }
+  function indian(n, dec) {
+    if (n == null || !isFinite(n)) return '–';
+    dec = dec == null ? (Math.abs(n) < 1000 && n !== Math.round(n) ? 2 : 0) : dec;
+    var neg = n < 0, t = Math.abs(n).toFixed(dec).split('.'), i = t[0], last3 = i.slice(-3), rest = i.slice(0, -3);
+    if (rest) last3 = rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + last3;
+    return (neg ? '-' : '') + last3 + (t[1] ? '.' + t[1] : '');
+  }
+  // 12,50,000 -> "12.5 L" / "12.5 लाख"; 3,20,00,000 -> "3.2 Cr"
+  function compact(n, hi) {
+    if (n == null || !isFinite(n)) return '';
+    var a = Math.abs(n), sg = n < 0 ? '-' : '', r = function (x) { return String(Math.round(x * 10) / 10).replace(/\.0$/, ''); };
+    if (a >= 1e7) return sg + r(a / 1e7) + (hi ? ' करोड़' : ' Cr');
+    if (a >= 1e5) return sg + r(a / 1e5) + (hi ? ' लाख' : ' L');
+    if (a >= 1e4) return sg + r(a / 1e3) + 'K';
+    return sg + (a >= 100 ? Math.round(a) : r(a));
+  }
+  CH.indian = indian; CH.compact = compact;
+  function pctText(x) { return (Math.abs(x) >= 10 ? Math.round(x) : Math.round(x * 10) / 10) + '%'; }
+
+  function isDateVal(v) { var P = STL.pend; return P && P.parseDate && P.parseDate(v, false) !== null; }
+  function dateMs(v) { var P = STL.pend; return P && P.parseDate ? P.parseDate(v, false) : null; }
+
+  // ------------------------------------------------------------ column facts
+  function colFacts(rows, idx, c, header) {
+    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, sample = Math.min(idx.length, 4000);
+    for (var k = 0; k < sample; k++) {
+      var v = rows[idx[k]][c]; n++;
+      if (blank(v)) continue; nn++;
+      var t = s(v).trim(); if (/^0\d+$/.test(t) || /^\d{10,}$/.test(t)) code++;
+      var x = num(v); if (x !== null) { np++; if (x < min) min = x; if (x > max) max = x; if (x % 1 !== 0) allInt = false; }
+      else if (isDateVal(v)) nd++;
+      if (nd2 <= 2000) { var key = t.toLowerCase(); if (!distinct[key]) { distinct[key] = 1; nd2++; } }
+    }
+    var serial = false;
+    if (np >= 3 && np === nn && nd2 === nn && max - min + 1 === nn && min <= 1) serial = true;
+    // all-different text is an identifier (names, case numbers). All-different NUMBERS are usually amounts, not identifiers:
+    // only whole numbers that run in sequence, or that sit under an "ID / No." heading, count as identifiers.
+    var numLike = nn > 0 && np / nn >= 0.8, idName = /(^|[\s._\-/])(id|no|sr|sl|क्रम|क्रमांक|नंबर|आईडी)([\s._\-/]|$)/i.test(s(header));
+    var unique = nn > 12 && nd2 === nn && (!numLike || (allInt && (idName || max - min + 1 <= nn * 1.2)));
+    return { index: c, name: s(header), filled: nn, fill: n ? nn / n : 0, numeric: nn > 0 && np / nn >= 0.8 && code / nn < 0.3 && !serial, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3, serial: serial, unique: unique };
+  }
+  CH.profile = function (headers, rows, idx) { return headers.map(function (h, i) { return colFacts(rows, idx, i, h); }); };
+
+  // ------------------------------------------------------------ aggregation
+  function reduce(vals, fn) {
+    if (fn === 'count') return vals.length;
+    if (fn === 'distinct') { var u = {}; vals.forEach(function (v) { u[s(v).trim().toLowerCase()] = 1; }); return Object.keys(u).length; }
+    var nums = []; vals.forEach(function (v) { var x = typeof v === 'number' ? v : num(v); if (x !== null) nums.push(x); });
+    if (!nums.length) return null;
+    switch (fn) {
+      case 'sum': return nums.reduce(function (a, b) { return a + b; }, 0);
+      case 'avg': return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;
+      case 'min': return Math.min.apply(null, nums);
+      case 'max': return Math.max.apply(null, nums);
+      case 'median': { nums.sort(function (a, b) { return a - b; }); var m = nums.length >> 1; return nums.length % 2 ? nums[m] : (nums[m - 1] + nums[m]) / 2; }
+    }
+    return null;
+  }
+  function quantile(sorted, q) { if (!sorted.length) return null; var p = (sorted.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return sorted[lo] + (sorted[hi] - sorted[lo]) * (p - lo); }
+  function fnLabel(fn, hi) { var f = CH.FUNCS.filter(function (x) { return x[0] === fn; })[0]; return f ? f[1][hi ? 'hi' : 'en'] : fn; }
+
+  // time bucketing for a date column
+  function bucketKey(ms, mode) {
+    var d = new Date(ms), y = d.getUTCFullYear(), m = d.getUTCMonth() + 1, dd = d.getUTCDate(), p2 = function (x) { return ('0' + x).slice(-2); };
+    switch (mode) {
+      case 'year': return String(y);
+      case 'fy': { var a = m >= 4 ? y : y - 1; return a + '-' + p2((a + 1) % 100); }
+      case 'quarter': return y + '-Q' + Math.ceil(m / 3);
+      case 'month': return y + '-' + p2(m);
+      case 'weekday': return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+      default: return y + '-' + p2(m) + '-' + p2(dd);
+    }
+  }
+  CH.bucketKey = bucketKey;
+
+  // spec: {x, ys:[{col,fn}], g, fn, sort ('desc'|'asc'|'label'|'natural'), topN, others, time ('day'|'month'|'quarter'|'year'|'fy'|'weekday'), maxGroups}
+  CH.prepare = function (spec, headers, rows, idx) {
+    var x = spec.x, ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col, fn: y.col < 0 ? 'count' : (y.fn || spec.fn || 'sum') }; });
+    var g = spec.g >= 0 && spec.g !== undefined ? spec.g : -1, useG = g >= 0 && ys.length === 1;
+    var isDate = x >= 0 && spec.time && spec.time !== 'none';
+    var cats = {}, order = [], gNames = {}, gOrder = [], blanks = 0;
+    for (var k = 0; k < idx.length; k++) {
+      var row = rows[idx[k]], xv = x >= 0 ? row[x] : '', label, rawKey;
+      if (x >= 0 && blank(xv)) { blanks++; label = '(blank)'; rawKey = ''; }
+      else if (isDate) { var ms = dateMs(xv); if (ms === null) { blanks++; continue; } label = bucketKey(ms, spec.time); rawKey = label; }
+      else { label = s(xv).trim(); rawKey = label.toLowerCase(); }
+      var c = cats[rawKey]; if (!c) { c = cats[rawKey] = { label: label, raw: {}, rows: [], vals: {}, rb: {}, key: rawKey }; order.push(rawKey); }
+      if (x >= 0 && !blank(xv)) c.raw[s(xv)] = 1;
+      c.rows.push(idx[k]);
+      var sk;
+      if (useG) { sk = blank(row[g]) ? '(blank)' : s(row[g]).trim(); if (!gNames[sk]) { gNames[sk] = 0; gOrder.push(sk); } gNames[sk]++; (c.vals[sk] = c.vals[sk] || []).push(valueFor(row, ys[0])); (c.rb[sk] = c.rb[sk] || []).push(idx[k]); }
+      else ys.forEach(function (y, yi) { (c.vals['y' + yi] = c.vals['y' + yi] || []).push(valueFor(row, y)); (c.rb['y' + yi] = c.rb['y' + yi] || []).push(idx[k]); });
+    }
+    function valueFor(row, y) { return y.col < 0 ? 1 : row[y.col]; }
+    // group (series) selection: biggest groups, rest -> Other
+    var maxG = spec.maxGroups || 8;
+    if (useG && gOrder.length > maxG) {
+      gOrder.sort(function (a, b) { return gNames[b] - gNames[a]; });
+      var keep = gOrder.slice(0, maxG - 1), other = gOrder.slice(maxG - 1);
+      order.forEach(function (key) { var c = cats[key], merged = [], mrows = []; other.forEach(function (o) { if (c.vals[o]) { merged = merged.concat(c.vals[o]); mrows = mrows.concat(c.rb[o]); delete c.vals[o]; delete c.rb[o]; } }); if (merged.length) { c.vals['(other)'] = merged; c.rb['(other)'] = mrows; } });
+      gOrder = keep.concat(['(other)']);
+    }
+    var seriesKeys = useG ? gOrder : ys.map(function (_, i) { return 'y' + i; });
+    var seriesDefs = useG ? gOrder.map(function (nm) { return { name: nm, fn: ys[0].fn, col: ys[0].col }; }) : ys.map(function (y, i) { return { name: y.col < 0 ? 'Rows' : s(headers[y.col]), fn: y.fn, col: y.col }; });
+    var list = order.map(function (key) {
+      var c = cats[key]; c.values = seriesKeys.map(function (sk) { return c.vals[sk] ? reduce(c.vals[sk], seriesDefs[seriesKeys.indexOf(sk)].fn) : (seriesDefs[seriesKeys.indexOf(sk)].fn === 'count' || seriesDefs[seriesKeys.indexOf(sk)].fn === 'sum' || seriesDefs[seriesKeys.indexOf(sk)].fn === 'distinct' ? 0 : null); });
+      c.total = c.values.reduce(function (a, b) { return a + (b || 0); }, 0); return c;
+    });
+    // order
+    var sort = spec.sort || (isDate ? 'label' : 'desc');
+    if (sort === 'natural') { var numericLabels = list.every(function (c) { return !isNaN(parseFloat(c.label)); }); sort = numericLabels ? 'numlabel' : 'label'; }
+    if (sort === 'desc') list.sort(function (a, b) { return b.total - a.total; });
+    else if (sort === 'asc') list.sort(function (a, b) { return a.total - b.total; });
+    else if (sort === 'numlabel') list.sort(function (a, b) { return parseFloat(a.label) - parseFloat(b.label); });
+    else if (sort === 'label') list.sort(function (a, b) { return a.label < b.label ? -1 : (a.label > b.label ? 1 : 0); });
+    // top N + others (the rest are merged by re-reducing their raw values, so averages stay right)
+    var topN = spec.topN > 0 ? spec.topN : 0, others = null;
+    if (topN && list.length > topN + 1) {
+      var rest = list.slice(topN); list = list.slice(0, topN);
+      var oc = { label: '(Others)', raw: {}, rows: [], vals: {}, rb: {}, isOthers: true, key: '(others)' };
+      rest.forEach(function (c) { oc.rows = oc.rows.concat(c.rows); Object.keys(c.vals).forEach(function (k2) { oc.vals[k2] = (oc.vals[k2] || []).concat(c.vals[k2]); oc.rb[k2] = (oc.rb[k2] || []).concat(c.rb[k2]); }); });
+      oc.values = seriesKeys.map(function (sk, i) { return oc.vals[sk] ? reduce(oc.vals[sk], seriesDefs[i].fn) : 0; }); oc.total = oc.values.reduce(function (a, b) { return a + (b || 0); }, 0);
+      others = { count: rest.length, rows: oc.rows.length };
+      if (spec.others !== false) list.push(oc);
+    }
+    return { cats: list, series: seriesDefs, seriesKeys: seriesKeys, rowsUsed: idx.length, blanks: blanks, others: others, split: useG, isDate: !!isDate };
+  };
+
+  // ------------------------------------------------------------ option helpers
+  var DEFAULT_ENV = { hi: false, text: '#334155', sub: '#64748b', grid: 'rgba(148,163,184,.28)', palette: 'aurora', fontFamily: "'Inter','Noto Sans Devanagari','Mangal',sans-serif" };
+  function envOf(e) { var o = {}; for (var k in DEFAULT_ENV) o[k] = DEFAULT_ENV[k]; for (var j in (e || {})) o[j] = e[j]; return o; }
+  function colors(env) { return CH.PALETTES[env.palette] || CH.PALETTES.aurora; }
+  function T(env, en, hi) { return env.hi ? hi : en; }
+
+  function base(spec, env, extra) {
+    var o = {
+      color: colors(env), backgroundColor: 'transparent', animationDuration: 600, animationDurationUpdate: 350,
+      textStyle: { fontFamily: env.fontFamily, color: env.text },
+      title: spec.title ? { text: spec.title, subtext: spec.subtitle || '', left: 10, top: 6, textStyle: { fontSize: 14, fontWeight: 600, color: env.text, width: 250, overflow: 'truncate' }, subtextStyle: { color: env.sub, fontSize: 11 } } : undefined,
+      tooltip: { confine: true, backgroundColor: 'rgba(255,255,255,.97)', borderColor: '#cbd5e1', textStyle: { color: '#1e293b', fontSize: 12 }, extraCssText: 'box-shadow:0 6px 24px rgba(15,23,42,.2);border-radius:8px' },
+      legend: { type: 'scroll', bottom: 4, textStyle: { color: env.text }, icon: 'roundRect', itemWidth: 12, itemHeight: 8 },
+      toolbox: spec.toolbox === false ? undefined : { right: 8, top: 4, iconStyle: { borderColor: env.sub }, emphasis: { iconStyle: { borderColor: colors(env)[0] } }, feature: Object.assign({ saveAsImage: { title: T(env, 'Save as picture', 'चित्र सहेजें'), pixelRatio: 2, backgroundColor: '#ffffff' }, restore: { title: T(env, 'Reset', 'रीसेट') }, dataView: { title: T(env, 'Data', 'डेटा'), readOnly: true, lang: [T(env, 'Data', 'डेटा'), T(env, 'Close', 'बंद'), ''] } }, (extra && extra.feature) || {}) }
+    };
+    if (extra) for (var k in extra) if (k !== 'feature') o[k] = extra[k];
+    return o;
+  }
+  function valueAxis(env, name, fmt, extra) {
+    var a = { type: 'value', name: name || '', nameTextStyle: { color: env.sub }, axisLabel: { color: env.sub, formatter: fmt || function (v) { return compact(v, env.hi); } }, splitLine: { lineStyle: { color: env.grid } }, axisLine: { show: false } };
+    for (var k in (extra || {})) a[k] = extra[k]; return a;
+  }
+  function catAxis(env, labels, extra) {
+    var a = { type: 'category', data: labels, axisLabel: { color: env.sub, interval: labels.length <= 30 ? 0 : 'auto', hideOverlap: true, formatter: function (v) { return String(v).length > 16 ? String(v).slice(0, 15) + '…' : v; } }, axisLine: { lineStyle: { color: env.grid } }, axisTick: { alignWithLabel: true } };
+    for (var k in (extra || {})) a[k] = extra[k]; return a;
+  }
+  function rot(a, n) { if (n > 5) a.axisLabel.rotate = 32; return a; }
+  function zoom(n) { return n > 14 ? [{ type: 'inside', zoomOnMouseWheel: 'ctrl' }, { type: 'slider', height: 16, bottom: 30, borderColor: 'transparent', brushSelect: false }] : undefined; }
+  function tipNumber(env) { return function (v) { return typeof v === 'number' ? indian(v, Math.abs(v) < 100 && v !== Math.round(v) ? 2 : 0) : v; }; }
+  function yName(spec, headers, data, env) {
+    if (data.series.length === 1) { var d = data.series[0]; return d.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(d.fn, env.hi) + ' — ' + d.name; }
+    return '';
+  }
+  function cartesianGrid(spec, env, nCats, horizontal) { return { left: 12, right: horizontal ? 30 : 18, top: spec.title ? 56 : 40, bottom: (nCats > 14 ? 74 : 44) + (spec.noLegend ? 0 : 6), containLabel: true }; }
+
+  // ------------------------------------------------------------ builders
+  function seriesFrom(data, kind, spec, extra) {
+    return data.series.map(function (sd, i) {
+      var o = { name: sd.name, type: kind, data: data.cats.map(function (c) { return c.values[i]; }), emphasis: { focus: 'series' }, universalTransition: true };
+      if (kind === 'bar') { o.barMaxWidth = 44; o.itemStyle = { borderRadius: [4, 4, 0, 0] }; }
+      if (spec.labels) o.label = { show: true, color: 'inherit', formatter: function (p) { return p.value == null ? '' : compact(p.value, spec._hi); }, position: kind === 'bar' ? 'top' : 'top' };
+      if (extra) for (var k in extra) o[k] = extra[k];
+      return o;
+    });
+  }
+  var BUILD = {};
+  BUILD.column = function (spec, headers, data, env) {
+    var labels = data.cats.map(function (c) { return c.label; }), stack = spec.stack;
+    var o = base(spec, env, { feature: { magicType: { type: ['line', 'bar', 'stack'], title: { line: T(env, 'Line', 'रेखा'), bar: T(env, 'Column', 'स्तंभ'), stack: T(env, 'Stack', 'स्टैक') } }, brush: { type: ['lineX', 'clear'], title: { lineX: T(env, 'Select a range', 'दायरा चुनें'), clear: T(env, 'Clear selection', 'चयन हटाएँ') } } } });
+    o.tooltip.trigger = 'axis'; o.tooltip.axisPointer = { type: 'shadow' }; o.tooltip.valueFormatter = tipNumber(env);
+    o.grid = cartesianGrid(spec, env, labels.length); o.xAxis = rot(catAxis(env, labels), labels.length); o.yAxis = valueAxis(env, yName(spec, headers, data, env));
+    o.series = seriesFrom(data, 'bar', spec, stack ? { stack: 'total' } : null); o.dataZoom = zoom(labels.length);
+    if (data.series.length < 2) o.legend = undefined;
+    if (data.series.length === 1 && !data.split) o.series[0].colorBy = 'data' === spec.colorBy ? 'data' : 'series';
+    o.brush = { xAxisIndex: 0, brushStyle: { borderWidth: 1, color: 'rgba(109,91,208,.15)', borderColor: '#6d5bd0' } };
+    return o;
+  };
+  BUILD.bar = function (spec, headers, data, env) {
+    var o = BUILD.column(spec, headers, data, env), n = data.cats.length;
+    o.xAxis = valueAxis(env, yName(spec, headers, data, env)); o.yAxis = catAxis(env, data.cats.map(function (c) { return c.label; }), { inverse: true });
+    o.series.forEach(function (sr) { sr.itemStyle = { borderRadius: [0, 4, 4, 0] }; if (sr.label) sr.label.position = 'right'; });
+    o.dataZoom = n > 14 ? [{ type: 'inside', yAxisIndex: 0, zoomOnMouseWheel: 'ctrl' }, { type: 'slider', yAxisIndex: 0, width: 14, right: 4, borderColor: 'transparent', brushSelect: false }] : undefined;
+    o.grid = { left: 12, right: n > 14 ? 40 : 30, top: spec.title ? 56 : 40, bottom: 34, containLabel: true };
+    o.brush = { yAxisIndex: 0, brushStyle: { borderWidth: 1, color: 'rgba(109,91,208,.15)', borderColor: '#6d5bd0' } };
+    o.toolbox && o.toolbox.feature && o.toolbox.feature.brush && (o.toolbox.feature.brush.type = ['lineY', 'clear']);
+    return o;
+  };
+  BUILD.stackedColumn = function (spec, headers, data, env) { var o = BUILD.column(Object.assign({}, spec, { stack: true }), headers, data, env); o.series.forEach(function (sr) { sr.stack = 'total'; }); o.legend = { type: 'scroll', bottom: 4, textStyle: { color: env.text } }; return o; };
+  BUILD.percentColumn = function (spec, headers, data, env) {
+    var o = BUILD.stackedColumn(spec, headers, data, env);
+    data.cats.forEach(function (c, ci) { var t = 0; c.values.forEach(function (v) { t += v || 0; }); o.series.forEach(function (sr, si) { sr.data[ci] = t ? (c.values[si] || 0) / t * 100 : 0; }); });
+    o.yAxis = valueAxis(env, T(env, 'Share of each bar (%)', 'हर पट्टी में हिस्सा (%)'), function (v) { return v + '%'; }, { max: 100 });
+    o.tooltip.valueFormatter = function (v) { return Math.round(v * 10) / 10 + '%'; };
+    return o;
+  };
+  BUILD.line = function (spec, headers, data, env) {
+    var o = BUILD.column(spec, headers, data, env), area = spec._area, smooth = !!spec.smooth;
+    o.tooltip.axisPointer = { type: 'cross', label: { backgroundColor: '#6d5bd0' } };
+    o.xAxis.boundaryGap = false; o.xAxis.axisPointer = { snap: true };
+    o.series = seriesFrom(data, 'line', spec, { smooth: smooth, showSymbol: data.cats.length < 40, symbolSize: 6, lineStyle: { width: 2.5 }, areaStyle: area ? { opacity: spec._stack ? 0.7 : 0.18 } : undefined, stack: spec._stack ? 'total' : undefined });
+    if (data.series.length === 1 && data.cats.length > 2) {                                  // mark the high and low
+      o.series[0].markPoint = { symbolSize: 46, data: [{ type: 'max', name: T(env, 'Highest', 'सर्वाधिक') }, { type: 'min', name: T(env, 'Lowest', 'न्यूनतम') }], label: { color: '#fff', fontSize: 10, formatter: function (p) { return compact(p.value, env.hi); } } };
+      o.series[0].markLine = { silent: true, symbol: 'none', data: [{ type: 'average', name: T(env, 'Average', 'औसत') }], lineStyle: { type: 'dashed', color: env.sub }, label: { color: env.sub, formatter: function (p) { return T(env, 'avg ', 'औसत ') + compact(p.value, env.hi); } } };
+    }
+    return o;
+  };
+  BUILD.area = function (spec, headers, data, env) { return BUILD.line(Object.assign({}, spec, { _area: true }), headers, data, env); };
+  BUILD.stackedArea = function (spec, headers, data, env) { return BUILD.line(Object.assign({}, spec, { _area: true, _stack: true }), headers, data, env); };
+
+  BUILD.combo = function (spec, headers, data, env) {
+    var o = BUILD.column(Object.assign({}, spec, { stack: false }), headers, data, env);
+    if (data.series.length < 2) return o;
+    o.series[0].yAxisIndex = 0; o.series[0].type = 'bar';
+    for (var i = 1; i < o.series.length; i++) { o.series[i].type = 'line'; o.series[i].yAxisIndex = 1; o.series[i].smooth = true; o.series[i].symbolSize = 7; o.series[i].itemStyle = undefined; delete o.series[i].barMaxWidth; }
+    o.yAxis = [valueAxis(env, data.series[0].name), valueAxis(env, data.series.slice(1).map(function (x) { return x.name; }).join(', '), null, { splitLine: { show: false } })];
+    o.legend = { type: 'scroll', bottom: 4, textStyle: { color: env.text } };
+    return o;
+  };
+  BUILD.pareto = function (spec, headers, data, env) {
+    var d = Object.assign({}, data, { cats: data.cats.filter(function (c) { return !c.isOthers; }).sort(function (a, b) { return b.total - a.total; }) });
+    var total = d.cats.reduce(function (a, c) { return a + c.total; }, 0), cum = 0, cumulative = d.cats.map(function (c) { cum += c.total; return total ? Math.round(cum / total * 1000) / 10 : 0; });
+    var o = BUILD.column(Object.assign({}, spec, { stack: false }), headers, Object.assign({}, d, { series: [d.series[0]] }), env);
+    o.series[0].data = d.cats.map(function (c) { return c.total; });
+    o.series.push({ name: T(env, 'Cumulative %', 'संचयी %'), type: 'line', yAxisIndex: 1, data: cumulative, smooth: true, symbolSize: 6, itemStyle: { color: '#d6456b' }, lineStyle: { width: 2.5 },
+      markLine: { silent: true, symbol: 'none', data: [{ yAxis: 80 }], lineStyle: { type: 'dashed', color: '#d6456b' }, label: { formatter: '80%', color: '#d6456b' } } });
+    o.yAxis = [valueAxis(env, yName(spec, headers, d, env)), valueAxis(env, '%', function (v) { return v + '%'; }, { max: 100, splitLine: { show: false } })];
+    o.xAxis.data = d.cats.map(function (c) { return c.label; }); o.legend = { type: 'scroll', bottom: 4, textStyle: { color: env.text } };
+    o._pareto = { cumulative: cumulative }; o._cats = d.cats;
+    return o;
+  };
+  BUILD.waterfall = function (spec, headers, data, env) {
+    var cats = data.cats.filter(function (c) { return !c.isOthers; }), labels = cats.map(function (c) { return c.label; }).concat([T(env, 'Total', 'कुल')]);
+    var base0 = [], ups = [], downs = [], run = 0, totalLine = [];
+    cats.forEach(function (c) { var v = c.values[0] || 0; if (v >= 0) { base0.push(run); ups.push(v); downs.push(0); run += v; } else { base0.push(run + v); ups.push(0); downs.push(-v); run += v; } });
+    base0.push(0); ups.push(0); downs.push(0); totalLine = labels.map(function (_, i) { return i === labels.length - 1 ? run : '-'; });
+    var o = BUILD.column(Object.assign({}, spec, { stack: true }), headers, Object.assign({}, data, { cats: cats }), env);
+    o.xAxis.data = labels; o.legend = undefined;
+    o.tooltip.formatter = function (ps) { var p = ps.filter(function (x) { return x.seriesName !== ' '; })[0]; return p ? p.axisValue + '<br/>' + p.marker + indian(p.value) : ''; };
+    o.series = [{ name: ' ', type: 'bar', stack: 'wf', itemStyle: { color: 'transparent' }, emphasis: { disabled: true }, data: base0 },
+      { name: T(env, 'Increase', 'वृद्धि'), type: 'bar', stack: 'wf', itemStyle: { color: '#14a38b', borderRadius: 3 }, data: ups, barMaxWidth: 44 },
+      { name: T(env, 'Decrease', 'कमी'), type: 'bar', stack: 'wf', itemStyle: { color: '#d6456b', borderRadius: 3 }, data: downs, barMaxWidth: 44 },
+      { name: T(env, 'Total', 'कुल'), type: 'bar', stack: 'wf', itemStyle: { color: '#6d5bd0', borderRadius: 3 }, data: totalLine.map(function (v) { return v === '-' ? 0 : v; }), barMaxWidth: 44 }];
+    o._waterfall = { total: run }; o._cats = cats;
+    return o;
+  };
+
+  function pieLike(spec, headers, data, env, radius, rose) {
+    var o = base(spec, env), total = data.cats.reduce(function (a, c) { return a + Math.max(c.values[0] || 0, 0); }, 0);
+    o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { return p.marker + ' ' + p.name + '<br/><b>' + indian(p.value) + '</b> (' + pctText(p.percent) + ')'; };
+    o.series = [{ type: 'pie', radius: radius, center: ['50%', '50%'], roseType: rose ? 'radius' : undefined, avoidLabelOverlap: true, itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+      label: { color: env.text, formatter: function (p) { return (p.name.length > 14 ? p.name.slice(0, 13) + '…' : p.name) + '\n' + pctText(p.percent); } },
+      labelLine: { lineStyle: { color: env.grid } }, emphasis: { scale: true, scaleSize: 8, itemStyle: { shadowBlur: 18, shadowColor: 'rgba(0,0,0,.25)' } },
+      data: data.cats.map(function (c, i) { return { name: c.label, value: Math.max(c.values[0] || 0, 0), _cat: i }; }) }];
+    if (radius[0] !== '0%') o.graphic = [{ type: 'text', left: 'center', top: 'center', style: { text: (total < 1e5 ? indian(total) : compact(total, env.hi)) + '\n' + T(env, 'total', 'कुल'), fill: env.text, fontSize: 16, fontWeight: 600, textAlign: 'center', lineHeight: 20 } }];
+    o.legend = { type: 'scroll', bottom: 4, textStyle: { color: env.text } };
+    return o;
+  }
+  BUILD.pie = function (spec, h, d, e) { return pieLike(spec, h, d, e, ['0%', '58%'], false); };
+  BUILD.donut = function (spec, h, d, e) { return pieLike(spec, h, d, e, ['38%', '58%'], false); };
+  BUILD.rose = function (spec, h, d, e) { return pieLike(spec, h, d, e, ['12%', '58%'], true); };
+  BUILD.funnel = function (spec, headers, data, env) {
+    var o = base(spec, env), cats = data.cats.slice().sort(function (a, b) { return (b.values[0] || 0) - (a.values[0] || 0); });
+    o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { return p.marker + ' ' + p.name + '<br/><b>' + indian(p.value) + '</b>'; };
+    o.series = [{ type: 'funnel', left: '10%', right: '10%', top: spec.title ? 56 : 30, bottom: 36, sort: 'descending', gap: 3, label: { color: env.text, formatter: function (p) { return p.name + '  ' + compact(p.value, env.hi); } },
+      itemStyle: { borderColor: '#fff', borderWidth: 1 }, data: cats.map(function (c, i) { return { name: c.label, value: Math.max(c.values[0] || 0, 0), _cat: data.cats.indexOf(c) }; }) }];
+    o.legend = undefined; return o;
+  };
+
+  function hierarchy(data, spec, env) {
+    return data.cats.filter(function (c) { return !c.isOthers; }).map(function (c, i) {
+      var node = { name: c.label, value: Math.max(c.total, 0), _cat: i };
+      if (data.split) node.children = data.series.map(function (sd, si) { return { name: sd.name, value: Math.max(c.values[si] || 0, 0), _cat: i, _ser: si }; }).filter(function (x) { return x.value > 0; });
+      return node;
+    });
+  }
+  BUILD.treemap = function (spec, headers, data, env) {
+    var o = base(spec, env, { feature: {} }); o.legend = undefined; o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { return p.marker + ' ' + p.name + '<br/><b>' + indian(p.value) + '</b>'; };
+    o.series = [{ type: 'treemap', top: spec.title ? 50 : 20, bottom: 24, left: 12, right: 12, roam: false, nodeClick: 'zoomToNode', breadcrumb: { show: true, bottom: 0, itemStyle: { color: '#6d5bd0' } },
+      label: { show: true, formatter: function (p) { return p.name + '\n' + compact(p.value, env.hi); }, color: '#fff', fontSize: 12 }, upperLabel: { show: data.split, height: 22, color: '#fff' },
+      itemStyle: { borderColor: '#fff', borderWidth: 2, gapWidth: 2, borderRadius: 4 }, levels: [{ itemStyle: { borderWidth: 0, gapWidth: 4 } }, { colorSaturation: [0.35, 0.6], itemStyle: { gapWidth: 2 } }], data: hierarchy(data, spec, env) }];
+    return o;
+  };
+  BUILD.sunburst = function (spec, headers, data, env) {
+    var o = base(spec, env, { feature: {} }); o.legend = undefined; o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { return p.marker + ' ' + p.name + '<br/><b>' + indian(p.value) + '</b>'; };
+    o.series = [{ type: 'sunburst', radius: [0, '86%'], center: ['50%', spec.title ? '55%' : '50%'], sort: 'desc', data: hierarchy(data, spec, env), label: { rotate: 'radial', color: '#fff', minAngle: 8 }, itemStyle: { borderColor: '#fff', borderWidth: 2, borderRadius: 4 }, emphasis: { focus: 'ancestor' }, levels: [{}, { r0: '12%', r: '52%' }, { r0: '54%', r: '86%', label: { align: 'right' } }] }];
+    return o;
+  };
+
+  // scatter / bubble use the original rows, not aggregated categories
+  function pointsFor(spec, headers, rows, idx) {
+    var pts = [], sx = spec.xnum, sy = spec.ynum, sz = spec.size >= 0 ? spec.size : -1, g = spec.g >= 0 ? spec.g : -1;
+    for (var k = 0; k < idx.length; k++) {
+      var r = rows[idx[k]], x = num(r[sx]), y = num(r[sy]); if (x === null || y === null) continue;
+      var p = { value: [x, y], ri: idx[k] };
+      if (sz >= 0) { var z = num(r[sz]); if (z === null) continue; p.value.push(z); }
+      p.g = g >= 0 ? (blank(r[g]) ? '(blank)' : s(r[g]).trim()) : null; pts.push(p);
+    }
+    return pts;
+  }
+  function regression(pts) {
+    var n = pts.length; if (n < 3) return null;
+    var sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0;
+    pts.forEach(function (p) { var x = p.value[0], y = p.value[1]; sx += x; sy += y; sxx += x * x; sxy += x * y; syy += y * y; });
+    var den = n * sxx - sx * sx; if (den === 0) return null;
+    var slope = (n * sxy - sx * sy) / den, icpt = (sy - slope * sx) / n;
+    var rden = Math.sqrt((n * sxx - sx * sx) * (n * syy - sy * sy)), r = rden ? (n * sxy - sx * sy) / rden : 0;
+    return { slope: slope, intercept: icpt, r: r, n: n };
+  }
+  CH.regression = regression;
+  BUILD.scatter = function (spec, headers, data, env, ctx) {
+    var pts = ctx.points, o = base(spec, env, { feature: { brush: { type: ['rect', 'polygon', 'clear'], title: { rect: T(env, 'Select an area', 'क्षेत्र चुनें'), polygon: T(env, 'Free select', 'मुक्त चयन'), clear: T(env, 'Clear selection', 'चयन हटाएँ') } } } });
+    var groups = {}, order = []; pts.forEach(function (p) { var k = p.g == null ? '' : p.g; if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(p); });
+    var bubble = spec.size >= 0, zs = bubble ? pts.map(function (p) { return p.value[2]; }) : [], zmax = bubble ? Math.max.apply(null, zs) : 1, zmin = bubble ? Math.min.apply(null, zs) : 0;
+    o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { var v = p.value; return p.marker + (p.seriesName ? p.seriesName + '<br/>' : '') + s(headers[spec.xnum]) + ': <b>' + indian(v[0]) + '</b><br/>' + s(headers[spec.ynum]) + ': <b>' + indian(v[1]) + '</b>' + (bubble ? '<br/>' + s(headers[spec.size]) + ': <b>' + indian(v[2]) + '</b>' : '') + '<br/><span style="color:#94a3b8">' + T(env, 'row ', 'पंक्ति ') + (p.data.ri + 1) + '</span>'; };
+    o.grid = { left: 12, right: 24, top: spec.title ? 56 : 40, bottom: 56, containLabel: true };
+    o.xAxis = valueAxis(env, s(headers[spec.xnum]), null, { scale: true, splitLine: { lineStyle: { color: env.grid } } }); o.yAxis = valueAxis(env, s(headers[spec.ynum]), null, { scale: true });
+    o.series = order.map(function (k) { return { name: k, type: 'scatter', data: groups[k], symbolSize: bubble ? function (v) { return 8 + (zmax === zmin ? 14 : (v[2] - zmin) / (zmax - zmin) * 42); } : 9, itemStyle: { opacity: bubble ? 0.62 : 0.78 }, emphasis: { focus: 'series', itemStyle: { opacity: 1, borderColor: '#fff', borderWidth: 1.5 } }, large: pts.length > 5000, largeThreshold: 5000 }; });
+    var reg = spec.trend && !bubble ? regression(pts) : null;
+    if (reg) {
+      var xs = pts.map(function (p) { return p.value[0]; }), mn = Math.min.apply(null, xs), mx = Math.max.apply(null, xs);
+      o.series.push({ name: T(env, 'Trend line', 'प्रवृत्ति रेखा'), type: 'line', showSymbol: false, silent: true, lineStyle: { type: 'dashed', width: 2, color: '#d6456b' }, data: [[mn, reg.slope * mn + reg.intercept], [mx, reg.slope * mx + reg.intercept]], tooltip: { show: false } });
+    }
+    o.legend = order.length > 1 || reg ? { type: 'scroll', bottom: 4, textStyle: { color: env.text } } : undefined;
+    o.dataZoom = [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }, { type: 'inside', yAxisIndex: 0, filterMode: 'none' }];
+    o.brush = { xAxisIndex: 0, yAxisIndex: 0, brushStyle: { borderWidth: 1, color: 'rgba(109,91,208,.15)', borderColor: '#6d5bd0' }, throttleType: 'debounce', throttleDelay: 150 };
+    o._reg = reg; return o;
+  };
+  BUILD.bubble = function (spec, headers, data, env, ctx) { return BUILD.scatter(spec, headers, data, env, ctx); };
+
+  BUILD.heatmap = function (spec, headers, data, env, ctx) {
+    var m = ctx.matrix, o = base(spec, env, { feature: {} }); o.legend = undefined;
+    o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { return s(m.xs[p.value[0]]) + ' × ' + s(m.ys[p.value[1]]) + '<br/><b>' + indian(p.value[2]) + '</b>'; };
+    o.grid = { left: 12, right: 20, top: spec.title ? 56 : 30, bottom: 70, containLabel: true };
+    o.xAxis = rot(catAxis(env, m.xs, { splitArea: { show: true } }), m.xs.length); o.yAxis = catAxis(env, m.ys, { inverse: true, splitArea: { show: true } });
+    o.visualMap = { min: m.min, max: m.max || 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 6, textStyle: { color: env.sub }, inRange: { color: ['#eef2ff', '#a99cf0', '#6d5bd0', '#2f2a6b'] } };
+    o.series = [{ type: 'heatmap', data: m.cells, label: { show: m.xs.length * m.ys.length <= 120, color: '#111', formatter: function (p) { return compact(p.value[2], env.hi); } }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.35)' } }, itemStyle: { borderColor: '#fff', borderWidth: 1 } }];
+    return o;
+  };
+  BUILD.radar = function (spec, headers, data, env, ctx) {
+    var o = base(spec, env, { feature: {} }), ind = ctx.indicators, cats = data.cats.slice(0, 6);
+    o.tooltip.trigger = 'item';
+    o.radar = { indicator: ind.map(function (i) { return { name: i.name, max: i.max }; }), radius: '62%', center: ['50%', spec.title ? '55%' : '52%'], axisName: { color: env.text }, splitLine: { lineStyle: { color: env.grid } }, splitArea: { areaStyle: { color: ['transparent'] } } };
+    o.series = [{ type: 'radar', symbolSize: 5, areaStyle: { opacity: 0.16 }, lineStyle: { width: 2 }, emphasis: { areaStyle: { opacity: 0.35 } }, data: cats.map(function (c, i) { return { name: c.label, value: ctx.matrix[data.cats.indexOf(c)], _cat: data.cats.indexOf(c) }; }) }];
+    o.legend = { type: 'scroll', bottom: 4, textStyle: { color: env.text } }; return o;
+  };
+  BUILD.histogram = function (spec, headers, data, env, ctx) {
+    var h = ctx.hist, o = base(spec, env, { feature: { brush: { type: ['lineX', 'clear'], title: { lineX: T(env, 'Select a range', 'दायरा चुनें'), clear: T(env, 'Clear selection', 'चयन हटाएँ') } } } });
+    o.tooltip.trigger = 'axis'; o.tooltip.axisPointer = { type: 'shadow' }; o.tooltip.formatter = function (ps) { var i = ps[0].dataIndex; return indian(h.edges[i]) + ' – ' + indian(h.edges[i + 1]) + '<br/><b>' + ps[0].value + '</b> ' + T(env, 'rows', 'पंक्तियाँ'); };
+    o.grid = cartesianGrid(spec, env, h.counts.length); o.legend = undefined;
+    o.xAxis = catAxis(env, h.counts.map(function (_, i) { return compact((h.edges[i] + h.edges[i + 1]) / 2, env.hi); }), { name: s(headers[spec.xnum]), nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: env.sub } }); o.yAxis = valueAxis(env, T(env, 'Rows', 'पंक्तियाँ'));
+    o.series = [{ type: 'bar', data: h.counts, barCategoryGap: '4%', itemStyle: { borderRadius: [3, 3, 0, 0] }, markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#d6456b' }, label: { color: '#d6456b', formatter: function (p) { return p.name + ' ' + compact(p.value, env.hi); } }, data: [{ name: T(env, 'mean', 'औसत'), xAxis: h.meanBin }, { name: T(env, 'median', 'माध्यिका'), xAxis: h.medianBin }].filter(function (d) { return d.xAxis != null; }).map(function (d) { return { name: d.name, xAxis: d.xAxis, value: d.name === T(env, 'mean', 'औसत') ? h.mean : h.median }; }) } }];
+    o.brush = { xAxisIndex: 0, brushStyle: { borderWidth: 1, color: 'rgba(109,91,208,.15)', borderColor: '#6d5bd0' } };
+    return o;
+  };
+  BUILD.boxplot = function (spec, headers, data, env, ctx) {
+    var bx = ctx.box, o = base(spec, env, { feature: {} }); o.legend = undefined;
+    o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { if (p.seriesType === 'boxplot') { var v = bx.stats[p.dataIndex]; return p.name + '<br/>' + T(env, 'max', 'अधिकतम') + ': <b>' + indian(v[4]) + '</b><br/>Q3: <b>' + indian(v[3]) + '</b><br/>' + T(env, 'median', 'माध्यिका') + ': <b>' + indian(v[2]) + '</b><br/>Q1: <b>' + indian(v[1]) + '</b><br/>' + T(env, 'min', 'न्यूनतम') + ': <b>' + indian(v[0]) + '</b>'; } return p.marker + indian(p.value[1]); };
+    o.grid = cartesianGrid(spec, env, bx.labels.length); o.xAxis = rot(catAxis(env, bx.labels), bx.labels.length); o.yAxis = valueAxis(env, s(headers[spec.ys[0].col]));
+    o.series = [{ type: 'boxplot', data: bx.stats, itemStyle: { color: 'rgba(109,91,208,.2)', borderColor: '#6d5bd0', borderWidth: 1.6 }, emphasis: { itemStyle: { borderWidth: 2.4 } } }, { type: 'scatter', data: bx.outliers, symbolSize: 6, itemStyle: { color: '#d6456b', opacity: 0.8 } }];
+    o.dataZoom = zoom(bx.labels.length); return o;
+  };
+  BUILD.calendar = function (spec, headers, data, env, ctx) {
+    var cal = ctx.cal, o = base(spec, env, { feature: {} }); o.legend = undefined;
+    o.tooltip.trigger = 'item'; o.tooltip.formatter = function (p) { return p.value[0] + '<br/><b>' + indian(p.value[1]) + '</b>'; };
+    o.visualMap = { min: 0, max: cal.max || 1, calculable: true, orient: 'horizontal', left: 'center', bottom: 4, textStyle: { color: env.sub }, inRange: { color: ['#eef2ff', '#a99cf0', '#6d5bd0', '#2f2a6b'] } };
+    o.calendar = cal.ranges.map(function (r, i) { return { top: (spec.title ? 64 : 40) + i * 150, left: 52, right: 24, cellSize: ['auto', 16], range: r, itemStyle: { borderWidth: 2, borderColor: '#fff' }, splitLine: { lineStyle: { color: env.grid } }, yearLabel: { color: env.sub }, dayLabel: { color: env.sub, firstDay: 1 }, monthLabel: { color: env.sub } }; });
+    o.series = cal.ranges.map(function (r, i) { return { type: 'heatmap', coordinateSystem: 'calendar', calendarIndex: i, data: cal.data.filter(function (d) { return d[0] >= r[0] && d[0] <= r[1]; }) }; });
+    return o;
+  };
+  BUILD.gauge = function (spec, headers, data, env, ctx) {
+    var k = ctx.kpi, o = base(spec, env, { feature: {} }); o.legend = undefined; o.tooltip.formatter = '{b}: {c}';
+    o.series = [{ type: 'gauge', min: 0, max: k.max, radius: '84%', center: ['50%', '62%'], progress: { show: true, width: 18, itemStyle: { color: '#6d5bd0' } }, axisLine: { lineStyle: { width: 18, color: [[1, 'rgba(148,163,184,.25)']] } }, axisTick: { show: false }, splitLine: { length: 10, lineStyle: { color: env.sub } }, axisLabel: { color: env.sub, distance: 26, formatter: function (v) { return compact(v, env.hi); } },
+      pointer: { width: 5, length: '58%' }, detail: { valueAnimation: true, formatter: function (v) { return compact(v, env.hi); }, fontSize: 30, fontWeight: 700, color: env.text, offsetCenter: [0, '58%'] }, title: { offsetCenter: [0, '84%'], color: env.sub, fontSize: 13 }, data: [{ value: k.value, name: k.label }] }];
+    return o;
+  };
+
+  // ------------------------------------------------------------ build()
+  var SCATTER = { scatter: 1, bubble: 1 };
+  function niceMax(v) { if (v <= 0) return 1; var p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
+
+  CH.build = function (type, spec, headers, rows, idx, env0) {
+    var env = envOf(env0), ctx = {}, data, o; spec = Object.assign({}, spec); spec._hi = env.hi;
+    if (SCATTER[type]) {
+      if (spec.xnum === undefined || spec.ynum === undefined) throw new Error('Choose two number columns');
+      ctx.points = pointsFor(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
+    } else if (type === 'histogram') {
+      var vals = []; idx.forEach(function (i) { var x = num(rows[i][spec.xnum]); if (x !== null) vals.push(x); });
+      ctx.hist = histogram(vals, spec.bins); data = { cats: [], series: [], rowsUsed: idx.length };
+    } else if (type === 'heatmap') {
+      ctx.matrix = matrix2(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
+    } else if (type === 'boxplot') {
+      ctx.box = boxData(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
+    } else if (type === 'calendar') {
+      ctx.cal = calData(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
+    } else if (type === 'gauge') {
+      var col = (spec.ys && spec.ys[0] && spec.ys[0].col >= 0) ? spec.ys[0] : { col: -1, fn: 'count' }, vv = idx.map(function (i) { return col.col < 0 ? 1 : rows[i][col.col]; }), val = reduce(vv, col.fn || 'sum');
+      var mx = idx.length ? niceMax((val || 0) * 1.25) : 1; ctx.kpi = { value: Math.round((val || 0) * 100) / 100, max: mx, label: (col.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(col.fn || 'sum', env.hi) + ' — ' + headers[col.col]) }; data = { cats: [], series: [], rowsUsed: idx.length };
+    } else {
+      var sp = Object.assign({}, spec);
+      if (type === 'combo' && (!sp.ys || sp.ys.length < 2)) { /* needs two measures: falls back to a plain column chart */ }
+      if (['line', 'area', 'stackedArea'].indexOf(type) >= 0 && sp.sort === undefined) sp.sort = sp.time && sp.time !== 'none' ? 'label' : 'natural';
+      if (type === 'radar') { sp.g = -1; }
+      if (type === 'sunburst' || type === 'stackedColumn' || type === 'percentColumn' || type === 'stackedArea') { /* uses the split */ }
+      data = CH.prepare(sp, headers, rows, idx);
+      if (type === 'radar') { var r = radarData(sp, headers, data); ctx.indicators = r.indicators; ctx.matrix = r.matrix; }
+    }
+    if (!BUILD[type]) throw new Error('Unknown chart type: ' + type);
+    o = BUILD[type](spec, headers, data, env, ctx);
+    var cap = caption(type, spec, headers, data, ctx, env);
+    return { option: o, data: data, ctx: ctx, caption: cap };
+  };
+
+  // ---- derived data for the special charts
+  function histogram(vals, bins) {
+    var n = vals.length, out = { counts: [], edges: [], mean: null, median: null, meanBin: null, medianBin: null, n: n };
+    if (!n) return out;
+    var sorted = vals.slice().sort(function (a, b) { return a - b; }), mn = sorted[0], mx = sorted[n - 1];
+    var k = bins > 1 ? bins : Math.max(5, Math.min(40, Math.ceil(Math.log2(n) + 1)));
+    if (mn === mx) { out.edges = [mn - 0.5, mx + 0.5]; out.counts = [n]; }
+    else { var w = (mx - mn) / k; for (var i = 0; i <= k; i++) out.edges.push(mn + w * i); out.counts = new Array(k).fill(0); vals.forEach(function (v) { var b = Math.min(k - 1, Math.floor((v - mn) / w)); out.counts[b]++; }); }
+    out.mean = vals.reduce(function (a, b) { return a + b; }, 0) / n; out.median = quantile(sorted, 0.5);
+    var binOf = function (v) { for (var j = 0; j < out.counts.length; j++) if (v <= out.edges[j + 1] || j === out.counts.length - 1) return j; return 0; };
+    out.meanBin = binOf(out.mean); out.medianBin = binOf(out.median);
+    out.min = mn; out.max = mx; out.sd = Math.sqrt(vals.reduce(function (a, v) { return a + (v - out.mean) * (v - out.mean); }, 0) / n);
+    return out;
+  }
+  CH.histogram = histogram;
+  function matrix2(spec, headers, rows, idx) {
+    var xs = [], ys = [], xi = {}, yi = {}, cell = {}, fn = spec.fn || (spec.ys && spec.ys[0] && spec.ys[0].col >= 0 ? (spec.ys[0].fn || 'sum') : 'count'), mc = spec.ys && spec.ys[0] ? spec.ys[0].col : -1;
+    idx.forEach(function (i) {
+      var a = s(rows[i][spec.x]).trim(), b = s(rows[i][spec.g]).trim(); if (!a || !b) return;
+      if (xi[a] === undefined) { xi[a] = xs.length; xs.push(a); } if (yi[b] === undefined) { yi[b] = ys.length; ys.push(b); }
+      var k = xi[a] + '|' + yi[b]; (cell[k] = cell[k] || []).push(mc < 0 ? 1 : rows[i][mc]);
+    });
+    var tot = function (arr, f) { return arr.reduce(function (acc, key) { return acc; }, 0); };
+    // order by size so the busiest rows/columns are first
+    var xsum = xs.map(function () { return 0; }), ysum = ys.map(function () { return 0; });
+    var cells = [], mn = Infinity, mx = -Infinity;
+    Object.keys(cell).forEach(function (k) { var p = k.split('|'), v = reduce(cell[k], mc < 0 ? 'count' : fn); if (v === null) return; xsum[+p[0]] += Math.abs(v); ysum[+p[1]] += Math.abs(v); });
+    var xo = xs.map(function (_, i) { return i; }).sort(function (a, b) { return xsum[b] - xsum[a]; }).slice(0, 25), yo = ys.map(function (_, i) { return i; }).sort(function (a, b) { return ysum[b] - ysum[a]; }).slice(0, 25);
+    var xpos = {}, ypos = {}; xo.forEach(function (o, p) { xpos[o] = p; }); yo.forEach(function (o, p) { ypos[o] = p; });
+    Object.keys(cell).forEach(function (k) { var p = k.split('|'); if (xpos[p[0]] === undefined || ypos[p[1]] === undefined) return; var v = reduce(cell[k], mc < 0 ? 'count' : fn); if (v === null) return; cells.push([xpos[p[0]], ypos[p[1]], v]); if (v < mn) mn = v; if (v > mx) mx = v; });
+    return { xs: xo.map(function (o) { return xs[o]; }), ys: yo.map(function (o) { return ys[o]; }), cells: cells, min: isFinite(mn) ? Math.min(0, mn) : 0, max: isFinite(mx) ? mx : 1 };
+  }
+  function boxData(spec, headers, rows, idx) {
+    var col = spec.ys[0].col, by = {}, order = [];
+    idx.forEach(function (i) { var k = s(rows[i][spec.x]).trim(); if (!k) return; var x = num(rows[i][col]); if (x === null) return; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(x); });
+    order = order.filter(function (k) { return by[k].length >= 3; }).sort(function (a, b) { return by[b].length - by[a].length; }).slice(0, spec.topN > 0 ? spec.topN : 20);
+    var stats = [], outliers = [];
+    order.forEach(function (k, ci) {
+      var v = by[k].slice().sort(function (a, b) { return a - b; }), q1 = quantile(v, 0.25), q2 = quantile(v, 0.5), q3 = quantile(v, 0.75), iqr = q3 - q1, lo = q1 - 1.5 * iqr, hi = q3 + 1.5 * iqr;
+      var inl = v.filter(function (x) { return x >= lo && x <= hi; });
+      stats.push([inl[0], q1, q2, q3, inl[inl.length - 1]]);
+      v.forEach(function (x) { if (x < lo || x > hi) outliers.push([ci, x]); });
+    });
+    return { labels: order, stats: stats, outliers: outliers };
+  }
+  function calData(spec, headers, rows, idx) {
+    var by = {}, mc = spec.ys && spec.ys[0] ? spec.ys[0].col : -1, fn = mc < 0 ? 'count' : (spec.ys[0].fn || 'sum'), mn = Infinity, mx = -Infinity;
+    idx.forEach(function (i) { var ms = dateMs(rows[i][spec.x]); if (ms === null) return; var k = bucketKey(ms, 'day'); (by[k] = by[k] || []).push(mc < 0 ? 1 : rows[i][mc]); if (ms < mn) mn = ms; if (ms > mx) mx = ms; });
+    var data = [], max = 0; Object.keys(by).sort().forEach(function (k) { var v = reduce(by[k], fn); if (v === null) return; data.push([k, v]); if (v > max) max = v; });
+    var ranges = [];
+    if (isFinite(mn)) { var y0 = new Date(mn).getUTCFullYear(), y1 = new Date(mx).getUTCFullYear(); for (var y = Math.max(y0, y1 - 2); y <= y1; y++) ranges.push([y + '-01-01', y + '-12-31']); if (new Date(mx).getUTCFullYear() - new Date(mn).getUTCFullYear() < 1 && (mx - mn) / 86400000 < 200) { var d0 = new Date(mn), d1 = new Date(mx); ranges = [[bucketKey(mn, 'day'), bucketKey(mx, 'day')]]; } }
+    return { data: data, max: max, ranges: ranges, days: data.length };
+  }
+  function radarData(spec, headers, data) {
+    var ind = data.series.map(function (sd, i) { var mx = 0; data.cats.forEach(function (c) { var v = Math.abs(c.values[i] || 0); if (v > mx) mx = v; }); return { name: sd.name, max: niceMax(mx) }; });
+    return { indicators: ind, matrix: data.cats.map(function (c) { return c.values.map(function (v) { return v || 0; }); }) };
+  }
+
+  // ------------------------------------------------------------ captions (computed numbers only)
+  function caption(type, spec, headers, data, ctx, env) {
+    var hi = env.hi, out = [];
+    function add(en, h) { out.push(hi ? h : en); }
+    try {
+      if (type === 'scatter' || type === 'bubble') {
+        var reg = ctx.points.length >= 3 ? regression(ctx.points) : null;
+        if (reg) {
+          var a = Math.abs(reg.r), strength = a >= 0.8 ? ['strong', 'मज़बूत'] : a >= 0.5 ? ['moderate', 'मध्यम'] : a >= 0.25 ? ['weak', 'कमज़ोर'] : ['almost no', 'लगभग नहीं'];
+          var dir = reg.r >= 0 ? ['rise together', 'साथ बढ़ते हैं'] : ['move in opposite directions', 'विपरीत दिशा में चलते हैं'];
+          add('Across ' + indian(reg.n) + ' rows there is ' + strength[0] + ' association between ' + headers[spec.xnum] + ' and ' + headers[spec.ynum] + ' (r = ' + (Math.round(reg.r * 100) / 100) + (a >= 0.25 ? '; they tend to ' + dir[0] : '') + '). This shows a pattern, not a cause.',
+              indian(reg.n) + ' पंक्तियों में ' + headers[spec.xnum] + ' और ' + headers[spec.ynum] + ' के बीच ' + strength[1] + ' संबंध है (r = ' + (Math.round(reg.r * 100) / 100) + (a >= 0.25 ? '; ' + dir[1] : '') + ')। यह पैटर्न दिखाता है, कारण नहीं।');
+        }
+        return out;
+      }
+      if (type === 'histogram') {
+        var h = ctx.hist; if (!h.n) return out;
+        var skew = h.mean > h.median * 1.05 ? ['a few large values pull the average above the median', 'कुछ बड़े मान औसत को माध्यिका से ऊपर खींचते हैं'] : (h.mean < h.median * 0.95 ? ['a few small values pull the average below the median', 'कुछ छोटे मान औसत को माध्यिका से नीचे खींचते हैं'] : ['the values are fairly balanced', 'मान काफ़ी संतुलित हैं']);
+        add(headers[spec.xnum] + ': ' + indian(h.n) + ' values from ' + indian(h.min) + ' to ' + indian(h.max) + '; average ' + indian(Math.round(h.mean * 100) / 100) + ', median ' + indian(Math.round(h.median * 100) / 100) + ' — ' + skew[0] + '.',
+            headers[spec.xnum] + ': ' + indian(h.n) + ' मान, ' + indian(h.min) + ' से ' + indian(h.max) + '; औसत ' + indian(Math.round(h.mean * 100) / 100) + ', माध्यिका ' + indian(Math.round(h.median * 100) / 100) + ' — ' + skew[1] + '।');
+        return out;
+      }
+      if (type === 'gauge') { add(ctx.kpi.label + ': ' + indian(ctx.kpi.value) + ' across ' + indian(data.rowsUsed) + ' rows.', ctx.kpi.label + ': ' + indian(ctx.kpi.value) + ', ' + indian(data.rowsUsed) + ' पंक्तियों में।'); return out; }
+      if (type === 'heatmap') { var m = ctx.matrix; if (m.cells.length) { var top = m.cells.slice().sort(function (p, q) { return q[2] - p[2]; })[0]; add('The busiest combination is ' + m.xs[top[0]] + ' × ' + m.ys[top[1]] + ' (' + indian(top[2]) + ').', 'सबसे अधिक संयोजन ' + m.xs[top[0]] + ' × ' + m.ys[top[1]] + ' है (' + indian(top[2]) + ')।'); } return out; }
+      if (type === 'calendar') { if (ctx.cal.days) add(indian(ctx.cal.days) + ' days with data; the busiest day has ' + indian(ctx.cal.max) + '.', indian(ctx.cal.days) + ' दिनों का डेटा; सबसे व्यस्त दिन में ' + indian(ctx.cal.max) + ' हैं।'); return out; }
+      if (type === 'boxplot') { if (ctx.box.labels.length) add('The box shows the middle half of the values, the line the median, dots are unusual values. ' + ctx.box.labels.length + ' groups with at least 3 rows.', 'डिब्बा मध्य आधे मान दिखाता है, रेखा माध्यिका, बिंदु असामान्य मान। कम से कम 3 पंक्तियों वाले ' + ctx.box.labels.length + ' समूह।'); return out; }
+      if (type === 'radar') {
+        var lead = data.series.map(function (sd, i) { var b = data.cats.filter(function (c) { return !c.isOthers; }).sort(function (a, c) { return (c.values[i] || 0) - (a.values[i] || 0); })[0]; return b ? { m: sd.name, c: b.label, v: Math.round((b.values[i] || 0) * 100) / 100 } : null; }).filter(Boolean).slice(0, 3);
+        if (lead.length) add('Each shape is one ' + headers[spec.x] + '. Highest: ' + lead.map(function (l) { return l.m + ' — ' + l.c + ' (' + indian(l.v) + ')'; }).join('; ') + '.', 'हर आकृति एक ' + headers[spec.x] + ' है। सर्वाधिक: ' + lead.map(function (l) { return l.m + ' — ' + l.c + ' (' + indian(l.v) + ')'; }).join('; ') + '।');
+        return out;
+      }
+      var cats = data.cats.filter(function (c) { return !c.isOthers; }), n = cats.length; if (!n) return out;
+      var tot = data.cats.reduce(function (a, c) { return a + (c.total || 0); }, 0), name = data.series[0] ? data.series[0].name : '';
+      var fl = data.series[0] ? fnLabel(data.series[0].fn, hi) : '';
+      if (['pie', 'donut', 'rose', 'funnel', 'treemap', 'sunburst', 'pareto', 'column', 'bar', 'stackedColumn', 'percentColumn', 'waterfall', 'combo'].indexOf(type) >= 0 && data.series.length && tot > 0) {
+        var best = cats.slice().sort(function (a, b) { return b.total - a.total; })[0], share = best.total / tot * 100;
+        if (data.series[0].fn === 'sum' || data.series[0].fn === 'count' || data.series[0].fn === 'distinct') {
+          add(best.label + ' is the largest: ' + indian(best.total) + ' (' + pctText(share) + ' of the total ' + indian(tot) + ').', best.label + ' सबसे बड़ा है: ' + indian(best.total) + ' (कुल ' + indian(tot) + ' का ' + pctText(share) + ')।');
+          if (type === 'pareto' && ctx !== undefined) { var cum = 0, k = 0; var sorted = cats.slice().sort(function (a, b) { return b.total - a.total; }); for (; k < sorted.length; k++) { cum += sorted[k].total; if (cum / tot >= 0.8) { k++; break; } } add(k + ' of ' + sorted.length + ' (' + pctText(k / sorted.length * 100) + ') account for 80% of the total.', sorted.length + ' में से ' + k + ' (' + pctText(k / sorted.length * 100) + ') कुल का 80% देते हैं।'); }
+        } else add('Highest ' + fl.toLowerCase() + ': ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ').', 'सर्वाधिक: ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ')।');
+      }
+      if (['line', 'area', 'stackedArea'].indexOf(type) >= 0 && n >= 2) {
+        var f0 = cats[0], l0 = cats[n - 1], pk = cats.slice().sort(function (a, b) { return b.total - a.total; })[0], dlt = l0.total - f0.total, pc = f0.total ? dlt / Math.abs(f0.total) * 100 : null;
+        add(name + ' went from ' + indian(f0.total) + ' (' + f0.label + ') to ' + indian(l0.total) + ' (' + l0.label + ')' + (pc !== null ? ', ' + (dlt >= 0 ? 'up ' : 'down ') + pctText(pc) : '') + '; peak ' + indian(pk.total) + ' in ' + pk.label + '.',
+            name + ' ' + indian(f0.total) + ' (' + f0.label + ') से ' + indian(l0.total) + ' (' + l0.label + ') ' + (dlt >= 0 ? 'तक बढ़ा' : 'तक घटा') + (pc !== null ? ' (' + pctText(pc) + ')' : '') + '; शीर्ष ' + indian(pk.total) + ' (' + pk.label + ')।');
+      }
+      if (data.others) add(data.others.count + ' smaller groups are combined as "Others".', data.others.count + ' छोटे समूह "अन्य" में जोड़े गए।');
+      if (data.blanks) add(indian(data.blanks) + ' rows have no value in the category column and are shown as "(blank)" or left out.', indian(data.blanks) + ' पंक्तियों में श्रेणी खाली है।');
+    } catch (e) { /* captions are a convenience */ }
+    return out;
+  }
+
+  // ------------------------------------------------------------ recommendations
+  CH.recommend = function (headers, rows, idx, max) {
+    max = max || 8;
+    var prof = CH.profile(headers, rows, idx), M = STL.merge, out = [];
+    var nums = prof.filter(function (p) { return p.numeric && !p.serial && !p.code && !p.unique; });
+    var dates = prof.filter(function (p) { return p.date && !p.numeric; });
+    var cats = prof.filter(function (p) { return !p.numeric && !p.date && !p.code && p.distinct >= 2 && p.distinct <= 40 && p.fill >= 0.6 && !(p.unique); });
+    // prefer geographic / organisational names, then fewer groups
+    function catScore(p) { var sc = -Math.abs(p.distinct - 8) * 0.05; if (M && M.score) { ['district', 'police station', 'department', 'category', 'status', 'designation'].forEach(function (g) { if (M.score(p.name, g).score >= 0.9) sc += 1; }); } return sc; }
+    cats.sort(function (a, b) { return catScore(b) - catScore(a); });
+    nums.sort(function (a, b) { return b.filled - a.filled; });
+    var c1 = cats[0], c2 = cats[1], n1 = nums[0], n2 = nums[1];
+    function add(type, spec, whyEn, whyHi, score) { out.push({ type: type, spec: spec, why: B(whyEn, whyHi), score: score }); }
+    if (c1 && n1) add('column', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 12, title: n1.name + ' — ' + c1.name }, 'Compare ' + n1.name + ' across ' + c1.name, c1.name + ' के अनुसार ' + n1.name + ' की तुलना', 100);
+    if (c1) add('bar', { x: c1.index, ys: [{ col: -1, fn: 'count' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Number of rows by ', '') + c1.name }, 'How many rows for each ' + c1.name, 'हर ' + c1.name + ' में कितनी पंक्तियाँ', 92);
+    if (c1 && c1.distinct <= 8) add('donut', { x: c1.index, ys: n1 ? [{ col: n1.index, fn: 'sum' }] : [{ col: -1, fn: 'count' }], sort: 'desc', title: (n1 ? n1.name + ' — ' : '') + c1.name }, 'Share of the total by ' + c1.name, c1.name + ' के अनुसार कुल की हिस्सेदारी', 84);
+    if (dates[0]) { var dd = dates[0]; add('area', { x: dd.index, ys: n1 ? [{ col: n1.index, fn: 'sum' }] : [{ col: -1, fn: 'count' }], time: 'month', sort: 'label', title: (n1 ? n1.name : T({ hi: false }, 'Rows', '')) + ' — ' + dd.name, smooth: true }, 'Trend over time by month', 'महीने के अनुसार समय के साथ प्रवृत्ति', 90); }
+    if (n1 && n2) add('scatter', { xnum: n1.index, ynum: n2.index, trend: true, g: c1 && c1.distinct <= 6 ? c1.index : -1, title: n1.name + ' vs ' + n2.name }, 'Do ' + n1.name + ' and ' + n2.name + ' move together?', n1.name + ' और ' + n2.name + ' क्या साथ चलते हैं?', 80);
+    if (n1) add('histogram', { xnum: n1.index, title: T({ hi: false }, 'Spread of ', '') + n1.name }, 'How the values of ' + n1.name + ' are spread', n1.name + ' के मान कैसे फैले हैं', 70);
+    if (c1 && c2 && c1.distinct <= 25 && c2.distinct <= 25) add('heatmap', { x: c1.index, g: c2.index, ys: [{ col: -1, fn: 'count' }], title: c1.name + ' × ' + c2.name }, 'Where ' + c1.name + ' and ' + c2.name + ' overlap most', c1.name + ' और ' + c2.name + ' कहाँ सबसे अधिक मिलते हैं', 66);
+    if (c1 && c1.distinct >= 12 && n1) add('treemap', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 40, title: n1.name + ' — ' + c1.name }, 'Which ' + c1.name + ' values are biggest', 'कौन-से ' + c1.name + ' सबसे बड़े हैं', 64);
+    if (c1 && n1 && c1.distinct >= 5) add('pareto', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Pareto: ', 'पैरेटो: ') + n1.name + ' / ' + c1.name }, 'Do a few ' + c1.name + ' values make most of the total?', 'क्या कुछ ' + c1.name + ' कुल का अधिकांश बनाते हैं?', 62);
+    if (c1 && n1 && c1.distinct <= 12) add('boxplot', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], title: n1.name + ' — ' + c1.name }, 'How widely ' + n1.name + ' varies inside each ' + c1.name, 'हर ' + c1.name + ' में ' + n1.name + ' कितना बदलता है', 58);
+    if (c1 && nums.length >= 3 && c1.distinct <= 8) add('radar', { x: c1.index, ys: nums.slice(0, 5).map(function (p) { return { col: p.index, fn: 'avg' }; }), sort: 'desc', title: c1.name }, 'Profile of each ' + c1.name + ' across several measures', 'कई मापों में हर ' + c1.name + ' का स्वरूप', 54);
+    if (dates[0] && (function () { var a = Infinity, b = -Infinity; idx.slice(0, 4000).forEach(function (i) { var ms = dateMs(rows[i][dates[0].index]); if (ms !== null) { if (ms < a) a = ms; if (ms > b) b = ms; } }); return (b - a) / 86400000 >= 45; })()) add('calendar', { x: dates[0].index, ys: [{ col: -1, fn: 'count' }], title: T({ hi: false }, 'Rows per day — ', 'प्रतिदिन पंक्तियाँ — ') + dates[0].name }, 'Which days are busiest', 'कौन-से दिन सबसे व्यस्त हैं', 52);
+    out.sort(function (a, b) { return b.score - a.score; });
+    return out.slice(0, max);
+  };
+})(typeof window !== 'undefined' ? window : globalThis);

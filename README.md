@@ -28,6 +28,14 @@ The server listens on this PC only. To let other PCs on the office network conne
 - **Letters from Data:** one letter per row, or one covering letter with the list, as Word (.docx) or through *Print / Save as PDF* (the browser shapes Hindi correctly).
 - **Find the same person:** Hindi/English spelling-tolerant name matching with father's name, place, age and mobile as extra evidence; you confirm every match.
 
+## Charts and table interactions
+
+- **Chart Studio** (*Charts* button): a panel beside the table with **24 chart types** — column, bar, stacked and 100% stacked, column + line, Pareto, waterfall, line, area, stacked area, calendar heat map, pie, donut, rose, funnel, treemap, sunburst, scatter (with trend line), bubble, heat map, radar, histogram, box plot and a single-number gauge. Pick columns, a measure (total, average, count, median, ...), split by another column, group dates by day / month / quarter / financial year, Top N with an honest "Others", order, colours (one is colour-blind safe) and a title. Each chart gets a plain-language sentence made only from computed numbers, in English or Hindi, with lakh / crore labels.
+- **Charts are alive:** click a bar, slice, cell or dot and the **table shows exactly those rows** (Ctrl+click adds more, click again to undo); drag a box or range on a scatter chart or histogram to select it. Filtering the table redraws the chart. Zoom with Ctrl+scroll, hover for details, view the data behind the chart, save as a picture, copy to Word / PowerPoint, download the chart's numbers as CSV.
+- **Auto charts** (*Insights board*): one click suggests the charts that suit the data, each with the reason ("Where *station* and *status* overlap most"). Pin your own charts to the board.
+- **Table:** every column heading has an **ⓘ**: facts (filled, blank, different values, total, average, median, unusual values), a spread picture whose bars are clickable filters, the most common values (click one to show only those rows), earliest / latest / rows per month for dates. Right-click a heading for **data bars, colour scale and traffic lights**, or "Chart this column". Active filters and the chart selection appear as removable chips above the table.
+- The chart library is Apache ECharts 5.5.1, shipped in `static/js` (licence in `THIRD_PARTY_LICENSES.txt`); nothing is fetched from the internet.
+
 ## Large files and projects
 
 - **Large File mode:** files of 10 MB or more (CSV, TSV, XLSX), or *More → Open large file*, open in the local DuckDB engine instead of the browser. You get a fast scrolling grid, sort, search, filters, column profile, group-by with chart, a read-only SQL box, CSV/Excel export of the filtered view, and *Work on a copy* (up to 100,000 matching rows into the full editor).
@@ -40,12 +48,13 @@ The server listens on this PC only. To let other PCs on the office network conne
 ```bash
 pip install pytest
 python -m pytest tests -q                       # backend + offline-promise checks
-node --test tests/unit/*.test.js                # Fixer, Merge, Name Match, Pendency, Change Radar, Autopilot logic (no browser needed)
+node --test tests/unit/*.test.js                # Fixer, Merge, Name Match, Pendency, Change Radar, Autopilot, Chart engine logic (no browser needed)
 BASE=http://127.0.0.1:5000 node tests/e2e/core.e2e.js    # browser checks, all external network blocked
 STELLURA_HOME=/tmp/stl-home python app.py                  # throw-away projects folder for the next test
 BASE=http://127.0.0.1:5000 node tests/e2e/large.e2e.js   # 250,000-row Large File mode + projects
 BASE=http://127.0.0.1:5000 node tests/e2e/tasks.e2e.js   # Home, Simple/Pro, command palette, Clean a messy file, Combine files
 BASE=http://127.0.0.1:5000 PY=python node tests/e2e/reports.e2e.js  # Autopilot, Change Radar, Pendency Radar, Letters, Name Match
+BASE=http://127.0.0.1:5000 node tests/e2e/charts.e2e.js  # Chart Studio, all 24 charts, click/drag-to-filter, Insights board, column insight, table visuals
 ```
 
 The browser test needs Node.js and Playwright. It fails if any request leaves the PC.
