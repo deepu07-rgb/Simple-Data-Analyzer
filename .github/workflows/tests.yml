@@ -5,6 +5,7 @@ name: Tests (Windows and Linux)
 # against the running app with all outside network blocked by the tests themselves.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

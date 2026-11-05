@@ -894,8 +894,8 @@ class Engine:
             subsets.append(grp + ([lin_at[k], lin_at[len(lins) + k]] if curve else [lin_at[k]]))
 
         def chunks():
-            res = cur.execute(sql, qparams)                                         # duckdb 1.4+: to_arrow_reader; older: fetch_record_batch
-            reader = res.to_arrow_reader(100000) if hasattr(res, "to_arrow_reader") else res.fetch_record_batch(100000)
+            rel = self.db.cursor().sql(sql, params=qparams)                         # its own cursor; a relation streams without an extra copy
+            reader = rel.to_arrow_reader(100000) if hasattr(rel, "to_arrow_reader") else rel.fetch_arrow_reader(100000)
             for batch in reader:
                 m = batch.num_rows
                 X = np.zeros((m, p)); X[:, 0] = 1.0

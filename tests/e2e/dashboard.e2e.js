@@ -10,7 +10,7 @@ const BASE = process.env.BASE || 'http://127.0.0.1:5000';
 let failures = 0;
 const ok = (c, m, x) => { console.log((c ? 'PASS ' : 'FAIL ') + m + (c || x === undefined ? '' : '  -> ' + JSON.stringify(x))); if (!c) failures++; };
 const PY = process.env.PYTHON || 'python3';
-function py(script, ...args) { return execFileSync(PY, ['-I', '-c', script, ...args], { encoding: 'utf8' }).trim(); }
+function py(script, ...args) { return execFileSync(PY, ['-I', '-X', 'utf8', '-c', script, ...args], { encoding: 'utf8' }).trim(); }
 
 function rng(seed) { let x = seed; return () => (x = (x * 1664525 + 1013904223) % 4294967296) / 4294967296; }
 const STATIONS = ['कोतवाली', 'सांगानेर', 'मानसरोवर', 'बगरू', 'चौमू', 'शाहपुरा'], STATUS = ['लंबित', 'निस्तारित', 'जाँच में'], CAT = ['चोरी', 'मारपीट', 'धोखाधड़ी', 'दुर्घटना'];

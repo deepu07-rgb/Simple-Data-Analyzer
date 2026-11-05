@@ -174,7 +174,7 @@ const file = (name, buffer) => ({ name, mimeType: 'application/octet-stream', bu
   await page.selectOption('#ltPreset', 'reminder'); await page.waitForTimeout(200);
   const [dlw] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('#ltWord')]);
   const docx = path.join(tmp, 'letters.docx'); await dlw.saveAs(docx);
-  const info = JSON.parse(execFileSync(PY, ['-I', '-c', 'import zipfile,sys,json;x=zipfile.ZipFile(sys.argv[1]).read("word/document.xml").decode("utf8");print(json.dumps({"pages":x.count("w:type=\\"page\\""),"names":[n in x for n in ["राहुल शर्मा","प्रिया सिंह","अमित कुमार"]],"cs":"w:cs=\\"Mangal\\"" in x}))', docx]).toString());
+  const info = JSON.parse(execFileSync(PY, ['-I', '-X', 'utf8', '-c', 'import zipfile,sys,json;x=zipfile.ZipFile(sys.argv[1]).read("word/document.xml").decode("utf8");print(json.dumps({"pages":x.count("w:type=\\"page\\""),"names":[n in x for n in ["राहुल शर्मा","प्रिया सिंह","अमित कुमार"]],"cs":"w:cs=\\"Mangal\\"" in x}))', docx]).toString());
   ok(info.pages === 2 && info.names.every(Boolean) && info.cs, 'Word file: 3 letters (2 page breaks), each person once, Hindi complex-script font set', info);
   await page.evaluate(() => { window.__printed = null; window.open = () => ({ document: { write(h) { window.__printed = h; }, close() {} }, focus() {}, print() { window.__didPrint = true; } }); });
   await page.click('#ltPrint'); await page.waitForTimeout(900);
