@@ -209,7 +209,7 @@
   function suggestAdjust() {                                                     // adjust for what goes most with the number (not for columns made from it)
     var D = STL.drivers, cands = adjCandidates();
     try { FS.ranked = D.rank(RD(), viewIdx(), HD(), FS.y, { prof: FS.prof, candidates: cands, noZero: autoZero() }); } catch (e) { FS.ranked = []; }
-    FS.adj = FS.ranked.filter(function (r) { return !r.derived && !r.walls && r.omega2 >= 0.01; }).slice(0, 3).map(function (r) { return r.col; });
+    FS.adj = FS.ranked.filter(function (r) { return !r.derived && !r.walls && !r.standIn && r.omega2 >= 0.01; }).slice(0, 3).map(function (r) { return r.col; });
   }
   function bandsFor(cols) { var b = {}; cols.forEach(function (c) { var p = FS.prof[c]; if (p && p.numeric && !p.lowInt) b[c] = CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][c]); }), 5); }); return b; }
 

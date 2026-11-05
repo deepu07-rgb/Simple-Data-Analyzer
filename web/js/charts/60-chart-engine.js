@@ -800,7 +800,7 @@
       try {
         var sub = idx.length > 4000 ? idx.slice(0, 4000) : idx, om = {};
         var others = nums.slice(1).filter(function (p) { return !STL.drivers.sharesName(p.name, nums[0].name).length; });
-        STL.drivers.rank(rows, sub, headers, nums[0].index, { prof: prof, candidates: cats.map(function (c) { return { col: c.index, name: c.name, kind: 'cat' }; }).concat(others.map(function (p) { return { col: p.index, name: p.name, kind: 'num' }; })), noZero: nz(nums[0]) }).forEach(function (r) { if (!r.derived && !r.walls) om[r.col] = r.omega2; });
+        STL.drivers.rank(rows, sub, headers, nums[0].index, { prof: prof, candidates: cats.map(function (c) { return { col: c.index, name: c.name, kind: 'cat' }; }).concat(others.map(function (p) { return { col: p.index, name: p.name, kind: 'num' }; })), noZero: nz(nums[0]) }).forEach(function (r) { if (!r.derived && !r.walls && !r.standIn) om[r.col] = r.omega2; });
         var pos = {}; cats.forEach(function (c, i) { pos[c.index] = i; }); nums.forEach(function (c, i) { pos[c.index] = i; });
         var w = function (p) { return om[p.index] >= 0.01 ? om[p.index] : 0; }, byOm = function (a, b) { return (w(b) - w(a)) || (pos[a.index] - pos[b.index]); };
         cats = cats.slice().sort(byOm); nums = [nums[0]].concat(nums.slice(1).sort(byOm));   // the second number: the one that goes most with the first
