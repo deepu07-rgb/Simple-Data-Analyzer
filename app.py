@@ -37,6 +37,8 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+import pdf_shaping
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -223,6 +225,10 @@ def _register_hindi_font():
         from reportlab.pdfbase.ttfonts import TTFont
         if "HindiFont" not in pdfmetrics._fonts:
             pdfmetrics.registerFont(TTFont("HindiFont", font_path))
+            if not pdf_shaping.SHAPING_AVAILABLE:
+                print("  [WARN] Hindi PDF shaping is OFF: install 'uharfbuzz' and "
+                      "'reportlab>=5.0.1' (pip install -r requirements.txt). "
+                      "Hindi matras and conjuncts will be drawn incorrectly.")
         return True
     except Exception as e:
         print(f"  [WARN] Could not register Hindi font: {e}")
@@ -231,9 +237,7 @@ def _register_hindi_font():
 
 def _contains_devanagari(text):
     """Check if text contains any Devanagari characters."""
-    if not isinstance(text, str):
-        return False
-    return bool(re.search(r'[\u0900-\u097F]', text))
+    return pdf_shaping.contains_devanagari(text)
 
 
 # ---------------------------------------------------------------------------
@@ -770,29 +774,46 @@ def _build_pdf(payload):
     accent_hex = "#6366F1"
     accent_dark = "#4F46E5"
 
+    # Hindi needs OpenType shaping (see pdf_shaping.py).  Title, subtitle and
+    # footers are few, so they are always shaped.
+    shaped = pdf_shaping.PARA_SHAPING
     title_style = ParagraphStyle(
         "CustomTitle", parent=styles["Title"],
         fontName=bold_font, fontSize=16, spaceAfter=4 * mm,
-        textColor=rl_colors.HexColor(accent_hex),
+        textColor=rl_colors.HexColor(accent_hex), **shaped,
     )
     subtitle_style = ParagraphStyle(
         "CustomSubtitle", parent=styles["Normal"],
         fontName=base_font, fontSize=8.5,
-        textColor=rl_colors.HexColor("#64748B"), spaceAfter=3 * mm,
+        textColor=rl_colors.HexColor("#64748B"), spaceAfter=3 * mm, **shaped,
     )
+    # Table cells: the high-volume path.  Latin/numeric cells keep the original
+    # (unshaped, "CJK" = break anywhere) style, which is also the fastest.  Cells
+    # containing Devanagari get a shaped style; "CJK" wrapping would split
+    # clusters, so those wrap at spaces and fit_markup() breaks any over-wide word
+    # at akshara boundaries.
     cell_style = ParagraphStyle(
         "CellStyle", parent=styles["Normal"],
         fontName=base_font, fontSize=7, leading=9, wordWrap="CJK",
+    )
+    cell_style_hi = ParagraphStyle(
+        "CellStyleHi", parent=styles["Normal"],
+        fontName=base_font, fontSize=7, leading=9, **shaped,
     )
     header_cell_style = ParagraphStyle(
         "HeaderCellStyle", parent=styles["Normal"],
         fontName=bold_font, fontSize=8, leading=10,
         textColor=rl_colors.white, wordWrap="CJK",
     )
+    header_cell_style_hi = ParagraphStyle(
+        "HeaderCellStyleHi", parent=styles["Normal"],
+        fontName=bold_font, fontSize=8, leading=10,
+        textColor=rl_colors.white, **shaped,
+    )
     footer_style = ParagraphStyle(
         "FooterStyle", parent=styles["Normal"],
         fontName=base_font, fontSize=7,
-        textColor=rl_colors.HexColor("#94A3B8"), alignment=1,
+        textColor=rl_colors.HexColor("#94A3B8"), alignment=1, **shaped,
     )
 
     # --- Watermark callback ---
@@ -803,17 +824,27 @@ def _build_pdf(payload):
             canvas_obj.setFillColorRGB(0, 0, 0, alpha=0.06)
             canvas_obj.translate(page_size[0] / 2, page_size[1] / 2)
             canvas_obj.rotate(45)
-            canvas_obj.drawCentredString(0, 0, watermark_text)
+            pdf_shaping.draw_text(canvas_obj, 0, 0, watermark_text, "center")
             canvas_obj.restoreState()
         if include_logo:
+            # Size the badge from the text it holds (a fixed 80pt pill clipped the
+            # white text, which then vanished against the white page) and centre
+            # the baseline vertically inside it.
+            badge_text = "Stellura \u2014 Data Vision Studio"
+            badge_size, pad_x, badge_h = 8, 6, 18
+            badge_w = pdf_shaping.text_width(badge_text, bold_font, badge_size) + 2 * pad_x
+            badge_x = margin_mm * mm
+            badge_y = page_size[1] - margin_mm * mm - 4 - badge_h
             canvas_obj.saveState()
             canvas_obj.setFillColor(rl_colors.HexColor(accent_hex))
-            canvas_obj.roundRect(margin_mm * mm, page_size[1] - (margin_mm + 8) * mm,
-                                 80, 16, 4, fill=1, stroke=0)
+            canvas_obj.roundRect(badge_x, badge_y, badge_w, badge_h, 4,
+                                 fill=1, stroke=0)
             canvas_obj.setFillColor(rl_colors.white)
-            canvas_obj.setFont(bold_font, 8)
-            canvas_obj.drawString(margin_mm * mm + 4, page_size[1] - (margin_mm + 4) * mm,
-                                  "Stellura — Data Vision Studio")
+            canvas_obj.setFont(bold_font, badge_size)
+            # cap height of the Latin glyphs is ~0.71 em
+            pdf_shaping.draw_text(canvas_obj, badge_x + pad_x,
+                                  badge_y + badge_h / 2 - 0.357 * badge_size,
+                                  badge_text)
             canvas_obj.restoreState()
 
     # --- Build PDF ---
@@ -837,24 +868,32 @@ def _build_pdf(payload):
     elements.append(Paragraph(subtitle_text, subtitle_style))
     elements.append(Spacer(1, 2 * mm))
 
-    # --- Build Table Data ---
-    table_headers = [Paragraph(str(h), header_cell_style) for h in headers_list]
-    table_data = [table_headers]
-
-    for row_idx_0, row in enumerate(data):
-        table_row = []
-        for col_idx_0, cell_val in enumerate(row):
-            text = str(cell_val) if cell_val is not None else ""
-            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            # Apply cell-level background color to style
-            cf_key = f"{row_idx_0}:{col_idx_0}"
-            table_row.append(Paragraph(text, cell_style))
-        table_data.append(table_row)
-
     # --- Column widths ---
     avail_width = page_size[0] - 2 * margin_mm * mm
     col_width = max(avail_width / col_count, 18 * mm) if col_count > 0 else avail_width
     col_widths_list = [col_width] * col_count
+    text_room = col_width - 8  # LEFTPADDING + RIGHTPADDING of the table style below
+
+    # --- Build Table Data ---
+    def _cell_paragraph(raw, style, style_hi, font, size):
+        if _contains_devanagari(raw):
+            markup = pdf_shaping.fit_markup(raw, font, size, text_room)
+            return Paragraph(markup, style_hi)
+        markup = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return Paragraph(markup, style)
+
+    table_headers = [
+        _cell_paragraph(str(h), header_cell_style, header_cell_style_hi, bold_font, 8)
+        for h in headers_list
+    ]
+    table_data = [table_headers]
+
+    for row in data:
+        table_data.append([
+            _cell_paragraph(str(cell_val) if cell_val is not None else "",
+                            cell_style, cell_style_hi, base_font, 7)
+            for cell_val in row
+        ])
 
     # --- Create Table ---
     table = Table(table_data, colWidths=col_widths_list, repeatRows=1)
@@ -1859,6 +1898,7 @@ def _build_report_pdf(payload):
     has_hindi = _register_hindi_font()
     BF        = "HindiFont" if has_hindi else "Helvetica"
     BFBD      = "HindiFont" if has_hindi else "Helvetica-Bold"
+    SHP       = pdf_shaping.PARA_SHAPING   # Devanagari shaping, see pdf_shaping.py
 
     # ── Colors
     ACCENT  = "#4F46E5"
@@ -1924,7 +1964,7 @@ def _build_report_pdf(payload):
             alignment=align,
             leading=leading or size * 1.4,
             spaceBefore=sb * mm, spaceAfter=sa * mm,
-            leftIndent=li, firstLineIndent=fi,
+            leftIndent=li, firstLineIndent=fi, **SHP,
         )
 
     S_H1   = ps("H1",  font=BFBD, size=20, color=ACCENT, sa=4, sb=3)
@@ -1977,22 +2017,22 @@ def _build_report_pdf(payload):
         cv.rect(0, PH - 22 * mm, PW, 22 * mm, fill=1, stroke=0)
         cv.setFillColor(RC.white)
         cv.setFont(BFBD, 12)
-        cv.drawCentredString(PW / 2, PH - 13 * mm,
-                             "Stellura — Data Vision Studio")
+        pdf_shaping.draw_text(cv, PW / 2, PH - 13 * mm,
+                              "Stellura — Data Vision Studio", "center")
         cv.setFont(BF, 8)
-        cv.drawCentredString(PW / 2, PH - 19 * mm,
-                             "स्टेल्यूरा  •  Intelligent Data Analysis for Government Offices")
+        pdf_shaping.draw_text(cv, PW / 2, PH - 19 * mm,
+                              "स्टेल्यूरा  •  Intelligent Data Analysis for Government Offices", "center")
 
         # Bottom accent bar
         cv.setFillColor(RC.HexColor(ACCENT))
         cv.rect(0, 0, PW, 15 * mm, fill=1, stroke=0)
         cv.setFillColor(RC.white)
         cv.setFont(BF, 7.5)
-        cv.drawCentredString(PW / 2, 8 * mm,
-            "Generated by Stellura (स्टेल्यूरा)  •  "
-            "Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police")
-        cv.drawCentredString(PW / 2, 3.5 * mm,
-                             f"Report Generated: {gen_date}, {gen_time}")
+        pdf_shaping.draw_text(cv, PW / 2, 8 * mm,
+                              "Generated by Stellura (स्टेल्यूरा)  •  "
+                              "Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police", "center")
+        pdf_shaping.draw_text(cv, PW / 2, 3.5 * mm,
+                              f"Report Generated: {gen_date}, {gen_time}", "center")
 
         # Logo
         y = PH - 30 * mm
@@ -2016,7 +2056,7 @@ def _build_report_pdf(payload):
         if company:
             cv.setFont(BFBD, 13)
             cv.setFillColor(RC.HexColor(MUTED))
-            cv.drawCentredString(PW / 2, y, company)
+            pdf_shaping.draw_text(cv, PW / 2, y, company, "center")
             y -= 9 * mm
 
         # Report title (may wrap)
@@ -2026,7 +2066,7 @@ def _build_report_pdf(payload):
         lines_t = []
         cur     = []
         for w in words:
-            if cv.stringWidth(' '.join(cur + [w]), BFBD, 22) < PW - 40 * mm:
+            if pdf_shaping.text_width(' '.join(cur + [w]), BFBD, 22) < PW - 40 * mm:
                 cur.append(w)
             else:
                 if cur:
@@ -2035,7 +2075,7 @@ def _build_report_pdf(payload):
         if cur:
             lines_t.append(' '.join(cur))
         for line in lines_t[:3]:
-            cv.drawCentredString(PW / 2, y, line)
+            pdf_shaping.draw_text(cv, PW / 2, y, line, "center")
             y -= 9 * mm
         y -= 4 * mm
 
@@ -2043,8 +2083,8 @@ def _build_report_pdf(payload):
         if prepared:
             cv.setFont(BF, 11)
             cv.setFillColor(RC.HexColor(ACCENT))
-            cv.drawCentredString(PW / 2, y,
-                f"{'के लिए' if is_hi else 'Prepared for'}: {prepared}")
+            pdf_shaping.draw_text(cv, PW / 2, y,
+                                  f"{'के लिए' if is_hi else 'Prepared for'}: {prepared}", "center")
             y -= 9 * mm
 
         # Description
@@ -2056,7 +2096,7 @@ def _build_report_pdf(payload):
             dlines  = []
             dcur    = []
             for w in dwords:
-                if cv.stringWidth(' '.join(dcur + [w]), BF, 9) < max_w:
+                if pdf_shaping.text_width(' '.join(dcur + [w]), BF, 9) < max_w:
                     dcur.append(w)
                 else:
                     if dcur:
@@ -2066,7 +2106,7 @@ def _build_report_pdf(payload):
                 dlines.append(' '.join(dcur))
             y -= 3 * mm
             for line in dlines[:5]:
-                cv.drawCentredString(PW / 2, y, line)
+                pdf_shaping.draw_text(cv, PW / 2, y, line, "center")
                 y -= 5 * mm
 
         # Divider line
@@ -2079,10 +2119,10 @@ def _build_report_pdf(payload):
         # Meta info
         cv.setFont(BF, 9)
         cv.setFillColor(RC.HexColor(MUTED))
-        cv.drawCentredString(PW / 2, y,
-            f"{gen_date}  •  {nrows:,} "
-            f"{'रिकॉर्ड' if is_hi else 'Records'}  •  "
-            f"{ncols} {'कॉलम' if is_hi else 'Columns'}")
+        pdf_shaping.draw_text(cv, PW / 2, y,
+                              f"{gen_date}  •  {nrows:,} "
+                              f"{'रिकॉर्ड' if is_hi else 'Records'}  •  "
+                              f"{ncols} {'कॉलम' if is_hi else 'Columns'}", "center")
 
         cv.restoreState()
 
@@ -2097,11 +2137,11 @@ def _build_report_pdf(payload):
         cv.rect(MG, PH - MG - HDR_H, FW, HDR_H, fill=1, stroke=0)
         cv.setFillColor(RC.white)
         cv.setFont(BFBD, 8)
-        cv.drawString(MG + 3 * mm, PH - MG - HDR_H + 3.5 * mm,
-                      company or "Stellura Report")
+        pdf_shaping.draw_text(cv, MG + 3 * mm, PH - MG - HDR_H + 3.5 * mm,
+                              company or "Stellura Report")
         cv.setFont(BF, 7.5)
-        cv.drawRightString(PW - MG - 3 * mm, PH - MG - HDR_H + 3.5 * mm,
-                           title[:55])
+        pdf_shaping.draw_text(cv, PW - MG - 3 * mm, PH - MG - HDR_H + 3.5 * mm,
+                              pdf_shaping.truncate(title, 55), "right")
 
         # Footer
         cv.setStrokeColor(RC.HexColor(BORDER))
@@ -2109,11 +2149,11 @@ def _build_report_pdf(payload):
         cv.line(MG, MG + FTR_H - 1, PW - MG, MG + FTR_H - 1)
         cv.setFont(BF, 7)
         cv.setFillColor(RC.HexColor(MUTED))
-        cv.drawCentredString(PW / 2, MG + 2 * mm,
-            "Stellura (स्टेल्यूरा)  •  "
-            "Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police")
-        cv.drawRightString(PW - MG, MG + 2 * mm,
-                           f"{'पृष्ठ' if is_hi else 'Page'} {doc.page}")
+        pdf_shaping.draw_text(cv, PW / 2, MG + 2 * mm,
+                              "Stellura (स्टेल्यूरा)  •  "
+                              "Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police", "center")
+        pdf_shaping.draw_text(cv, PW - MG, MG + 2 * mm,
+                              f"{'पृष्ठ' if is_hi else 'Page'} {doc.page}", "right")
 
         cv.restoreState()
 
@@ -2216,7 +2256,7 @@ def _build_report_pdf(payload):
             Paragraph(str(ne), S_TD),
             Paragraph(str(miss),
                       ParagraphStyle("TDR", fontName=BF, fontSize=9,
-                                     textColor=RC.HexColor(mc))),
+                                     textColor=RC.HexColor(mc), **SHP)),
         ])
     cd_tbl = Table(cd, colWidths=[12 * mm, None, 28 * mm, 22 * mm, 20 * mm],
                    repeatRows=1)
@@ -2268,7 +2308,7 @@ def _build_report_pdf(payload):
                     Paragraph(lbl, S_TD),
                     Paragraph(fmt(val), ParagraphStyle(
                         "BKV", fontName=BFBD, fontSize=9,
-                        textColor=RC.HexColor(ACCENT))),
+                        textColor=RC.HexColor(ACCENT), **SHP)),
                     Paragraph(f"{pct}% of range", S_TD),
                 ])
             bk_tbl = Table(bk, colWidths=[42 * mm, 40 * mm, None])
@@ -2288,14 +2328,18 @@ def _build_report_pdf(payload):
           "डेटासेट के पहले 10 रिकॉर्ड (अधिकतम 12 कॉलम):"), S_BODY))
     E.append(sp(2))
     max_c = min(ncols, 12)
-    top   = [[Paragraph(str(h), S_TH) for h in hdrs[:max_c]]]
+    col_w = FW / max_c if max_c else FW
+    room  = col_w - 12      # LEFTPADDING + RIGHTPADDING from tbl_base()
+    top   = [[Paragraph(pdf_shaping.fit_markup(h, BFBD, 9, room), S_TH)
+              for h in hdrs[:max_c]]]
     top  += [
-        [Paragraph(str(r[ci]) if ci < len(r) and r[ci] is not None else "",
+        [Paragraph(pdf_shaping.fit_markup(
+                       r[ci] if ci < len(r) and r[ci] is not None else "",
+                       BF, 9, room),
                    S_TD) for ci in range(max_c)]
         for r in data[:10]
     ]
     if top:
-        col_w = FW / max_c if max_c else FW
         top_tbl = Table(top, colWidths=[col_w] * max_c, repeatRows=1)
         top_tbl.setStyle(TableStyle(tbl_base() + tbl_hdr() + tbl_zebra()))
         E.append(top_tbl)
@@ -2404,10 +2448,11 @@ def _build_report_pdf(payload):
                 Paragraph(plbl[prio],
                           ParagraphStyle("PL", fontName=BFBD, fontSize=8,
                                          textColor=RC.white,
-                                         alignment=TA_CENTER)),
+                                         alignment=TA_CENTER, **SHP)),
                 Paragraph(f"<b>{rtitle}</b><br/>{rdetail}",
                           ParagraphStyle("RD", fontName=BF, fontSize=9,
-                                         leading=14, textColor=RC.HexColor(DARK))),
+                                         leading=14, textColor=RC.HexColor(DARK),
+                                         **SHP)),
             ]], colWidths=[18 * mm, None])
             r_tbl.setStyle(TableStyle([
                 ("BACKGROUND",    (0, 0), (0, -1), RC.HexColor(pcol)),
@@ -2467,23 +2512,23 @@ def _build_report_pdf(payload):
     brand_tbl = Table([
         [Paragraph("Stellura",
                    ParagraphStyle("BN", fontName=BFBD, fontSize=18,
-                                  textColor=RC.HexColor(ACCENT))),
+                                  textColor=RC.HexColor(ACCENT), **SHP)),
          Paragraph("स्टेल्यूरा",
                    ParagraphStyle("BH", fontName=BF, fontSize=11,
-                                  textColor=RC.HexColor(MUTED)))],
+                                  textColor=RC.HexColor(MUTED), **SHP))],
         [Paragraph("Intelligent Data Analysis for Government Offices",
                    ParagraphStyle("BS", fontName=BF, fontSize=9,
-                                  textColor=RC.HexColor(MUTED))),
+                                  textColor=RC.HexColor(MUTED), **SHP)),
          ""],
         [Paragraph("Developed by: Neeraj Purohit, Senior Assistant,"
                    " Rajasthan Police",
                    ParagraphStyle("BD", fontName=BF, fontSize=9,
-                                  textColor=RC.HexColor(DARK))),
+                                  textColor=RC.HexColor(DARK), **SHP)),
          ""],
         [Paragraph(f"{t('Report generated', 'रिपोर्ट तैयार')}: "
                    f"{gen_date}, {gen_time}",
                    ParagraphStyle("BG", fontName=BF, fontSize=8,
-                                  textColor=RC.HexColor(MUTED))),
+                                  textColor=RC.HexColor(MUTED), **SHP)),
          ""],
     ], colWidths=[None, 45 * mm])
     brand_tbl.setStyle(TableStyle([

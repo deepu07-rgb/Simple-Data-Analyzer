@@ -42,6 +42,15 @@ exit /b 1
 :packages_ok
 echo  [OK] Python packages ready
 
+:: ---------- STEP 2b: Hindi PDF shaping (non-fatal) ----------
+:: Installs made before Hindi shaping was added have flask but not uharfbuzz.
+"%PYTHON%" -c "import uharfbuzz; from reportlab.pdfbase.ttfonts import shapeStr" >nul 2>&1
+if not errorlevel 1 goto :shaping_ok
+echo  [..] Adding Hindi PDF shaping support (needs internet, about 2 MB)...
+"%PYTHON%" -m pip install -r requirements.txt --quiet --no-warn-script-location >nul 2>&1
+if errorlevel 1 echo  [WARN] Could not install Hindi PDF shaping. PDFs still work but Hindi may look wrong.
+:shaping_ok
+
 :: ---------- STEP 3: Ollama AI Engine ------------------------
 :: Guard: delete any corrupt/truncated local ollama.exe. A failed download can
 :: leave a tiny "Not Found" file that Windows reports as a 16-bit application.
