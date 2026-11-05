@@ -433,6 +433,7 @@
     };
     PAL.sel = 0; draw(); inp.focus();
   };
+  ACTIONS.push({ en: 'How to use Stellura (user guide)', hi: 'Stellura कैसे उपयोग करें (उपयोग गाइड)', kw: 'help guide manual how to use tutorial madad margdarshika upyog', run: function () { window.open('/static/guide/guide.html', '_blank'); }, group: 'Help' });
   STL.actions = ACTIONS;
   document.addEventListener('keydown', function (e) {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
@@ -504,7 +505,8 @@
     var extra = STL.extraTiles || [];                                                // tiles added by later modules: flagship tools first
     tiles = extra.filter(function (t) { return t[6]; }).concat(tiles, extra.filter(function (t) { return !t[6]; }));
     home.innerHTML = '<div class="stl-home-t">' + T('What do you want to do?', 'आप क्या करना चाहते हैं?') + '</div><div class="stl-tiles">' +
-      tiles.map(function (t, i) { return '<button class="stl-tile" data-i="' + i + '"><span class="stl-tile-i">' + t[0] + '</span><b>' + esc(T(t[1], t[2])) + '</b><span>' + esc(T(t[3], t[4])) + '</span></button>'; }).join('') + '</div>';
+      tiles.map(function (t, i) { return '<button class="stl-tile" data-i="' + i + '"><span class="stl-tile-i">' + t[0] + '</span><b>' + esc(T(t[1], t[2])) + '</b><span>' + esc(T(t[3], t[4])) + '</span></button>'; }).join('') + '</div>' +
+      '<div class="stl-guide-link"><a href="/static/guide/guide.html" target="_blank" rel="noopener">📘 ' + esc(T('How to use Stellura — step-by-step guide', 'Stellura कैसे उपयोग करें — चरण-दर-चरण गाइड')) + '</a></div>';
     home.querySelectorAll('.stl-tile').forEach(function (b) { b.onclick = tiles[+b.dataset.i][5]; });
   }
 

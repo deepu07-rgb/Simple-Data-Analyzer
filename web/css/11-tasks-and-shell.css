@@ -77,3 +77,4 @@ html[data-stel-mode="simple"] #live-inspector{display:none !important}
 html[data-theme="light"] .toast{background:#ffffff !important;color:#1e293b !important;box-shadow:0 8px 24px rgba(30,41,59,.18) !important;border-top-color:#cbd5e1 !important;border-right-color:#cbd5e1 !important;border-bottom-color:#cbd5e1 !important}
 html[data-theme="light"] .toast *{color:inherit !important}
 html[data-theme="light"] .tb-btn.primary,html[data-theme="light"] .tb-btn.primary:hover,html[data-theme="light"] .tb-btn.primary:focus,html[data-theme="light"] .tb-btn.primary:active{color:#fff !important}
+.stl-guide-link{text-align:center;margin:12px 0 2px;font-size:13px}.stl-guide-link a{color:var(--accent);text-decoration:none;font-weight:600}.stl-guide-link a:hover{text-decoration:underline}

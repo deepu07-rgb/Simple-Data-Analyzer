@@ -8,7 +8,7 @@ Please read this agreement. By installing or using Stellura you agree to it. If 
 
 "Stellura" (also called Simple Data Analyzer / DataDrishti, the "Software") is a data-analysis program that runs on your own computer. It is **freeware**: you may use it **free of charge**, for personal, office, government, educational and commercial work.
 
-The Software is licensed, not sold. "Licensor" means **Neeraj Purohit** [confirm legal name / owner — see the notes at the end].
+The Software is licensed, not sold. "Licensor" means **Neeraj Purohit** (purohitneeraj87@gmail.com).
 
 ## 2. What you may do
 
@@ -77,7 +77,7 @@ This agreement applies until it ends. It ends automatically if you break it. You
 1. If any part of this agreement is found to be unenforceable, the rest stays in force.
 2. This agreement is the whole agreement between you and the Licensor about the Software.
 3. This agreement is governed by the laws of **[India — confirm]**, and courts at **[city — confirm]** have jurisdiction, except where the law of your place says otherwise.
-4. Questions or permission requests: **[contact e-mail — add]**.
+4. Questions or permission requests: **Neeraj Purohit, purohitneeraj87@gmail.com**.
 
 ---
 
@@ -97,8 +97,8 @@ This agreement applies until it ends. It ends automatically if you break it. You
 
 This is a plain-language freeware licence drafted by an AI assistant. **It is not legal advice.** Please check these points, ideally with a lawyer or your department's legal cell:
 
-1. **Who owns the software?** The app credits *Neeraj Purohit, Senior Assistant, Rajasthan Police*. If it was written during duty hours, with office resources, or your service rules restrict private work, side projects or distribution by government servants, **the department may have a say** — get written permission or a no-objection before releasing it publicly.
-2. **Fill the brackets:** legal name of the licensor, governing law, court city, contact e-mail.
+1. **Who owns the software?** The app credits *Neeraj Purohit* as the developer. If it was written during duty hours, with office resources, or your service rules restrict private work, side projects or distribution by government servants, **the department may have a say** — get written permission or a no-objection before releasing it publicly.
+2. **Fill the brackets:** governing law and court city (the licensor name and contact e-mail are now filled in).
 3. **Reproduce notices:** the installer must ship `static/js/THIRD_PARTY_LICENSES.txt` and the font / DuckDB / Python-package licences. `NOTICE` text for Apache-2.0 components (ECharts) is already in that file.
 4. **AI model licence:** do not bundle a model whose licence forbids free redistribution or commercial use. Check each model's licence file at release time (see `docs/AI-model-packs.md`).
 5. Add an "I accept" page in the installer that shows this text, and a copy in the Start-menu folder and under *More → About*.

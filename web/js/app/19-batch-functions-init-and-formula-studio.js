@@ -2160,7 +2160,7 @@ function toggleGuideAccordion(id) {
   }
 }
 
-console.log('Stellura (स्टेल्यूरा) loaded successfully. © Neeraj Purohit, Senior Assistant, Rajasthan Police');
+console.log('Stellura (स्टेल्यूरा) loaded successfully. © Neeraj Purohit, purohitneeraj87@gmail.com');
 
 // =====================================================================
 //  ASYNC EXPORT PROGRESS

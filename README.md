@@ -40,6 +40,11 @@ The server listens on this PC only. To let other PCs on the office network conne
 - The Change Radar, Pendency Radar and the Large File *Group* tab use the same chart system (Indian lakh/crore labels, hover, save as picture). Click a coloured segment of the pendency age chart to open exactly those cases; click a bar in the Group tab to filter the file to that group.
 - The chart library is Apache ECharts 5.5.1, shipped in `static/js` (licence in `THIRD_PARTY_LICENSES.txt`); nothing is fetched from the internet.
 
+## User guide (English and Hindi)
+
+- Open it from Home (*How to use Stellura*), from Ctrl+K (*user guide*) or from the Documentation window: `static/guide/guide.html` (works offline; English, हिंदी or both).
+- A printable copy is `docs/Stellura-User-Guide.docx`. Both are built from one text file: edit `tools/guide_content.py`, then run `python tools/build_guide.py`. `tests/test_guide.py` fails if the guide names a button the app does not have.
+
 ## Large files and projects
 
 - **Large File mode:** files of 10 MB or more (CSV, TSV, XLSX), or *More → Open large file*, open in the local DuckDB engine instead of the browser. You get a fast scrolling grid, sort, search, filters, column profile, group-by with chart, a read-only SQL box, CSV/Excel export of the filtered view, and *Work on a copy* (up to 100,000 matching rows into the full editor).

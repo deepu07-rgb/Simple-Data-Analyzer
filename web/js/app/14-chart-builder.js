@@ -358,7 +358,7 @@ function exportDashboardPDF() {
     doc.text(footerText, pageW / 2, pageH - 3, { align: 'center' });
     doc.setFont('Helvetica', 'bold');
     doc.setTextColor(67, 56, 202);
-    doc.text('Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police', pageW / 2, pageH - 7, { align: 'center' });
+    doc.text('Developed by Neeraj Purohit, purohitneeraj87@gmail.com', pageW / 2, pageH - 7, { align: 'center' });
     // ---- Disclaimer ----
     doc.setDrawColor(124, 58, 237);
     doc.setLineWidth(0.25);
