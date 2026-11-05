@@ -624,6 +624,7 @@ class Engine:
         zi, gi = self._opt_col(d, size), self._opt_col(d, g)
         where, params = self._where(d, search, filters)
         limit = max(100, min(int(limit), 20000))
+        max_groups = max(2, min(int(max_groups), 60))
         cols = [f"__rid", f"{_num(xi)} AS x", f"{_num(yi)} AS y"]
         if zi is not None:
             cols.append(f"{_num(zi)} AS z")

@@ -261,3 +261,162 @@ def letters_docx():
     name = re.sub(r"[^\w\s.-]", "", b.get("filename") or "letters", flags=re.UNICODE).strip() or "letters"
     return send_file(out, as_attachment=True, download_name=f"{name}.docx",
                      mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+
+# ----------------------------------------------------------------- dashboard export (PowerPoint and PDF)
+# The browser draws every chart and every PDF page itself (so Hindi is shaped correctly and the picture is exactly
+# what was on screen) and sends PNG pictures. Here they are only placed on slides / pages.
+MAX_SLIDES, MAX_IMG_BYTES, MAX_IMG_SIDE, MAX_IMG_PIXELS = 40, 12_000_000, 5000, 20_000_000
+DATA_URL = re.compile(r"^data:image/(?:png|jpeg);base64,([A-Za-z0-9+/=\s]+)$")
+
+
+def _image(data_url):
+    import base64
+    from PIL import Image
+    m = DATA_URL.match(data_url or "")
+    if not m:
+        raise ValueError("A picture is missing or is not a PNG/JPEG.")
+    raw = base64.b64decode(m.group(1))
+    if len(raw) > MAX_IMG_BYTES:
+        raise ValueError("A picture is too large.")
+    try:
+        img = Image.open(io.BytesIO(raw))                  # reads only the header: check the size before decoding anything
+    except Exception:
+        raise ValueError("A picture could not be read.")
+    if max(img.size) > MAX_IMG_SIDE or img.size[0] * img.size[1] > MAX_IMG_PIXELS:
+        raise ValueError("A picture is too large.")
+    try:
+        img.load()
+    except Exception:
+        raise ValueError("A picture could not be read.")
+    return raw, img
+
+
+def _set_text(run, size, bold=False, color="1e1b4b", latin="Segoe UI", cs="Nirmala UI"):
+    """A text run that shows Hindi correctly: Latin letters in `latin`, Devanagari in `cs` (complex script)."""
+    from pptx.dml.color import RGBColor
+    from pptx.oxml.ns import qn
+    run.font.size = size
+    run.font.bold = bold
+    run.font.color.rgb = RGBColor.from_string(color)
+    run.font.name = latin
+    rpr = run._r.get_or_add_rPr()
+    for tag in ("a:cs", "a:ea"):
+        el = rpr.find(qn(tag))
+        if el is None:
+            el = rpr.makeelement(qn(tag), {})
+            rpr.append(el)
+        el.set("typeface", cs)
+
+
+def _textbox(slide, x, y, w, h, paragraphs, anchor=None):
+    """paragraphs: list of (text, size_pt, bold, color_hex). Returns the shape."""
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import MSO_ANCHOR
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = anchor or MSO_ANCHOR.TOP
+    for n, (text, size, bold, color) in enumerate(paragraphs):
+        p = tf.paragraphs[0] if n == 0 else tf.add_paragraph()
+        p.space_after = Pt(6)
+        r = p.add_run()
+        r.text = clean(text)
+        _set_text(r, Pt(size), bold, color)
+    return box
+
+
+@bp.route("/api/dashboard/pptx", methods=["POST"])
+def dashboard_pptx():
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from pptx.util import Inches, Pt
+    b = request.get_json(silent=True) or {}
+    slides = b.get("slides") or []
+    if not slides:
+        return _err("There is nothing on the dashboard yet. Pin a chart first.")
+    if len(slides) > MAX_SLIDES:
+        return _err(f"A presentation can have at most {MAX_SLIDES} chart slides.")
+    try:
+        images = [_image(s.get("image")) for s in slides]
+    except ValueError as exc:
+        return _err(str(exc))
+    title = clean(str(b.get("title") or "Dashboard"))[:200]
+    sub = clean(str(b.get("subtitle") or ""))[:300]
+    when = clean(str(b.get("date") or datetime.date.today().isoformat()))[:40]
+    source = clean(str(b.get("source") or ""))[:200]
+    hi = b.get("lang") == "hi"
+
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    blank = prs.slide_layouts[6]
+    PURPLE, INK, GREY = "6d5bd0", "1e1b4b", "64748b"
+
+    def band(slide):
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, Inches(0.16))
+        bar.fill.solid(); bar.fill.fore_color.rgb = RGBColor.from_string(PURPLE); bar.line.fill.background()
+
+    # cover: title, subtitle, date and the headline numbers
+    s0 = prs.slides.add_slide(blank)
+    s0.background.fill.solid(); s0.background.fill.fore_color.rgb = RGBColor.from_string("f6f5fd")
+    band(s0)
+    _textbox(s0, 0.9, 1.5, 11.5, 2.2, [(title, 40, True, INK), (sub, 20, False, GREY), (when, 14, False, GREY)])
+    kpis = [k for k in (b.get("kpis") or []) if isinstance(k, dict)][:4]
+    for n, k in enumerate(kpis):
+        x = 0.9 + n * 3.0
+        card = s0.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(4.6), Inches(2.8), Inches(1.5))
+        card.fill.solid(); card.fill.fore_color.rgb = RGBColor.from_string("ffffff")
+        card.line.color.rgb = RGBColor.from_string("e2e8f0"); card.adjustments[0] = 0.08
+        _textbox(s0, x + 0.15, 4.7, 2.5, 1.3, [(str(k.get("value", "")), 28, True, PURPLE), (str(k.get("label", "")), 12, False, GREY)])
+    _textbox(s0, 0.9, 6.8, 9, 0.4, [("Stellura" + (" · " + source if source else ""), 10, False, GREY)])
+
+    # one slide per chart: picture on the left, the plain-language reading on the right
+    for n, (s, (raw, img)) in enumerate(zip(slides, images), start=1):
+        sl = prs.slides.add_slide(blank)
+        band(sl)
+        _textbox(sl, 0.6, 0.35, 12.1, 0.8, [(str(s.get("title") or ""), 26, True, INK)])
+        box_w, box_h = 8.3, 5.3
+        ratio = img.size[0] / img.size[1]
+        w = box_w if ratio >= box_w / box_h else box_h * ratio
+        h = w / ratio
+        sl.shapes.add_picture(io.BytesIO(raw), Inches(0.6), Inches(1.3), Inches(w), Inches(h))
+        cap = [clean(str(c)) for c in (s.get("caption") or []) if str(c).strip()][:4]
+        note = clean(str(s.get("note") or "")).strip()
+        paras = [("क्या दिखता है" if hi else "WHAT THIS SHOWS", 11, True, PURPLE)] + [(c, 15, False, INK) for c in cap]
+        if note:
+            paras += [("टिप्पणी" if hi else "NOTE", 11, True, PURPLE), (note, 14, False, INK)]
+        _textbox(sl, 9.2, 1.3, 3.6, 5.3, paras)
+        foot = " · ".join(x for x in [source, when, str(s.get("rows") or "")] if x)
+        _textbox(sl, 0.6, 6.95, 10, 0.35, [(foot, 10, False, GREY)])
+        _textbox(sl, 11.3, 6.95, 1.5, 0.35, [(f"Stellura · {n}", 10, False, GREY)])
+        sl.notes_slide.notes_text_frame.text = clean("\n".join(cap + ([note] if note else [])))
+
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    resp = send_file(out, as_attachment=True, download_name="dashboard.pptx",
+                     mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    resp.headers["X-Slides"] = str(len(slides) + 1)
+    return resp
+
+
+@bp.route("/api/dashboard/pdf", methods=["POST"])
+def dashboard_pdf():
+    b = request.get_json(silent=True) or {}
+    pages = b.get("pages") or []
+    if not pages:
+        return _err("There is nothing on the dashboard yet. Pin a chart first.")
+    if len(pages) > MAX_SLIDES:
+        return _err(f"A PDF can have at most {MAX_SLIDES} pages.")
+    try:
+        imgs = [_image(p)[1].convert("RGB") for p in pages]
+    except ValueError as exc:
+        return _err(str(exc))
+    out = io.BytesIO()
+    kw = {"resolution": 150.0, "title": clean(str(b.get("title") or "Dashboard"))[:200]}
+    imgs[0].save(out, "PDF", save_all=True, append_images=imgs[1:], **kw)
+    out.seek(0)
+    resp = send_file(out, as_attachment=True, download_name="dashboard.pdf", mimetype="application/pdf")
+    resp.headers["X-Pages"] = str(len(imgs))
+    return resp

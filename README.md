@@ -30,10 +30,14 @@ The server listens on this PC only. To let other PCs on the office network conne
 
 ## Charts and table interactions
 
-- **Chart Studio** (*Charts* button): a panel beside the table with **24 chart types** — column, bar, stacked and 100% stacked, column + line, Pareto, waterfall, line, area, stacked area, calendar heat map, pie, donut, rose, funnel, treemap, sunburst, scatter (with trend line), bubble, heat map, radar, histogram, box plot and a single-number gauge. Pick columns, a measure (total, average, count, median, ...), split by another column, group dates by day / month / quarter / financial year, Top N with an honest "Others", order, colours (one is colour-blind safe) and a title. Each chart gets a plain-language sentence made only from computed numbers, in English or Hindi, with lakh / crore labels.
+- **Chart Studio** (*Charts* button): a panel beside the table with **25 chart types** — column, bar, stacked and 100% stacked, column + line, Pareto, waterfall, line, area, stacked area, calendar heat map, pie, donut, rose, funnel, treemap, sunburst, scatter (with trend line), bubble, heat map, **flow (Sankey)**, radar, histogram, box plot and a single-number gauge. Pick columns, a measure (total, average, count, median, ...), split by another column, group dates by day / month / quarter / financial year, Top N with an honest "Others", order, colours (one is colour-blind safe) and a title. Each chart gets a plain-language sentence made only from computed numbers, in English or Hindi, with lakh / crore labels.
 - **Charts are alive:** click a bar, slice, cell or dot and the **table shows exactly those rows** (Ctrl+click adds more, click again to undo); drag a box or range on a scatter chart or histogram to select it. Filtering the table redraws the chart. Zoom with Ctrl+scroll, hover for details, view the data behind the chart, save as a picture, copy to Word / PowerPoint, download the chart's numbers as CSV.
 - **Auto charts** (*Insights board*): one click suggests the charts that suit the data, each with the reason ("Where *station* and *status* overlap most"). Pin your own charts to the board.
 - **Table:** every column heading has an **ⓘ**: facts (filled, blank, different values, total, average, median, unusual values), a spread picture whose bars are clickable filters, the most common values (click one to show only those rows), earliest / latest / rows per month for dates. Right-click a heading for **data bars, colour scale and traffic lights**, or "Chart this column". Active filters and the chart selection appear as removable chips above the table.
+- **Charts for million-row files:** in Large File mode the Studio works too (*Charts* button, or the 📊 on a column card). DuckDB groups, bins, sorts into quartiles and samples **every row** on this PC and sends back only a few hundred numbers, so a chart of 3 million rows opens in well under a second (dates are cut into days / months / quarters / financial years / weekdays even when written `15-02-2025`, `2025-02-15` or in Devanagari digits). Click a bar, slice, month, box or histogram bar and the **file view filters to exactly those rows** (purple chip, Ctrl+click adds more, a drag selects a range). Scatter charts draw a random sample of up to 5,000 dots and say so; their trend line and correlation use all rows.
+- **Sparklines:** right-click a number column's heading → *Trend line in each row* draws a tiny line inside each row across a block of number columns (Jan … Dec).
+- **Dashboard** (*Studio → Dashboard*, or Ctrl+K): the charts you pinned, arranged on one page — editable title, headline numbers, 1–3 columns, a plain-language reading under each chart and your own note. Download as **PowerPoint** (editable text in a Devanagari-capable font, chart pictures, the reading in the speaker notes), as **PDF** (A4 landscape; the browser draws every page so Hindi is exact) or **Print**. The board is saved inside `.stellura` project files.
+- The Change Radar, Pendency Radar and the Large File *Group* tab use the same chart system (Indian lakh/crore labels, hover, save as picture). Click a coloured segment of the pendency age chart to open exactly those cases; click a bar in the Group tab to filter the file to that group.
 - The chart library is Apache ECharts 5.5.1, shipped in `static/js` (licence in `THIRD_PARTY_LICENSES.txt`); nothing is fetched from the internet.
 
 ## Large files and projects
@@ -48,13 +52,15 @@ The server listens on this PC only. To let other PCs on the office network conne
 ```bash
 pip install pytest
 python -m pytest tests -q                       # backend + offline-promise checks
-node --test tests/unit/*.test.js                # Fixer, Merge, Name Match, Pendency, Change Radar, Autopilot, Chart engine logic (no browser needed)
+node --test tests/unit/*.test.js                # Fixer, Merge, Name Match, Pendency, Change Radar, Autopilot, Chart engine, large-file chart pipeline (no browser needed)
 BASE=http://127.0.0.1:5000 node tests/e2e/core.e2e.js    # browser checks, all external network blocked
 STELLURA_HOME=/tmp/stl-home python app.py                  # throw-away projects folder for the next test
 BASE=http://127.0.0.1:5000 node tests/e2e/large.e2e.js   # 250,000-row Large File mode + projects
 BASE=http://127.0.0.1:5000 node tests/e2e/tasks.e2e.js   # Home, Simple/Pro, command palette, Clean a messy file, Combine files
 BASE=http://127.0.0.1:5000 PY=python node tests/e2e/reports.e2e.js  # Autopilot, Change Radar, Pendency Radar, Letters, Name Match
-BASE=http://127.0.0.1:5000 node tests/e2e/charts.e2e.js  # Chart Studio, all 24 charts, click/drag-to-filter, Insights board, column insight, table visuals
+BASE=http://127.0.0.1:5000 node tests/e2e/charts.e2e.js  # Chart Studio, all 25 charts, click/drag-to-filter, Insights board, column insight, table visuals, Sankey, sparklines
+BASE=http://127.0.0.1:5000 node tests/e2e/bigcharts.e2e.js  # charts on a 300,000-row Large File: exact numbers, click-to-filter, dates, every chart type
+BASE=http://127.0.0.1:5000 node tests/e2e/dashboard.e2e.js  # Dashboard: layout, edits, PowerPoint, PDF, print, saved with the project (needs python-pptx and pypdf)
 ```
 
 The browser test needs Node.js and Playwright. It fails if any request leaves the PC.
@@ -66,6 +72,8 @@ The browser test needs Node.js and Playwright. It fails if any request leaves th
 | `app.py` | Local server: file upload, Excel/PDF/report export, AI proxy |
 | `engine.py`, `engine_api.py` | DuckDB analytics engine and its HTTP API |
 | `projects.py` | `.stellura` project files |
+| `office_api.py` | Excel proforma filling, Word letters, dashboard PowerPoint / PDF (offline, `python-pptx`, `Pillow`) |
+| `web/js/charts/` | Chart engine (60), Studio (61), table visuals (62), Large File charts (63), Dashboard (64) |
 | `web/` | Source of the web app: CSS, HTML and JavaScript parts listed in `web/manifest.txt`. **Edit these.** |
 | `tools/build.py` | Builds `dist/Stellura.html` (one offline file) from `web/`. `app.py` rebuilds automatically when sources change |
 | `static/` | Libraries and fonts served locally (no internet needed). Licences in `static/js/THIRD_PARTY_LICENSES.txt` |

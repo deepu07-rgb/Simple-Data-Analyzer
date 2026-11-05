@@ -29,6 +29,7 @@
     var big = B();
     return { search: big.search || '', filters: big.filters.filter(function (f) { return !f._chart; }).map(function (f) { return { col: f.col, op: f.op, value: f.value, value2: f.value2 }; }) };
   }
+  BC.scope = scope;
   BC.loadSample = function () {
     var big = B(), ds = big.ds;
     if (BC.sample.ds === ds) return Promise.resolve(BC.sample);

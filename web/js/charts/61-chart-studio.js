@@ -67,6 +67,7 @@
   STL.board = STL.board || { pins: null };
   function loadPins() { if (STL.board.pins) return; try { STL.board.pins = JSON.parse(localStorage.getItem('stellura_board') || '[]'); } catch (e) { STL.board.pins = []; } }
   function savePins() { try { localStorage.setItem('stellura_board', JSON.stringify(STL.board.pins)); } catch (e) {} }
+  STL.boardLoad = loadPins; STL.boardSave = savePins;
 
   // the rows come from the editor, or - for a Large File - from the engine, which answers every chart from all the rows
   function isBig() { return !!(window.BIG && BIG.active && BIG.ds); }
@@ -138,7 +139,7 @@
       '<div class="cs-chartwrap"><div id="csChart"></div><div class="cs-msg" id="csMsg" style="display:none"></div></div>' +
       '<div class="cs-selbar" id="csSelBar" style="display:none"></div>' +
       '<div class="cs-cap" id="csCap"></div>' +
-      '<div class="cs-tools"><button class="tb-btn" id="csPng"></button><button class="tb-btn" id="csCopy"></button><button class="tb-btn" id="csCsv"></button><button class="tb-btn" id="csPin"></button><button class="tb-btn" id="csBoard"></button></div>' +
+      '<div class="cs-tools"><button class="tb-btn" id="csPng"></button><button class="tb-btn" id="csCopy"></button><button class="tb-btn" id="csCsv"></button><button class="tb-btn" id="csPin"></button><button class="tb-btn" id="csBoard"></button><button class="tb-btn" id="csDash"></button></div>' +
       '<div class="cs-sec" id="csTypeLbl"></div><div class="cs-gallery" id="csGallery">' + gal + '</div>' +
       '<details class="cs-fields" id="csFieldsBox" open><summary id="csFieldsLbl"></summary><div class="cs-grid" id="csFields">' +
         '<label class="cs-f" data-use="x"><span id="csXl"></span><select id="csX" class="big-select"></select></label>' +
@@ -176,7 +177,7 @@
     on('csTitleIn', 'input', function () { CS.spec.title = this.value; clearTimeout(CS._tt); CS._tt = setTimeout(redraw, 250); });
     on('csLab', 'change', function () { CS.spec.labels = this.checked; redraw(); }); on('csSm', 'change', function () { CS.spec.smooth = this.checked; redraw(); }); on('csTr', 'change', function () { CS.spec.trend = this.checked; redraw(); });
     on('csAddM', 'click', function () { var p = profile(), n = p.filter(good).filter(function (c) { return !CS.spec.ys.some(function (y) { return y.col === c.index; }); })[0]; if (CS.spec.ys.length >= 6) return; CS.spec.ys.push({ col: n ? n.index : -1, fn: n ? 'sum' : 'count' }); CS.spec.g = -1; CS.spec._userMeasure = true; sync(); redraw(); });
-    on('csPng', 'click', savePng); on('csCopy', 'click', copyPng); on('csCsv', 'click', saveCsv); on('csPin', 'click', pin); on('csBoard', 'click', function () { STL.openBoard(); });
+    on('csPng', 'click', savePng); on('csCopy', 'click', copyPng); on('csCsv', 'click', saveCsv); on('csPin', 'click', pin); on('csBoard', 'click', function () { STL.openBoard(); }); on('csDash', 'click', function () { STL.openDashboard(); });
     if (window.ResizeObserver) new ResizeObserver(function () { resize(); }).observe($('csChart'));
   }
   function resize() { if (CS.inst) try { CS.inst.resize(); } catch (e) {} }
@@ -211,7 +212,7 @@
     $('csTil').textContent = T('Title', 'शीर्षक'); $('csTitleIn').value = sp.title || ''; $('csTitleIn').placeholder = autoTitle(type, sp);
     $('csLabl').textContent = T('Show values', 'मान दिखाएँ'); $('csLab').checked = !!sp.labels; $('csSml').textContent = T('Smooth lines', 'चिकनी रेखाएँ'); $('csSm').checked = !!sp.smooth; $('csTrl').textContent = T('Trend line', 'प्रवृत्ति रेखा'); $('csTr').checked = !!sp.trend;
     document.querySelectorAll('#csFields [data-use]').forEach(function (e) { var f = e.dataset.use, show = f === 'palette' ? true : uses(f, type); if (f === 'time') show = show && sp.x >= 0 && p[sp.x] && p[sp.x].date; if (f === 'xy' && type === 'histogram') show = true; e.style.display = show ? '' : 'none'; });
-    $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड');
+    $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड'); $('csDash').textContent = '📋 ' + T('Dashboard', 'डैशबोर्ड'); $('csDash').title = T('Arrange the pinned charts on a page and export to PowerPoint or PDF', 'पिन किए चार्ट एक पृष्ठ पर सजाएँ और PowerPoint या PDF में निर्यात करें');
     $('csHint').textContent = T('Click a bar, slice or cell to show only those rows in the table (Ctrl+click adds more). Drag on the chart with the select tool (top right) to pick a range. Scroll with Ctrl to zoom.', 'तालिका में केवल वे पंक्तियाँ देखने के लिए पट्टी, टुकड़े या खाने पर क्लिक करें (Ctrl+क्लिक से और जोड़ें)। दायरा चुनने के लिए ऊपर दाएँ के चयन औज़ार से चार्ट पर खींचें। ज़ूम के लिए Ctrl के साथ स्क्रॉल करें।');
     $('csExpand').title = T('Wider', 'चौड़ा');
   }

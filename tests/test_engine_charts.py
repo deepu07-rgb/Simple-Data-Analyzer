@@ -229,3 +229,12 @@ def test_a_long_date_axis_keeps_the_most_recent_periods(ds):
     months = sorted({t["day"].strftime("%Y-%m") for t in truth if t["day"]})
     kept = sorted(r[0] for r in res["rows"] if r[0] != "(Others)")
     assert kept == months[-6:]
+
+
+def test_numeric_request_fields_are_numbers_only(ds):
+    eng, i, _ = ds
+    with pytest.raises((ValueError, TypeError)):
+        eng.chart_points(i, 3, 2, g=0, max_groups="4; DROP TABLE x")
+    with pytest.raises((ValueError, TypeError)):
+        eng.chart_agg(i, x=0, max_cats="5; DROP TABLE x")
+    assert eng.chart_points(i, 3, 2, limit=100)["n"] > 0, "the dataset is still there"

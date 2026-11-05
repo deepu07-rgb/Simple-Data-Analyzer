@@ -249,10 +249,10 @@
   };
   BUILD.bar = function (spec, headers, data, env) {
     var o = BUILD.column(spec, headers, data, env), n = data.cats.length;
-    o.xAxis = valueAxis(env, yName(spec, headers, data, env)); o.yAxis = catAxis(env, data.cats.map(function (c) { return c.label; }), { inverse: true });
+    o.xAxis = valueAxis(env, yName(spec, headers, data, env), null, { nameLocation: 'middle', nameGap: 30 }); o.yAxis = catAxis(env, data.cats.map(function (c) { return c.label; }), { inverse: true });
     o.series.forEach(function (sr) { sr.itemStyle = { borderRadius: [0, 4, 4, 0] }; if (sr.label) sr.label.position = 'right'; });
     o.dataZoom = n > 14 ? [{ type: 'inside', yAxisIndex: 0, zoomOnMouseWheel: 'ctrl' }, { type: 'slider', yAxisIndex: 0, width: 14, right: 4, borderColor: 'transparent', brushSelect: false }] : undefined;
-    o.grid = { left: 12, right: n > 14 ? 40 : 30, top: spec.title ? 56 : 40, bottom: 34, containLabel: true };
+    o.grid = { left: 12, right: n > 14 ? 40 : 30, top: spec.title ? 56 : 40, bottom: 58, containLabel: true };
     o.brush = { yAxisIndex: 0, brushStyle: { borderWidth: 1, color: 'rgba(109,91,208,.15)', borderColor: '#6d5bd0' } };
     o.toolbox && o.toolbox.feature && o.toolbox.feature.brush && (o.toolbox.feature.brush.type = ['lineY', 'clear']);
     return o;
@@ -272,7 +272,7 @@
     o.series = seriesFrom(data, 'line', spec, { smooth: smooth, showSymbol: data.cats.length < 40, symbolSize: 6, lineStyle: { width: 2.5 }, areaStyle: area ? { opacity: spec._stack ? 0.7 : 0.18 } : undefined, stack: spec._stack ? 'total' : undefined });
     if (data.series.length === 1 && data.cats.length > 2) {                                  // mark the high and low
       o.series[0].markPoint = { symbolSize: 46, data: [{ type: 'max', name: T(env, 'Highest', 'सर्वाधिक') }, { type: 'min', name: T(env, 'Lowest', 'न्यूनतम') }], label: { color: '#fff', fontSize: 10, formatter: function (p) { return compact(p.value, env.hi); } } };
-      o.series[0].markLine = { silent: true, symbol: 'none', data: [{ type: 'average', name: T(env, 'Average', 'औसत') }], lineStyle: { type: 'dashed', color: env.sub }, label: { color: env.sub, formatter: function (p) { return T(env, 'avg ', 'औसत ') + compact(p.value, env.hi); } } };
+      o.series[0].markLine = { silent: true, symbol: 'none', data: [{ type: 'average', name: T(env, 'Average', 'औसत') }], lineStyle: { type: 'dashed', color: env.sub }, label: { position: 'insideEndTop', color: env.sub, formatter: function (p) { return T(env, 'avg ', 'औसत ') + compact(p.value, env.hi); } } };
     }
     return o;
   };

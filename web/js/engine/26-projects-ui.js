@@ -57,6 +57,7 @@
     }
     s.stlSteps = (window.STL && STL.steps) || [];
     s.stlPendency = (window.STL && STL.pendSnaps) || [];
+    try { if (window.STL && STL.boardState) s.stlBoard = STL.boardState(); } catch (e) {}
     return s;
   }
 
@@ -71,6 +72,7 @@
     }
     if (window.STL && Array.isArray(s.stlSteps)) { STL.steps = s.stlSteps; }
     if (window.STL && Array.isArray(s.stlPendency)) { STL.pendSnaps = s.stlPendency; }
+    try { if (window.STL && STL.boardRestore && s.stlBoard) STL.boardRestore(s.stlBoard); } catch (e) {}
     if (s.documentName && $('documentName')) $('documentName').textContent = s.documentName;
     try { filteredData = null; populatePanelSelects(); showTable(); } catch (e) {}
     try { if (typeof renderCFRules === 'function') renderCFRules(); if (typeof renderActiveFilters === 'function') renderActiveFilters(); if (typeof renderValidationRules === 'function') renderValidationRules(); } catch (e) {}
