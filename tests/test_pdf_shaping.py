@@ -23,17 +23,14 @@ Run with:  pip install -r requirements-dev.txt && pytest
 """
 import io
 import re
-from pathlib import Path
 
 import pymupdf
 import pytest
-import uharfbuzz as hb
 from reportlab.pdfgen import canvas as rl_canvas
 
 import app as stellura
 import pdf_shaping
-
-FONT_PATH = Path(stellura.STATIC_FONTS_DIR) / "NotoSansDevanagari-Regular.ttf"
+from helpers import FONT_PATH, hb_reference
 
 PUA = "P"  # wildcard in glyph patterns: any Private Use Area glyph (a substituted glyph)
 
@@ -125,31 +122,6 @@ KNOWN_GOOD = {
     "क्रांति": [PUA, 0x93E, 0x902, PUA, 0x924],
     "स्त्री": [PUA, PUA, 0x940],
 }
-
-
-def hb_reference(text, size):
-    """Glyph origins/names for *text* straight from HarfBuzz, independent of ReportLab.
-
-    Text is itemised into Devanagari and non-Devanagari runs, each shaped on its
-    own with its own script, as a real text engine would.
-    """
-    face = hb.Face(hb.Blob.from_file_path(str(FONT_PATH)))
-    font = hb.Font(face)
-    scale = size / face.upem
-    pen, glyphs = 0.0, []
-    for run in re.findall("[\u0900-\u097f\u200c\u200d]+|[^\u0900-\u097f\u200c\u200d]+", text):
-        buf = hb.Buffer()
-        buf.add_str(run)
-        buf.guess_segment_properties()
-        hb.shape(font, buf, {"kern": True, "liga": True})
-        for info, pos in zip(buf.glyph_infos, buf.glyph_positions):
-            glyphs.append({
-                "x": pen + pos.x_offset * scale,
-                "y": pos.y_offset * scale,
-                "name": font.glyph_to_string(info.codepoint),
-            })
-            pen += pos.x_advance * scale
-    return glyphs, pen
 
 
 # ---------------------------------------------------------------------------
@@ -447,3 +419,23 @@ def test_without_shaping_pdfs_still_build_but_the_detector_flags_them(client, mo
     assert not find_pattern(codes, KNOWN_GOOD["विभाग"])
     # extracted text is still the plain Unicode (that is why text extraction cannot be the test)
     assert "विभाग" in "".join(p.get_text() for p in pdf_pages(resp.data))
+
+
+# ---------------------------------------------------------------------------
+# browser-side exports: wiring (the behaviour itself is in test_browser_pdfs.py)
+# ---------------------------------------------------------------------------
+
+def test_browser_pdf_helper_is_served_and_wired_into_both_html_copies(client):
+    """The app serves download/..., public/... is its copy; both must load the helper."""
+    download_html = (stellura.DOWNLOAD_DIR / "Simple-Data-Analyser.html").read_text(encoding="utf-8")
+    public_html = (stellura.BASE_DIR / "public" / "Simple-Data-Analyser.html").read_text(encoding="utf-8")
+    assert download_html == public_html, "download/ and public/ copies of the page have drifted apart"
+    assert '<script src="/static/js/pdf-text.js"></script>' in download_html
+    # the four jsPDF exports go through the helper rather than raw doc.text()
+    for name in ("downloadChartPDF", "exportDashboardPDF", "generateClientPDF", "_pvExportPDF"):
+        start = download_html.index("function " + name + "(")
+        end = start + 10 + re.search(r"\n(?:async )?function ", download_html[start + 10:]).start()
+        body = download_html[start:end]
+        assert "await T.ready()" in body and "doc.text(" not in body, name
+    resp = client.get("/static/js/pdf-text.js")
+    assert resp.status_code == 200 and b"StelluraPdfText" in resp.data

@@ -26,6 +26,7 @@
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="/static/js/pdf-text.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 /* ===== CSS DESIGN SYSTEM ===== */
@@ -11982,8 +11983,22 @@ function downloadChart() {
   toast('Chart downloaded', 'success');
 }
 
-function downloadChartPDF() {
+// Browser-shaped Hindi for the jsPDF exports (static/js/pdf-text.js).  jsPDF's built-in fonts
+// cannot draw Devanagari, so the helper has the browser draw those strings and places them as
+// images.  Falls back to plain jsPDF calls if the helper script did not load.
+function _pdfText() {
+  return window.StelluraPdfText || {
+    ready: function () { return Promise.resolve(); },
+    text: function (doc, s, x, y, o) { return o === undefined ? doc.text(s, x, y) : doc.text(s, x, y, o); },
+    split: function (doc, s, w, o) { return doc.splitTextToSize(s, w, o); },
+    autoTable: function (doc, options) { return doc.autoTable(options); }
+  };
+}
+
+async function downloadChartPDF() {
   if (!chartInstance) { toast('Create a chart first', 'error'); return; }
+  const T = _pdfText();
+  await T.ready();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
   const chartCanvas = document.getElementById('chartCanvas');
@@ -11996,7 +12011,7 @@ function downloadChartPDF() {
   doc.setFont(pdfFont, 'bold');
   doc.setFontSize(parseInt(document.getElementById('chartTitleSize')?.value || '16', 10));
   doc.setTextColor(15, 143, 131);
-  doc.text(title, 15, 20);
+  T.text(doc, title, 15, 20);
 
   const pdfW = 260;
   const aspect = chartCanvas.height / chartCanvas.width;
@@ -12007,8 +12022,8 @@ function downloadChartPDF() {
     doc.setFont(pdfFont, 'normal');
     doc.setFontSize(parseInt(document.getElementById('chartTextSize')?.value || '10', 10));
     doc.setTextColor(100, 116, 139);
-    const splitDesc = doc.splitTextToSize(desc, pdfW);
-    doc.text(splitDesc, 15, 35 + pdfH + 5);
+    const splitDesc = T.split(doc, desc, pdfW);
+    T.text(doc, splitDesc, 15, 35 + pdfH + 5);
   }
 
   doc.save(`${title.toLowerCase().replace(/[^a-z0-9]/g, '_')}.pdf`);
@@ -12076,7 +12091,7 @@ function exportDashboardPNG() {
   });
 }
 
-function exportDashboardPDF() {
+async function exportDashboardPDF() {
   const view = document.getElementById('dashboard-view');
   if (!view || !view.classList.contains('visible')) {
     toast('Open Dashboard first', 'error'); return;
@@ -12084,6 +12099,8 @@ function exportDashboardPDF() {
   if (typeof html2canvas === 'undefined') {
     toast('html2canvas not loaded — check your internet connection', 'error'); return;
   }
+  const T = _pdfText();
+  await T.ready();
   const exportBar = document.getElementById('dash-export-bar');
   if (exportBar) exportBar.style.visibility = 'hidden';
 
@@ -12111,16 +12128,16 @@ function exportDashboardPDF() {
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(7.5);
     doc.setFont('Helvetica', 'bold');
-    doc.text('Stellura — Data Vision Studio', margin + 3, 11.8);
+    T.text(doc, 'Stellura — Data Vision Studio', margin + 3, 11.8);
     doc.setFontSize(6.5);
-    doc.text('स्टेल्यूरा', margin + 77, 11.8);
+    T.text(doc, 'स्टेल्यूरा', margin + 77, 11.8);
 
     // Title on right
     const docTitle = document.getElementById('documentName')?.textContent || 'Dashboard';
     doc.setTextColor(30, 41, 59);
     doc.setFontSize(10);
     doc.setFont('Helvetica', 'bold');
-    doc.text(docTitle, pageW - margin, 11.5, { align: 'right' });
+    T.text(doc, docTitle, pageW - margin, 11.5, { align: 'right' });
 
     // ---- Dashboard image ----
     const imageTop = 20;
@@ -12157,10 +12174,10 @@ function exportDashboardPDF() {
     doc.setFontSize(6.5);
     doc.setTextColor(148, 163, 184);
     doc.setFont('Helvetica', 'italic');
-    doc.text(footerText, pageW / 2, pageH - 3, { align: 'center' });
+    T.text(doc, footerText, pageW / 2, pageH - 3, { align: 'center' });
     doc.setFont('Helvetica', 'bold');
     doc.setTextColor(67, 56, 202);
-    doc.text('Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police', pageW / 2, pageH - 7, { align: 'center' });
+    T.text(doc, 'Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police', pageW / 2, pageH - 7, { align: 'center' });
     // ---- Disclaimer ----
     doc.setDrawColor(124, 58, 237);
     doc.setLineWidth(0.25);
@@ -12168,10 +12185,10 @@ function exportDashboardPDF() {
     doc.setFont('Helvetica', 'italic');
     doc.setFontSize(5.8);
     doc.setTextColor(124, 58, 237);
-    doc.text('DISCLAIMER:', margin, pageH - 11);
+    T.text(doc, 'DISCLAIMER:', margin, pageH - 11);
     doc.setTextColor(110, 90, 140);
-    doc.text('This report is generated by Stellura — Living Data Intelligence. Associations are indicative only.', margin + 18, pageH - 11);
-    doc.text('Human review and domain expertise are essential before making any decision based on this data.', margin, pageH - 8);
+    T.text(doc, 'This report is generated by Stellura — Living Data Intelligence. Associations are indicative only.', margin + 18, pageH - 11);
+    T.text(doc, 'Human review and domain expertise are essential before making any decision based on this data.', margin, pageH - 8);
 
     const safeTitle = docTitle.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_');
     doc.save(`${safeTitle}_dashboard_${new Date().toISOString().slice(0,10)}.pdf`);
@@ -12891,7 +12908,9 @@ function executePDFExport() {
   });
 }
 
-function generateClientPDF(title, paperSize, orientation, indices, tableData, includeFormat) {
+async function generateClientPDF(title, paperSize, orientation, indices, tableData, includeFormat) {
+  const T = _pdfText();
+  await T.ready();
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation, format: paperSize });
   const pageW = doc.internal.pageSize.getWidth();
@@ -12916,15 +12935,15 @@ function generateClientPDF(title, paperSize, orientation, indices, tableData, in
     doc.setFont('Helvetica', 'bold');
     doc.setFontSize(7.5);
     doc.setTextColor(255, 255, 255);
-    doc.text('Stellura — Data Vision Studio', MARGIN + 3, 11.5);
+    T.text(doc, 'Stellura — Data Vision Studio', MARGIN + 3, 11.5);
     doc.setFontSize(6.5);
     doc.setTextColor(13, 10, 26);
-    doc.text('Living Data Intelligence', MARGIN + 73, 11.5);
+    T.text(doc, 'Living Data Intelligence', MARGIN + 73, 11.5);
     // Page n of N on right
     doc.setFont('Helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(...MUTED);
-    doc.text(`${title}  |  Page ${pageNum}`, pageW - MARGIN, 11.5, { align: 'right' });
+    T.text(doc, `${title}  |  Page ${pageNum}`, pageW - MARGIN, 11.5, { align: 'right' });
   }
 
   // First page title block
@@ -12932,11 +12951,11 @@ function generateClientPDF(title, paperSize, orientation, indices, tableData, in
   doc.setFontSize(14);
   doc.setFont('Helvetica', 'bold');
   doc.setTextColor(...PURPLE);
-  doc.text(title, MARGIN, 31);
+  T.text(doc, title, MARGIN, 31);
   doc.setFontSize(7.5);
   doc.setFont('Helvetica', 'normal');
   doc.setTextColor(...MUTED);
-  doc.text(
+  T.text(doc,
     `Generated: ${new Date().toLocaleString()}  |  Rows: ${tableData.length}  |  Columns: ${(tableData[0]||[]).length}`,
     MARGIN, 37
   );
@@ -12968,7 +12987,7 @@ function generateClientPDF(title, paperSize, orientation, indices, tableData, in
 
   // ── Table ─────────────────────────────────────────────────────────────────────
   let pageCount = 1;
-  doc.autoTable({
+  T.autoTable(doc, {
     head: [headers],
     body: tableData,
     startY: 42,
@@ -12985,7 +13004,7 @@ function generateClientPDF(title, paperSize, orientation, indices, tableData, in
       doc.setFont('Helvetica', 'italic');
       doc.setFontSize(5.8);
       doc.setTextColor(...MUTED);
-      doc.text('Stellura — Living Data Intelligence', pageW / 2, pageH - 3, { align: 'center' });
+      T.text(doc, 'Stellura — Living Data Intelligence', pageW / 2, pageH - 3, { align: 'center' });
     }
   });
 
@@ -12998,13 +13017,13 @@ function generateClientPDF(title, paperSize, orientation, indices, tableData, in
   doc.setFont('Helvetica', 'bold');
   doc.setFontSize(6.5);
   doc.setTextColor(...PURPLE);
-  doc.text('DISCLAIMER', MARGIN, discY + 5);
+  T.text(doc, 'DISCLAIMER', MARGIN, discY + 5);
   doc.setFont('Helvetica', 'italic');
   doc.setFontSize(6);
   doc.setTextColor(110, 90, 140);
-  doc.text('This report is generated by Stellura — Living Data Intelligence. Trends and associations shown are indicative only.', MARGIN, discY + 9);
-  doc.text('Human review and domain expertise are essential before making any decision based on this data.', MARGIN, discY + 13);
-  doc.text('Generated on: ' + new Date().toLocaleString(), MARGIN, discY + 17);
+  T.text(doc, 'This report is generated by Stellura — Living Data Intelligence. Trends and associations shown are indicative only.', MARGIN, discY + 9);
+  T.text(doc, 'Human review and domain expertise are essential before making any decision based on this data.', MARGIN, discY + 13);
+  T.text(doc, 'Generated on: ' + new Date().toLocaleString(), MARGIN, discY + 17);
 
   doc.save(title.replace(/\s+/g, '_') + '.pdf');
   toast('PDF exported — Stellura branded', 'success');
@@ -17938,29 +17957,30 @@ function _pvFilter(actor){
 }
 
 // Export audit trail as PDF
-function _pvExportPDF(){
+async function _pvExportPDF(){
   if(typeof window.jspdf==='undefined'||!window.jspdf.jsPDF){toast('PDF engine not available','error');return;}
   var pv=DD.provenance||[];
   if(!pv.length){toast('No events to export / कोई घटना नहीं','info');return;}
   var isHi=(typeof uiLanguage!=='undefined'&&uiLanguage==='hi');
   var jsPDF=window.jspdf.jsPDF;
+  var T=_pdfText();await T.ready();
   var doc=new jsPDF({orientation:'portrait',format:'a4'});
   var title='Stellura Audit Trail / ऑडिट रिकॉर्ड';
-  doc.setFontSize(16);doc.setTextColor(99,102,241);doc.text(title,14,15);
+  doc.setFontSize(16);doc.setTextColor(99,102,241);T.text(doc,title,14,15);
   doc.setFontSize(9);doc.setTextColor(100);
-  doc.text('Generated: '+new Date().toLocaleString()+' | Events: '+pv.length+' | Chain: '+(_pvSelectedId?'Event '+_pvSelectedId:'All'),14,22);
+  T.text(doc,'Generated: '+new Date().toLocaleString()+' | Events: '+pv.length+' | Chain: '+(_pvSelectedId?'Event '+_pvSelectedId:'All'),14,22);
   // Events focused on selected or all
   var evList=_pvSelectedId?_pvGetChain(_pvSelectedId,pv):pv.slice(-50);
   var rows=evList.map(function(e){
     return[new Date(e.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}),e.actor,e.action,String(e.label||'').slice(0,60),e.hash];
   });
-  doc.autoTable({head:[['Time','Actor','Action','Description','Hash']],body:rows,startY:28,styles:{fontSize:7,cellPadding:1.5},headStyles:{fillColor:[99,102,241],textColor:[255,255,255],fontStyle:'bold'},columnStyles:{4:{font:'courier',fontSize:6,textColor:[150,100,200]}},margin:{top:28}});
+  T.autoTable(doc,{head:[['Time','Actor','Action','Description','Hash']],body:rows,startY:28,styles:{fontSize:7,cellPadding:1.5},headStyles:{fillColor:[99,102,241],textColor:[255,255,255],fontStyle:'bold'},columnStyles:{4:{font:'courier',fontSize:6,textColor:[150,100,200]}},margin:{top:28}},{colWidths:[18,16,24,88,34]});
   var finalY=doc.lastAutoTable?doc.lastAutoTable.finalY+8:120;
   var verifyOk=_pvGetVerifyStatus(pv);
   doc.setFontSize(9);doc.setTextColor(verifyOk?52:248,verifyOk?211:113,verifyOk?153:113);
-  doc.text(verifyOk?'✓ Hash chain verified — log has not been tampered with':'✗ Hash chain BROKEN — log may have been tampered with',14,finalY);
+  T.text(doc,verifyOk?'✓ Hash chain verified — log has not been tampered with':'✗ Hash chain BROKEN — log may have been tampered with',14,finalY);
   doc.setFontSize(7);doc.setTextColor(150);
-  doc.text('Stellura | Offline, Tamper-Evident Provenance Log | Hash: FNV-1a 32-bit chain',14,finalY+6);
+  T.text(doc,'Stellura | Offline, Tamper-Evident Provenance Log | Hash: FNV-1a 32-bit chain',14,finalY+6);
   doc.save('Stellura_Audit_'+Date.now()+'.pdf');
   toast(isHi?'ऑडिट PDF निर्यात हुई।':'Audit PDF exported.','success');
 }
