@@ -125,6 +125,11 @@ function makeCsv() {
   await shot('04-board');
   await ev(() => document.querySelectorAll('#boardDialog .cs-card-c')[2].click()); await wait(700);
   ok(await ev(() => !document.getElementById('boardDialog') && document.getElementById('chartStudio').classList.contains('open')), 'Clicking a board chart opens it in the Studio');
+  // a board chart that counts rows keeps counting rows when it is opened in the Studio (it used to switch to a total of the first number column)
+  await ev(() => STL.openBoard()); await wait(900);
+  const counted = await ev(() => { const cs = Array.from(document.querySelectorAll('#boardDialog .cs-card')), i = cs.findIndex(c => /How many rows/.test(c.querySelector('.cs-card-h').textContent)); if (i < 0) return null; cs[i].querySelector('.cs-card-c').click(); return i; });
+  await wait(900);
+  ok(counted !== null && await ev(() => { const o = echarts.getInstanceByDom(document.getElementById('csChart')).getOption(); return /Rows|पंक्ति/.test(o.yAxis[0].name || o.xAxis[0].name || '') && !/Total|योग/.test(o.xAxis[0].name || o.yAxis[0].name || ''); }), 'A "how many rows" board chart stays a count when opened in the Studio', counted);
   await ev(() => { STL.board.pins = []; localStorage.removeItem('stellura_board'); });
 
   // ---- table: column insight, click a bar to filter

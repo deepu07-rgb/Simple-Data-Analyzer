@@ -135,7 +135,7 @@
 
   // spec: {x, ys:[{col,fn}], g, fn, sort ('desc'|'asc'|'label'|'natural'), topN, others, time ('day'|'month'|'quarter'|'year'|'fy'|'weekday'), maxGroups}
   CH.prepare = function (spec, headers, rows, idx) {
-    var x = spec.x, ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col, fn: y.col < 0 ? 'count' : (y.fn || spec.fn || 'sum') }; });
+    var x = spec.x, ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col, fn: y.col < 0 ? 'count' : (y.fn || spec.fn || 'sum'), as: y.as, name: y.name }; });
     var g = spec.g >= 0 && spec.g !== undefined ? spec.g : -1, useG = g >= 0 && ys.length === 1;
     var isDate = x >= 0 && spec.time && spec.time !== 'none';
     var cats = {}, order = [], gNames = {}, gOrder = [], blanks = 0;
@@ -161,7 +161,7 @@
       gOrder = keep.concat(['(other)']);
     }
     var seriesKeys = useG ? gOrder : ys.map(function (_, i) { return 'y' + i; });
-    var seriesDefs = useG ? gOrder.map(function (nm) { return { name: nm, fn: ys[0].fn, col: ys[0].col }; }) : ys.map(function (y, i) { return { name: y.col < 0 ? 'Rows' : s(headers[y.col]), fn: y.fn, col: y.col }; });
+    var seriesDefs = useG ? gOrder.map(function (nm) { return { name: nm, fn: ys[0].fn, shown: ys[0].as || ys[0].fn, col: ys[0].col, mname: ys[0].name }; }) : ys.map(function (y, i) { return { name: y.name || (y.col < 0 ? 'Rows' : s(headers[y.col])), fn: y.fn, shown: y.as || y.fn, col: y.col, mname: y.name }; });
     var list = order.map(function (key) {
       var c = cats[key]; c.values = seriesKeys.map(function (sk) { return c.vals[sk] ? reduce(c.vals[sk], seriesDefs[seriesKeys.indexOf(sk)].fn) : (seriesDefs[seriesKeys.indexOf(sk)].fn === 'count' || seriesDefs[seriesKeys.indexOf(sk)].fn === 'sum' || seriesDefs[seriesKeys.indexOf(sk)].fn === 'distinct' ? 0 : null); });
       c.total = c.values.reduce(function (a, b) { return a + (b || 0); }, 0); return c;
@@ -172,7 +172,10 @@
     if (sort === 'desc') list.sort(function (a, b) { return b.total - a.total; });
     else if (sort === 'asc') list.sort(function (a, b) { return a.total - b.total; });
     else if (sort === 'numlabel') list.sort(function (a, b) { return parseFloat(a.label) - parseFloat(b.label); });
+    else if (sort === 'label' && (spec.time === 'weekday' || spec.labelOrder === 'weekday')) { var WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; list.sort(function (a, b) { return WD.indexOf(a.label) - WD.indexOf(b.label); }); }
     else if (sort === 'label') list.sort(function (a, b) { return a.label < b.label ? -1 : (a.label > b.label ? 1 : 0); });
+    // data prepared by the engine for a large file arrives with its own "(Others)" group: keep it last and mark it
+    if (spec.preOthers) { var oi = -1; list.forEach(function (c, i) { if (c.label === '(Others)') oi = i; }); if (oi >= 0) { var og = list.splice(oi, 1)[0]; og.isOthers = true; list.push(og); } }
     // top N + others (the rest are merged by re-reducing their raw values, so averages stay right)
     var topN = spec.topN > 0 ? spec.topN : 0, others = null;
     if (topN && list.length > topN + 1) {
@@ -183,6 +186,7 @@
       others = { count: rest.length, rows: oc.rows.length };
       if (spec.others !== false) list.push(oc);
     }
+    if (spec.preOthers && list.some(function (c) { return c.isOthers; })) others = others || { count: null };
     return { cats: list, series: seriesDefs, seriesKeys: seriesKeys, rowsUsed: idx.length, blanks: blanks, others: others, split: useG, isDate: !!isDate };
   };
 
@@ -216,7 +220,7 @@
   function zoom(n) { return n > 14 ? [{ type: 'inside', zoomOnMouseWheel: 'ctrl' }, { type: 'slider', height: 16, bottom: 30, borderColor: 'transparent', brushSelect: false }] : undefined; }
   function tipNumber(env) { return function (v) { return typeof v === 'number' ? indian(v, Math.abs(v) < 100 && v !== Math.round(v) ? 2 : 0) : v; }; }
   function yName(spec, headers, data, env) {
-    if (data.series.length === 1) { var d = data.series[0]; return d.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(d.fn, env.hi) + ' — ' + d.name; }
+    if (data.series.length === 1) { var d = data.series[0]; var sh = d.shown || d.fn; if (sh === 'count') return T(env, 'Rows', 'पंक्तियाँ'); return d.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(sh, env.hi) + ' — ' + (d.mname || d.name); }
     return '';
   }
   function cartesianGrid(spec, env, nCats, horizontal) { return { left: 12, right: horizontal ? 30 : 18, top: spec.title ? 56 : 40, bottom: (nCats > 14 ? 74 : 44) + (spec.noLegend ? 0 : 6), containLabel: true }; }
@@ -383,9 +387,9 @@
     o.grid = { left: 12, right: 24, top: spec.title ? 56 : 40, bottom: 56, containLabel: true };
     o.xAxis = valueAxis(env, s(headers[spec.xnum]), null, { scale: true, splitLine: { lineStyle: { color: env.grid } } }); o.yAxis = valueAxis(env, s(headers[spec.ynum]), null, { scale: true });
     o.series = order.map(function (k) { return { name: k, type: 'scatter', data: groups[k], symbolSize: bubble ? function (v) { return 8 + (zmax === zmin ? 14 : (v[2] - zmin) / (zmax - zmin) * 42); } : 9, itemStyle: { opacity: bubble ? 0.62 : 0.78 }, emphasis: { focus: 'series', itemStyle: { opacity: 1, borderColor: '#fff', borderWidth: 1.5 } }, large: pts.length > 5000, largeThreshold: 5000 }; });
-    var reg = spec.trend && !bubble ? regression(pts) : null;
+    var reg = spec.trend && !bubble ? (ctx.reg || regression(pts)) : null;
     if (reg) {
-      var xs = pts.map(function (p) { return p.value[0]; }), mn = Math.min.apply(null, xs), mx = Math.max.apply(null, xs);
+      var xs = pts.map(function (p) { return p.value[0]; }), mn = reg.xmin !== undefined ? reg.xmin : Math.min.apply(null, xs), mx = reg.xmax !== undefined ? reg.xmax : Math.max.apply(null, xs);
       o.series.push({ name: T(env, 'Trend line', 'प्रवृत्ति रेखा'), type: 'line', showSymbol: false, silent: true, lineStyle: { type: 'dashed', width: 2, color: '#d6456b' }, data: [[mn, reg.slope * mn + reg.intercept], [mx, reg.slope * mx + reg.intercept]], tooltip: { show: false } });
     }
     o.legend = order.length > 1 || reg ? { type: 'scroll', bottom: 4, textStyle: { color: env.text } } : undefined;
@@ -461,8 +465,9 @@
   var SCATTER = { scatter: 1, bubble: 1 };
   function niceMax(v) { if (v <= 0) return 1; var p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
 
-  CH.build = function (type, spec, headers, rows, idx, env0) {
-    var env = envOf(env0), ctx = {}, data, o; spec = Object.assign({}, spec); spec._hi = env.hi;
+  // data and side tables a chart type needs (prepared once; the builders only draw)
+  CH.compute = function (type, spec, headers, rows, idx, env0) {
+    var env = envOf(env0), ctx = {}, data; spec = Object.assign({}, spec); spec._hi = env.hi;
     if (SCATTER[type]) {
       if (spec.xnum === undefined || spec.ynum === undefined) throw new Error('Choose two number columns');
       ctx.points = pointsFor(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
@@ -479,7 +484,7 @@
       ctx.cal = calData(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
     } else if (type === 'gauge') {
       var col = (spec.ys && spec.ys[0] && spec.ys[0].col >= 0) ? spec.ys[0] : { col: -1, fn: 'count' }, vv = idx.map(function (i) { return col.col < 0 ? 1 : rows[i][col.col]; }), val = reduce(vv, col.fn || 'sum');
-      var mx = idx.length ? niceMax((val || 0) * 1.25) : 1; ctx.kpi = { value: Math.round((val || 0) * 100) / 100, max: mx, label: (col.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(col.fn || 'sum', env.hi) + ' — ' + headers[col.col]) }; data = { cats: [], series: [], rowsUsed: idx.length };
+      var mx = idx.length ? niceMax((val || 0) * 1.25) : 1; ctx.kpi = { value: Math.round((val || 0) * 100) / 100, max: mx, label: (col.name ? (col.as === 'count' ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(col.as || col.fn || 'sum', env.hi) + ' — ' + col.name) : col.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(col.fn || 'sum', env.hi) + ' — ' + headers[col.col]) }; data = { cats: [], series: [], rowsUsed: idx.length };
     } else {
       var sp = Object.assign({}, spec);
       if (type === 'combo' && (!sp.ys || sp.ys.length < 2)) { /* needs two measures: falls back to a plain column chart */ }
@@ -489,10 +494,27 @@
       data = CH.prepare(sp, headers, rows, idx);
       if (type === 'radar') { var r = radarData(sp, headers, data); ctx.indicators = r.indicators; ctx.matrix = r.matrix; }
     }
+    return { data: data, ctx: ctx };
+  };
+  CH.build = function (type, spec, headers, rows, idx, env0) {
+    var c = CH.compute(type, spec, headers, rows, idx, env0);
+    return CH.finish(type, spec, headers, c.data, c.ctx, env0);
+  };
+  // draws a chart from data that is already prepared: the in-memory path above, or answers the engine computed for a large file
+  CH.finish = function (type, spec, headers, data, ctx, env0) {
+    var env = envOf(env0); spec = Object.assign({}, spec); spec._hi = env.hi;
     if (!BUILD[type]) throw new Error('Unknown chart type: ' + type);
-    o = BUILD[type](spec, headers, data, env, ctx);
+    var o = BUILD[type](spec, headers, data, env, ctx);
     var cap = caption(type, spec, headers, data, ctx, env);
     return { option: o, data: data, ctx: ctx, caption: cap };
+  };
+  CH.num = num; CH.reduce = reduce;
+  // a histogram described by the engine (edges, counts, mean, median ...) in the shape the builder expects
+  CH.histFrom = function (h) {
+    var out = { counts: h.counts || [], edges: h.edges || [], mean: h.mean, median: h.median, meanBin: null, medianBin: null, n: h.n, min: h.min, max: h.max, sd: h.sd };
+    if (!out.n) return out;
+    var binOf = function (v) { for (var j = 0; j < out.counts.length; j++) if (v <= out.edges[j + 1] || j === out.counts.length - 1) return j; return 0; };
+    out.meanBin = binOf(out.mean); out.medianBin = binOf(out.median); return out;
   };
 
   // ---- derived data for the special charts
@@ -587,7 +609,7 @@
     function add(en, h) { out.push(hi ? h : en); }
     try {
       if (type === 'scatter' || type === 'bubble') {
-        var reg = ctx.points.length >= 3 ? regression(ctx.points) : null;
+        var reg = ctx.reg || (ctx.points.length >= 3 ? regression(ctx.points) : null);
         if (reg) {
           var a = Math.abs(reg.r), strength = a >= 0.8 ? ['strong', 'मज़बूत'] : a >= 0.5 ? ['moderate', 'मध्यम'] : a >= 0.25 ? ['weak', 'कमज़ोर'] : ['almost no', 'लगभग नहीं'];
           var dir = reg.r >= 0 ? ['rise together', 'साथ बढ़ते हैं'] : ['move in opposite directions', 'विपरीत दिशा में चलते हैं'];
@@ -625,10 +647,10 @@
       }
       var cats = data.cats.filter(function (c) { return !c.isOthers; }), n = cats.length; if (!n) return out;
       var tot = data.cats.reduce(function (a, c) { return a + (c.total || 0); }, 0), name = data.series[0] ? data.series[0].name : '';
-      var fl = data.series[0] ? fnLabel(data.series[0].fn, hi) : '';
+      var shownFn = data.series[0] ? (data.series[0].shown || data.series[0].fn) : '', fl = data.series[0] ? fnLabel(shownFn, hi) : '';
       if (['pie', 'donut', 'rose', 'funnel', 'treemap', 'sunburst', 'pareto', 'column', 'bar', 'stackedColumn', 'percentColumn', 'waterfall', 'combo'].indexOf(type) >= 0 && data.series.length && tot > 0) {
         var best = cats.slice().sort(function (a, b) { return b.total - a.total; })[0], share = best.total / tot * 100;
-        if (data.series[0].fn === 'sum' || data.series[0].fn === 'count' || data.series[0].fn === 'distinct') {
+        if (shownFn === 'sum' || shownFn === 'count' || shownFn === 'distinct') {
           add(best.label + ' is the largest: ' + indian(best.total) + ' (' + pctText(share) + ' of the total ' + indian(tot) + ').', best.label + ' सबसे बड़ा है: ' + indian(best.total) + ' (कुल ' + indian(tot) + ' का ' + pctText(share) + ')।');
           if (type === 'pareto' && ctx !== undefined) { var cum = 0, k = 0; var sorted = cats.slice().sort(function (a, b) { return b.total - a.total; }); for (; k < sorted.length; k++) { cum += sorted[k].total; if (cum / tot >= 0.8) { k++; break; } } add(k + ' of ' + sorted.length + ' (' + pctText(k / sorted.length * 100) + ') account for 80% of the total.', sorted.length + ' में से ' + k + ' (' + pctText(k / sorted.length * 100) + ') कुल का 80% देते हैं।'); }
         } else add('Highest ' + fl.toLowerCase() + ': ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ').', 'सर्वाधिक: ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ')।');
@@ -638,7 +660,7 @@
         add(name + ' went from ' + indian(f0.total) + ' (' + f0.label + ') to ' + indian(l0.total) + ' (' + l0.label + ')' + (pc !== null ? ', ' + (dlt >= 0 ? 'up ' : 'down ') + pctText(pc) : '') + '; peak ' + indian(pk.total) + ' in ' + pk.label + '.',
             name + ' ' + indian(f0.total) + ' (' + f0.label + ') से ' + indian(l0.total) + ' (' + l0.label + ') ' + (dlt >= 0 ? 'तक बढ़ा' : 'तक घटा') + (pc !== null ? ' (' + pctText(pc) + ')' : '') + '; शीर्ष ' + indian(pk.total) + ' (' + pk.label + ')।');
       }
-      if (data.others) add(data.others.count + ' smaller groups are combined as "Others".', data.others.count + ' छोटे समूह "अन्य" में जोड़े गए।');
+      if (data.others) add((data.others.count ? data.others.count + ' smaller groups are' : 'Smaller groups are') + ' combined as "Others".', (data.others.count ? data.others.count + ' छोटे समूह' : 'छोटे समूह') + ' "अन्य" में जोड़े गए।');
       if (data.blanks) add(indian(data.blanks) + ' rows have no value in the category column and are shown as "(blank)" or left out.', indian(data.blanks) + ' पंक्तियों में श्रेणी खाली है।');
     } catch (e) { /* captions are a convenience */ }
     return out;

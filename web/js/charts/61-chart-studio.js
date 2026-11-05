@@ -63,22 +63,26 @@
   STL.chartIcon = icon;
 
   // ---------------------------------------------------------------- state
-  var CS = { open: false, expanded: false, type: 'column', spec: null, inst: null, prof: null, sig: '', sel: null, baseIdx: null, selLabel: '', out: null, palette: 'aurora', cache: null };
+  var CS = { seq: 0, bigSel: null, srcSig: '', open: false, expanded: false, type: 'column', spec: null, inst: null, prof: null, sig: '', sel: null, baseIdx: null, selLabel: '', out: null, palette: 'aurora', cache: null };
   STL.board = STL.board || { pins: null };
   function loadPins() { if (STL.board.pins) return; try { STL.board.pins = JSON.parse(localStorage.getItem('stellura_board') || '[]'); } catch (e) { STL.board.pins = []; } }
   function savePins() { try { localStorage.setItem('stellura_board', JSON.stringify(STL.board.pins)); } catch (e) {} }
 
+  // the rows come from the editor, or - for a Large File - from the engine, which answers every chart from all the rows
+  function isBig() { return !!(window.BIG && BIG.active && BIG.ds); }
+  function HD() { return isBig() ? BIG.headers : headers; }
+  function RD() { return isBig() ? STL.bigCharts.sample.rows : rawData; }
   function noData() {
-    if (window.BIG && BIG.active) { toast(T('Charts work on the editor. Use "Work on a copy" for a large file, or the Group tab.', 'चार्ट संपादक पर चलते हैं। बड़ी फ़ाइल के लिए "प्रति पर काम करें" या समूह टैब उपयोग करें।'), 'info'); return true; }
+    if (isBig()) return false;
     if (!U.hasData()) { toast(T('Open a file first, or try the sample data.', 'पहले फ़ाइल खोलें, या नमूना डेटा आज़माएँ।'), 'info'); return true; }
     return false;
   }
-  function viewIdx() { return (CS.sel && CS.baseIdx) ? CS.baseIdx : (typeof getDisplayData === 'function' ? getDisplayData() : rawData.map(function (_, i) { return i; })); }
+  function viewIdx() { if (isBig()) return STL.bigCharts.sample.idx; return (CS.sel && CS.baseIdx) ? CS.baseIdx : (typeof getDisplayData === 'function' ? getDisplayData() : RD().map(function (_, i) { return i; })); }
   // charts always sit on a white card with dark text, in light and dark theme alike: what you copy or save is readable in Word / PowerPoint
   function env() { return { hi: hi(), text: '#334155', sub: '#64748b', grid: 'rgba(148,163,184,.28)', palette: CS.palette }; }
   function profile() {
-    var sig = headers.join('|') + '#' + rawData.length + '#' + (filteredData ? filteredData.length : 'all');
-    if (CS.sig !== sig || !CS.prof) { CS.prof = CH.profile(headers, rawData, viewIdx()); CS.sig = sig; }
+    var sig = (isBig() ? 'big:' + BIG.ds : 'mem') + HD().join('|') + '#' + RD().length + '#' + (!isBig() && filteredData ? filteredData.length : 'all');
+    if (CS.sig !== sig || !CS.prof) { CS.prof = CH.profile(HD(), RD(), viewIdx()); CS.sig = sig; }
     return CS.prof;
   }
   function good(p) { return p.numeric && !p.serial && !p.code && !p.unique; }
@@ -179,7 +183,7 @@
 
   function opts(list, val, none) { return (none ? '<option value="-1"' + (val < 0 || val === undefined ? ' selected' : '') + '>' + none + '</option>' : '') + list.map(function (o) { return '<option value="' + o[0] + '"' + (String(o[0]) === String(val) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join(''); }
   function sync() {
-    var sp = CS.spec, type = CS.type, p = profile(), all = headers.map(function (h, i) { return [i, h]; }), numeric = all.filter(function (a) { return p[a[0]].numeric; });
+    var sp = CS.spec, type = CS.type, p = profile(), all = HD().map(function (h, i) { return [i, h]; }), numeric = all.filter(function (a) { return p[a[0]].numeric; });
     $('csTitle').textContent = T('Chart Studio', 'चार्ट स्टूडियो'); $('csAuto').textContent = '✨ ' + T('Auto charts', 'ऑटो चार्ट');
     $('csFieldsLbl').textContent = T('What to show', 'क्या दिखाएँ');
     $('csTypeLbl').textContent = T('Chart type', 'चार्ट का प्रकार');
@@ -215,24 +219,30 @@
   // ---------------------------------------------------------------- opening and type switching
   STL.openChartStudio = function (preset) {
     if (noData()) return;
+    if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) {                       // learn which columns are numbers, dates or categories from a small sample
+      STL.bigCharts.loadSample().then(function () { STL.openChartStudio(preset); }).catch(function (e) { toast(e.message, 'error'); });
+      return;
+    }
+    var src = isBig() ? 'big:' + BIG.ds : 'mem';
+    if (CS.srcSig !== src) { CS.srcSig = src; CS.spec = null; CS.prof = null; CS.sel = null; CS.baseIdx = null; CS.bigSel = null; CS.stale = true; }
     ensureDock(); profile();
     document.body.classList.add('cs-open'); $('chartStudio').classList.add('open'); CS.open = true;
-    if (preset && preset.spec) { CS.type = preset.type; CS.spec = JSON.parse(JSON.stringify(preset.spec)); if (!preset.keepTitle) CS.spec.title = ''; if (preset.palette) CS.palette = preset.palette; }
-    else if (!CS.spec || CS.spec.x >= headers.length || !CS.prof || CS.stale) {
-      var rec = CH.recommend(headers, rawData, viewIdx(), 8)[0];
+    if (preset && preset.spec) { CS.type = preset.type; CS.spec = JSON.parse(JSON.stringify(preset.spec)); CS.spec._userMeasure = true; if (!preset.keepTitle) CS.spec.title = ''; if (preset.palette) CS.palette = preset.palette; }   // a chart that was asked for keeps its measure (e.g. a plain count of rows)
+    else if (!CS.spec || CS.spec.x >= HD().length || !CS.prof || CS.stale) {
+      var rec = CH.recommend(HD(), RD(), viewIdx(), 8)[0];
       if (rec) { CS.type = rec.type; CS.spec = JSON.parse(JSON.stringify(rec.spec)); CS.spec.title = ''; } else { CS.type = 'column'; CS.spec = { ys: [{ col: -1, fn: 'count' }], sort: 'desc' }; }
       CS.stale = false;
     }
     adapt(CS.type, true); sync(); ensureECharts(function () { redraw(); });
     setTimeout(resize, 300);
   };
-  STL.closeChartStudio = function () { CS.open = false; document.body.classList.remove('cs-open', 'cs-wide'); CS.expanded = false; var d = $('chartStudio'); if (d) d.classList.remove('open'); if (CS.sel) clearSelection(); };
+  STL.closeChartStudio = function () { CS.open = false; document.body.classList.remove('cs-open', 'cs-wide'); CS.expanded = false; var d = $('chartStudio'); if (d) d.classList.remove('open'); if (CS.sel || CS.bigSel) clearSelection(); };
   function setType(type) { CS.type = type; var sp = CS.spec; if (['line', 'area', 'stackedArea'].indexOf(type) >= 0) sp.sort = undefined; adapt(type); sync(); redraw(); }
 
   // ---------------------------------------------------------------- drawing
   // the heading follows the current choices; only a title the person typed is kept
   function autoTitle(type, sp) {
-    var h = headers, nmOf = function (i) { return i >= 0 && h[i] !== undefined ? h[i] : ''; }, y0 = sp.ys && sp.ys[0], m = y0 ? (y0.col >= 0 ? nmOf(y0.col) : T('Rows', 'पंक्तियाँ')) : '';
+    var h = HD(), nmOf = function (i) { return i >= 0 && h[i] !== undefined ? h[i] : ''; }, y0 = sp.ys && sp.ys[0], m = y0 ? (y0.col >= 0 ? nmOf(y0.col) : T('Rows', 'पंक्तियाँ')) : '';
     if (type === 'scatter' || type === 'bubble') return nmOf(sp.xnum) + ' vs ' + nmOf(sp.ynum);
     if (type === 'histogram') return T('Spread of ', '') + nmOf(sp.xnum);
     if (type === 'gauge') return m;
@@ -247,25 +257,50 @@
   function redraw() {
     if (!CS.open) return;
     ensureECharts(function () {
-      var idx = viewIdx(), out;
-      var bspec = Object.assign({}, CS.spec); bspec.title = CS.spec.title || autoTitle(CS.type, CS.spec);
-      try { out = CH.build(CS.type, bspec, headers, rawData, idx, env()); }
-      catch (e) { message(/two number|Choose/.test(e.message) ? T('Choose the number columns for this chart.', 'इस चार्ट के लिए संख्या वाले कॉलम चुनें।') : e.message); if (CS.inst) CS.inst.clear(); $('csCap').innerHTML = ''; return; }
-      if (!idx.length) { message(T('No rows to show. Clear the filters.', 'दिखाने के लिए कोई पंक्ति नहीं। फ़िल्टर हटाएँ।')); return; }
-      message('');
-      CS.out = out;
-      var option = decorate(out.option);
-      if (!CS.inst || CS.inst.isDisposed()) { CS.inst = echarts.init($('csChart'), null, { renderer: 'canvas' }); bind(); }
-      CS.inst.setOption(option, true);
-      $('csCap').innerHTML = out.caption.map(function (c) { return '<p>' + esc(c) + '</p>'; }).join('') + '<div class="cs-meta">' + T('Using ', 'उपयोग: ') + Number(idx.length).toLocaleString('en-IN') + T(' rows', ' पंक्तियाँ') + ((CS.sel ? (CS.baseIdx && CS.baseIdx.length !== rawData.length) : !!filteredData) ? T(' (table filters applied)', ' (तालिका फ़िल्टर लागू)') : '') + '</div>';
-      CS.cur = { type: CS.type, spec: JSON.parse(JSON.stringify(CS.spec)) };
+      var big = isBig(), idx = viewIdx(), seq = ++CS.seq, bspec = Object.assign({}, CS.spec); bspec.title = CS.spec.title || autoTitle(CS.type, CS.spec);
+      function fail(e) {
+        if (seq !== CS.seq) return;
+        message(/two number|Choose/.test(e.message) ? T('Choose the number columns for this chart.', 'इस चार्ट के लिए संख्या वाले कॉलम चुनें।') : e.message);
+        if (CS.inst) CS.inst.clear(); $('csCap').innerHTML = '';
+      }
+      function draw(out, matched) {
+        if (seq !== CS.seq) return;                                              // a newer question was asked while the engine was working
+        if (!matched) { message(T('No rows to show. Clear the filters.', 'दिखाने के लिए कोई पंक्ति नहीं। फ़िल्टर हटाएँ।')); return; }
+        message(''); CS.out = out;
+        var option = decorate(out.option);
+        if (!CS.inst || CS.inst.isDisposed()) { CS.inst = echarts.init($('csChart'), null, { renderer: 'canvas' }); bind(); }
+        CS.inst.setOption(option, true);
+        var filtered = big ? !!(BIG.search || BIG.filters.some(function (f) { return !f._chart; })) : (CS.sel ? (CS.baseIdx && CS.baseIdx.length !== RD().length) : !!filteredData);
+        $('csCap').innerHTML = out.caption.map(function (c) { return '<p>' + esc(c) + '</p>'; }).join('') +
+          (big && out.big && out.big.more ? '<p>' + T('The biggest groups are shown; smaller ones are combined as “Others”.', 'सबसे बड़े समूह दिखाए गए हैं; छोटे “अन्य” में जोड़े गए हैं।') + '</p>' : '') +
+          '<div class="cs-meta">' + (big ? T('Calculated from all ', 'सभी ') + Number(matched).toLocaleString('en-IN') + T(' rows of the large file', ' पंक्तियों से गणना (बड़ी फ़ाइल)') : T('Using ', 'उपयोग: ') + Number(matched).toLocaleString('en-IN') + T(' rows', ' पंक्तियाँ')) + (filtered ? (big ? T(' (grid search / filters applied)', ' (ग्रिड खोज / फ़िल्टर लागू)') : T(' (table filters applied)', ' (तालिका फ़िल्टर लागू)')) : '') + '</div>';
+        CS.cur = { type: CS.type, spec: JSON.parse(JSON.stringify(CS.spec)) };
+        if (big) bigSelState();
+      }
+      if (big) { STL.bigCharts.build(CS.type, bspec, env()).then(function (out) { draw(out, out.big.matched); }, fail); return; }
+      var out;
+      try { out = CH.build(CS.type, bspec, HD(), RD(), idx, env()); } catch (e) { fail(e); return; }
+      draw(out, idx.length);
     });
   }
   STL.redrawChartStudio = function () { clearTimeout(redrawTimer); redrawTimer = setTimeout(function () { if (CS.open) { profile(); redraw(); } }, 120); };
 
   // dim what is not selected
+  function dimSeries(o, cats, on) {
+    var dim = { opacity: 0.25 };
+    (o.series || []).forEach(function (sr) {
+      if ((sr.type === 'bar' || sr.type === 'line') && Array.isArray(sr.data) && sr.data.length === cats.length) sr.data = sr.data.map(function (v, i) { return on[i] ? v : { value: v, itemStyle: dim }; });
+      if ((sr.type === 'pie' || sr.type === 'funnel' || sr.type === 'treemap') && Array.isArray(sr.data)) sr.data = sr.data.map(function (it) { return it._cat !== undefined && !on[it._cat] ? Object.assign({}, it, { itemStyle: Object.assign({}, it.itemStyle, dim) }) : it; });
+    });
+  }
   function decorate(option) {
-    var o = option, sel = CS.sel, d = CS.out && CS.out.data;
+    var o = option, d = CS.out && CS.out.data;
+    if (isBig()) {                                                                 // the selection is a filter on the file: dim the bars that are not part of it
+      var bs = CS.bigSel;
+      if (bs && bs.xkeys && d && d.cats && d.cats.length) { var bc = o._cats || d.cats; dimSeries(o, bc, bc.map(function (c) { return bs.xkeys.indexOf(c.label) >= 0; })); }
+      return o;
+    }
+    var sel = CS.sel;
     if (sel && CS.type === 'sankey' && CS.out.ctx.sankey) {
       var K = CS.out.ctx.sankey, hit = function (rs) { for (var q = 0; q < rs.length; q++) if (sel.has(rs[q])) return true; return false; }, sr0 = o.series[0];
       sr0.data = sr0.data.map(function (n) { return hit(K.nodes[n._ni].rows) ? n : Object.assign({}, n, { itemStyle: { opacity: 0.25 }, label: { opacity: 0.4 } }); });
@@ -274,12 +309,8 @@
     }
     if (!sel || !d || !d.cats || !d.cats.length) return o;
     var cats = o._cats || d.cats, on = cats.map(function (c) { return c.rows.some(function (r) { return sel.has(r); }); });
-    var dim = { opacity: 0.25 };
-    (o.series || []).forEach(function (sr) {
-      if ((sr.type === 'bar' || sr.type === 'line') && Array.isArray(sr.data) && sr.data.length === cats.length) sr.data = sr.data.map(function (v, i) { return on[i] ? v : { value: v, itemStyle: dim }; });
-      if ((sr.type === 'pie' || sr.type === 'funnel' || sr.type === 'treemap') && Array.isArray(sr.data)) sr.data = sr.data.map(function (it) { return it._cat !== undefined && !on[it._cat] ? Object.assign({}, it, { itemStyle: Object.assign({}, it.itemStyle, dim) }) : it; });
-      if (sr.type === 'scatter' && sr.data && sr.data.length < 30000) sr.data = sr.data.map(function (pt) { return sel.has(pt.ri) ? pt : Object.assign({}, pt, { itemStyle: { opacity: 0.12 } }); });
-    });
+    dimSeries(o, cats, on);
+    (o.series || []).forEach(function (sr) { if (sr.type === 'scatter' && sr.data && sr.data.length < 30000) sr.data = sr.data.map(function (pt) { return sel.has(pt.ri) ? pt : Object.assign({}, pt, { itemStyle: { opacity: 0.12 } }); }); });
     return o;
   }
 
@@ -287,14 +318,15 @@
   function bind() {
     var inst = CS.inst;
     inst.on('click', function (p) {
+      if (isBig()) { bigClick(p); return; }
       var out = CS.out; if (!out) return; var type = CS.type, d = out.data, cats = out.option._cats || d.cats, rows = null, label = '';
       var add = !!(p.event && p.event.event && (p.event.event.ctrlKey || p.event.event.metaKey));
       try {
         if (type === 'scatter' || type === 'bubble') { if (p.data && p.data.ri !== undefined) { rows = [p.data.ri]; label = T('row ', 'पंक्ति ') + (p.data.ri + 1); } }
-        else if (type === 'histogram') { var h = out.ctx.hist, lo = h.edges[p.dataIndex], hi2 = h.edges[p.dataIndex + 1], last = p.dataIndex === h.counts.length - 1; rows = viewIdx().filter(function (i) { var x = CH.num ? CH.num(rawData[i][CS.spec.xnum]) : parseFloat(rawData[i][CS.spec.xnum]); return x !== null && x >= lo && (last ? x <= hi2 : x < hi2); }); label = headers[CS.spec.xnum] + ' ' + CH.compact(lo) + '–' + CH.compact(hi2); }
-        else if (type === 'heatmap') { var m = out.ctx.matrix, xv = m.xs[p.value[0]], yv = m.ys[p.value[1]]; rows = viewIdx().filter(function (i) { return String(rawData[i][CS.spec.x]).trim() === xv && String(rawData[i][CS.spec.g]).trim() === yv; }); label = xv + ' × ' + yv; }
-        else if (type === 'calendar') { var day = p.value[0]; rows = viewIdx().filter(function (i) { var ms = STL.pend.parseDate(rawData[i][CS.spec.x], false); return ms !== null && CH.bucketKey(ms, 'day') === day; }); label = day; }
-        else if (type === 'boxplot') { var bl = out.ctx.box.labels[p.dataIndex !== undefined && p.seriesType === 'boxplot' ? p.dataIndex : (p.value ? p.value[0] : 0)]; rows = viewIdx().filter(function (i) { return String(rawData[i][CS.spec.x]).trim() === bl; }); label = bl; }
+        else if (type === 'histogram') { var h = out.ctx.hist, lo = h.edges[p.dataIndex], hi2 = h.edges[p.dataIndex + 1], last = p.dataIndex === h.counts.length - 1; rows = viewIdx().filter(function (i) { var x = CH.num ? CH.num(RD()[i][CS.spec.xnum]) : parseFloat(RD()[i][CS.spec.xnum]); return x !== null && x >= lo && (last ? x <= hi2 : x < hi2); }); label = HD()[CS.spec.xnum] + ' ' + CH.compact(lo) + '–' + CH.compact(hi2); }
+        else if (type === 'heatmap') { var m = out.ctx.matrix, xv = m.xs[p.value[0]], yv = m.ys[p.value[1]]; rows = viewIdx().filter(function (i) { return String(RD()[i][CS.spec.x]).trim() === xv && String(RD()[i][CS.spec.g]).trim() === yv; }); label = xv + ' × ' + yv; }
+        else if (type === 'calendar') { var day = p.value[0]; rows = viewIdx().filter(function (i) { var ms = STL.pend.parseDate(RD()[i][CS.spec.x], false); return ms !== null && CH.bucketKey(ms, 'day') === day; }); label = day; }
+        else if (type === 'boxplot') { var bl = out.ctx.box.labels[p.dataIndex !== undefined && p.seriesType === 'boxplot' ? p.dataIndex : (p.value ? p.value[0] : 0)]; rows = viewIdx().filter(function (i) { return String(RD()[i][CS.spec.x]).trim() === bl; }); label = bl; }
         else if (type === 'gauge') return;
         else if (type === 'sankey') {
           var K2 = out.ctx.sankey, itm = p.dataType === 'edge' ? K2.links[p.data._li] : K2.nodes[p.data._ni];
@@ -311,15 +343,54 @@
       if (rows && rows.length) applySelection(rows, label, add);
     });
     inst.on('brushSelected', function (ev) {
+      if (isBig()) { clearTimeout(CS._bt); CS._bt = setTimeout(function () { bigBrush(ev); }, 250); return; }
       if (!CS.out) return; var b = ev.batch && ev.batch[0], rows = [], type = CS.type, d = CS.out.data, opt = CS.inst.getOption();
       if (!b || !b.selected || !b.selected.some(function (s2) { return s2.dataIndex && s2.dataIndex.length; })) { if (CS.sel && CS.fromBrush) clearSelection(true); return; }
       try {
         if (type === 'scatter' || type === 'bubble') b.selected.forEach(function (s2, si) { (s2.dataIndex || []).forEach(function (di) { var pt = opt.series[si].data[di]; if (pt && pt.ri !== undefined) rows.push(pt.ri); }); });
-        else if (type === 'histogram') { var h = CS.out.ctx.hist, bins = {}; (b.selected[0].dataIndex || []).forEach(function (k) { bins[k] = 1; }); rows = viewIdx().filter(function (i) { var x = parseFloat(rawData[i][CS.spec.xnum]); if (isNaN(x)) return false; for (var k = 0; k < h.counts.length; k++) if (bins[k] && x >= h.edges[k] && (x < h.edges[k + 1] || k === h.counts.length - 1)) return true; return false; }); }
+        else if (type === 'histogram') { var h = CS.out.ctx.hist, bins = {}; (b.selected[0].dataIndex || []).forEach(function (k) { bins[k] = 1; }); rows = viewIdx().filter(function (i) { var x = parseFloat(RD()[i][CS.spec.xnum]); if (isNaN(x)) return false; for (var k = 0; k < h.counts.length; k++) if (bins[k] && x >= h.edges[k] && (x < h.edges[k + 1] || k === h.counts.length - 1)) return true; return false; }); }
         else { var cats = CS.out.option._cats || d.cats, seen = {}; b.selected.forEach(function (s2) { (s2.dataIndex || []).forEach(function (di) { if (cats[di] && !cats[di].isOthers && !seen[di]) { seen[di] = 1; rows = rows.concat(cats[di].rows); } }); }); }
       } catch (e) { rows = []; }
       if (rows.length) { CS.fromBrush = true; applySelection(rows, T('selected range', 'चुना हुआ दायरा'), false, true); }
     });
+  }
+
+  // ---- large file: a click or a drag becomes a filter of the grid (shown as a purple chip), the chart itself keeps all its bars
+  function bigSameSel(a, b) { return !!a && JSON.stringify(a.filters.map(function (f) { return [f.col, f.op, f.value, f.value2]; })) === JSON.stringify(b.filters.map(function (f) { return [f.col, f.op, f.value, f.value2]; })); }
+  function bigClick(p) {
+    var out = CS.out; if (!out) return;
+    var add = !!(p.event && p.event.event && (p.event.event.ctrlKey || p.event.event.metaKey)), d = null;
+    try { d = STL.bigCharts.selection(CS.type, CS.spec, out, p); } catch (e) { d = null; }
+    if (!d) return;
+    if (d.others) { toast(T('"Others" combines smaller groups. Choose a single bar.', '"अन्य" छोटे समूहों को जोड़ता है। कोई एक पट्टी चुनें।'), 'info'); return; }
+    if (add && CS.bigSel) d = STL.bigCharts.combine(CS.spec, CS.bigSel, d);
+    else if (bigSameSel(CS.bigSel, d)) { clearBigSelection(); return; }
+    CS.fromBrush = false; applyBigSelection(d);
+  }
+  function bigBrush(ev) {
+    var out = CS.out; if (!out) return; var d = null;
+    try { d = STL.bigCharts.brush(CS.type, CS.spec, out, ev); } catch (e) { d = null; }
+    if (!d) { if (CS.bigSel && CS.fromBrush) clearBigSelection(true); return; }
+    if (bigSameSel(CS.bigSel, d)) return;
+    CS.fromBrush = true; applyBigSelection(d);
+  }
+  function applyBigSelection(d) {
+    BIG.filters = BIG.filters.filter(function (f) { return !f._chart; });
+    d.filters.forEach(function (f) { BIG.filters.push(Object.assign({}, f, { _chart: true })); });
+    CS.bigSel = { filters: d.filters, label: d.label, xkeys: d.xkeys || null };
+    BIG.syncFilters(); showSelBar();
+  }
+  function clearBigSelection(quiet) {
+    if (!CS.bigSel) return;
+    BIG.filters = BIG.filters.filter(function (f) { return !f._chart; });
+    CS.bigSel = null; CS.fromBrush = false; var b = $('csSelBar'); if (b) b.style.display = 'none';
+    if (BIG.active) BIG.syncFilters();
+    if (quiet && CS.inst) try { CS.inst.dispatchAction({ type: 'brush', areas: [] }); } catch (e) {}
+  }
+  // the grid's own chips may have removed the selection; keep the bar honest
+  function bigSelState() {
+    if (CS.bigSel && !BIG.filters.some(function (f) { return f._chart; })) { CS.bigSel = null; var b = $('csSelBar'); if (b) b.style.display = 'none'; }
+    if (CS.bigSel) showSelBar();
   }
 
   function sameSet(a, b) { if (a.size !== b.size) return false; var ok = true; a.forEach(function (v) { if (!b.has(v)) ok = false; }); return ok; }
@@ -329,22 +400,23 @@
     if (!CS.sel) CS.baseIdx = viewIdx();
     CS.sel = set; CS.selLabel = additive && CS.selLabel ? CS.selLabel + ' + ' + label : label; if (!fromBrush) CS.fromBrush = false;
     CS._applying = true;
-    try { applyAllFilters(); var base = filteredData || rawData.map(function (_, i) { return i; }); filteredData = base.filter(function (i) { return set.has(i); }); renderTableHeader(); renderTable(); updateStatus(); } finally { CS._applying = false; }
+    try { applyAllFilters(); var base = filteredData || RD().map(function (_, i) { return i; }); filteredData = base.filter(function (i) { return set.has(i); }); renderTableHeader(); renderTable(); updateStatus(); } finally { CS._applying = false; }
     showSelBar(); if (STL.tvChips) STL.tvChips(); if (!fromBrush) redraw();
   }
   function clearSelection(quiet) {
+    if (isBig() || CS.bigSel) { clearBigSelection(quiet); return; }
     CS.sel = null; CS.baseIdx = null; CS.selLabel = ''; CS.fromBrush = false;
     CS._applying = true; try { applyAllFilters(); } finally { CS._applying = false; }
     var b = $('csSelBar'); if (b) b.style.display = 'none'; if (STL.tvChips) STL.tvChips();
     if (!quiet) redraw(); else if (CS.inst) try { CS.inst.dispatchAction({ type: 'brush', areas: [] }); } catch (e) {}
   }
   function showSelBar() {
-    var b = $('csSelBar'); if (!b) return; var n = filteredData ? filteredData.length : 0;
-    b.innerHTML = '<span>🔎 ' + T('Table shows ', 'तालिका में दिख रही हैं ') + '<b>' + Number(n).toLocaleString('en-IN') + '</b> ' + T('rows from the chart: ', 'पंक्तियाँ चार्ट से: ') + esc(CS.selLabel.length > 60 ? CS.selLabel.slice(0, 59) + '…' : CS.selLabel) + '</span><button class="cs-link" id="csClear">' + T('Show all rows', 'सभी पंक्तियाँ दिखाएँ') + '</button>';
+    var b = $('csSelBar'); if (!b) return; var big = isBig(), n = big ? BIG.matched : (filteredData ? filteredData.length : 0), lab = (big && CS.bigSel ? CS.bigSel.label : CS.selLabel) || '';
+    b.innerHTML = '<span>🔎 ' + (big ? T('The file view shows ', 'फ़ाइल व्यू में दिख रही हैं ') : T('Table shows ', 'तालिका में दिख रही हैं ')) + '<b>' + Number(n).toLocaleString('en-IN') + '</b> ' + T('rows from the chart: ', 'पंक्तियाँ चार्ट से: ') + esc(lab.length > 60 ? lab.slice(0, 59) + '…' : lab) + '</span><button class="cs-link" id="csClear">' + T('Show all rows', 'सभी पंक्तियाँ दिखाएँ') + '</button>';
     b.style.display = 'flex'; $('csClear').onclick = function () { clearSelection(); };
   }
   STL.charts.selectRows = applySelection; STL.charts.clearSelection = clearSelection;
-  STL.charts.selectionInfo = function () { return CS.sel ? { label: CS.selLabel || T('chart selection', 'चार्ट चयन'), n: CS.sel.size } : null; };
+  STL.charts.selectionInfo = function () { return !isBig() && CS.sel ? { label: CS.selLabel || T('chart selection', 'चार्ट चयन'), n: CS.sel.size } : null; };
 
   // table filters changed elsewhere: drop the chart selection, redraw from the new rows
   var _apply = window.applyAllFilters;
@@ -368,7 +440,7 @@
   }
   function saveCsv() {
     var out = CS.out; if (!out || !out.data.cats.length) { toast(T('This chart has no table of numbers to save. Use the Data view button on the chart.', 'इस चार्ट में सहेजने योग्य संख्याओं की तालिका नहीं। चार्ट के डेटा बटन का उपयोग करें।'), 'info'); return; }
-    var d = out.data, lines = [[headers[CS.spec.x] || ''].concat(d.series.map(function (x) { return x.name; }))];
+    var d = out.data, lines = [[HD()[CS.spec.x] || ''].concat(d.series.map(function (x) { return x.name; }))];
     d.cats.forEach(function (c) { lines.push([c.label].concat(c.values.map(function (v) { return v === null ? '' : v; }))); });
     var csv = '﻿' + lines.map(function (r) { return r.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
     var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = 'chart_data.csv'; document.body.appendChild(a); a.click(); a.remove();
@@ -385,10 +457,12 @@
   var boardInst = [];
   function disposeBoard() { boardInst.forEach(function (i) { try { i.dispose(); } catch (e) {} }); boardInst = []; }
   STL.openBoard = function () {
-    if (noData()) return; loadPins(); ensureECharts(function () {
+    if (noData()) return;
+    if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) { STL.bigCharts.loadSample().then(function () { STL.openBoard(); }).catch(function (e) { toast(e.message, 'error'); }); return; }
+    loadPins(); ensureECharts(function () {
       disposeBoard();
-      var idx = (typeof getDisplayData === 'function') ? getDisplayData() : rawData.map(function (_, i) { return i; });
-      var auto = CH.recommend(headers, rawData, idx, 8).map(function (r) { return { type: r.type, spec: r.spec, why: r.why, auto: true }; });
+      var idx = isBig() ? STL.bigCharts.sample.idx : ((typeof getDisplayData === 'function') ? getDisplayData() : RD().map(function (_, i) { return i; }));
+      var auto = CH.recommend(HD(), RD(), idx, 8).map(function (r) { return { type: r.type, spec: r.spec, why: r.why, auto: true }; });
       var pins = STL.board.pins.map(function (p, i) { return { type: p.type, spec: p.spec, palette: p.palette, why: { en: p.title, hi: p.title }, pinned: true, pi: i }; });
       var cards = pins.concat(auto);
       var html = '<div class="prj-h"><b>' + T('Insights board', 'अंतर्दृष्टि बोर्ड') + '</b><button id="bdX" aria-label="close">×</button></div>' +
@@ -399,13 +473,14 @@
       var o = U.overlay('boardDialog', html, true); o.querySelector('.stl-box').classList.add('xwide');
       $('bdX').onclick = function () { disposeBoard(); o.remove(); };
       cards.forEach(function (c, i) {
-        try {
-          var out = CH.build(c.type, c.spec, headers, rawData, idx, Object.assign(env(), { palette: c.palette || 'aurora' }));
+        var ev = Object.assign(env(), { palette: c.palette || 'aurora' });
+        Promise.resolve().then(function () { return isBig() ? STL.bigCharts.build(c.type, c.spec, ev) : CH.build(c.type, c.spec, HD(), RD(), idx, ev); }).then(function (out) {
+          if (!$('bdc' + i)) return;                                                  // the board was closed meanwhile
           var opt = out.option; opt.toolbox = undefined; opt.brush = undefined; opt.title = undefined; if (opt.dataZoom) opt.dataZoom = opt.dataZoom.slice(0, 1);
           var inst = echarts.init($('bdc' + i)); inst.setOption(opt); boardInst.push(inst);
           $('bdk' + i).textContent = out.caption[0] || '';
           $('bdc' + i).addEventListener('click', function () { disposeBoard(); o.remove(); STL.openChartStudio({ type: c.type, spec: c.spec, palette: c.palette, keepTitle: !!c.pinned }); });
-        } catch (e) { $('bdk' + i).textContent = e.message; }
+        }).catch(function (e) { if ($('bdk' + i)) $('bdk' + i).textContent = e.message; });
       });
       o.querySelectorAll('[data-unpin]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); STL.board.pins.splice(+b.dataset.unpin, 1); savePins(); STL.openBoard(); }; });
       o.querySelectorAll('[data-pinit]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); var c = cards[+b.dataset.pinit]; STL.board.pins.push({ type: c.type, spec: c.spec, palette: 'aurora', title: c.why.en, ts: Date.now() }); savePins(); toast(T('Pinned', 'पिन किया'), 'success'); STL.openBoard(); }; });
@@ -415,7 +490,7 @@
   // ---------------------------------------------------------------- quick charts from the table
   // "Chart this column" and "Chart the selected cells"
   STL.chartColumn = function (ci, other) {
-    if (noData()) return; var p = CH.profile(headers, rawData, viewIdx()), a = p[ci], b = other !== undefined ? p[other] : null, spec, type;
+    if (noData()) return; var p = CH.profile(HD(), RD(), viewIdx()), a = p[ci], b = other !== undefined ? p[other] : null, spec, type;
     if (b && a.numeric && b.numeric) { type = 'scatter'; spec = { xnum: ci, ynum: other, trend: true, title: a.name + ' vs ' + b.name }; }
     else if (b && !a.numeric && b.numeric) { type = 'column'; spec = { x: ci, ys: [{ col: other, fn: 'sum' }], sort: 'desc', topN: 15, title: b.name + ' — ' + a.name }; }
     else if (b && a.numeric && !b.numeric) { type = 'column'; spec = { x: other, ys: [{ col: ci, fn: 'sum' }], sort: 'desc', topN: 15, title: a.name + ' — ' + b.name }; }
@@ -441,7 +516,7 @@
 
   // the "Charts" button opens the Studio instead of the old 50-point chart panel
   var _tool = window.switchTool;
-  window.switchTool = function (tool) { if (tool === 'chart') { if (!(window.BIG && BIG.active)) { STL.openChartStudio(); return; } } return _tool.apply(this, arguments); };
+  window.switchTool = function (tool) { if (tool === 'chart') { STL.openChartStudio(); return; } return _tool.apply(this, arguments); };
 
   // light / dark switch
   var _thm = window.toggleTheme;
@@ -450,5 +525,5 @@
   // language switch
   var _lang = window.setUiLanguage;
   window.setUiLanguage = function () { var r = _lang.apply(this, arguments); if ($('chartStudio') && CS.open) { sync(); redraw(); } return r; };
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && CS.open && !$('palette') && !document.querySelector('.stl-overlay')) { if (CS.sel) clearSelection(); } });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && CS.open && !$('palette') && !document.querySelector('.stl-overlay')) { if (CS.sel || CS.bigSel) clearSelection(); } });
 })();

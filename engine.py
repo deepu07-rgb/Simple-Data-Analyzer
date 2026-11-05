@@ -116,7 +116,7 @@ class Engine:
             self.datasets[ds_id] = {"table": table, "headers": headers, "name": name, "rows": rows}
             while len(self.datasets) > MAX_DATASETS:
                 _, old = self.datasets.popitem(last=False)
-                cur.execute(f"DROP TABLE IF EXISTS {old['table']}")
+                self._drop_tables(cur, old)
         return self.describe(ds_id)
 
     def describe(self, ds_id):
@@ -220,8 +220,13 @@ class Engine:
         with self.lock:
             d = self.datasets.pop(ds_id, None)
             if d:
-                self.db.cursor().execute(f"DROP TABLE IF EXISTS {d['table']}")
+                self._drop_tables(self.db.cursor(), d)
         return d is not None
+
+    @staticmethod
+    def _drop_tables(cur, d):
+        for name in list((d.get("date_dims") or {}).values()) + [d["table"]]:
+            cur.execute(f"DROP TABLE IF EXISTS {name}")
 
     # ------------------------------------------------------------------ queries
     def _check_col(self, d, i):
@@ -252,6 +257,26 @@ class Engine:
                 parts.append(f"{c} <> ?"); params.append(str(v))
             elif op == "contains":
                 parts.append(f"contains(lower({c}), lower(?))"); params.append(str(v))
+            elif op == "ieq":                 # same text ignoring capitals and spaces around it (what charts group by)
+                parts.append(f"lower(trim({c})) = lower(trim(?))"); params.append(str(v))
+            elif op == "iin":                 # any of several texts, ignoring capitals (several bars of one chart)
+                vals = [str(x).strip().lower() for x in (v or [])][:5000]
+                if not vals:
+                    parts.append("FALSE")
+                else:
+                    parts.append(f"lower(trim({c})) IN ({','.join('?' * len(vals))})"); params += vals
+            elif op == "bucket":              # a day / month / quarter / financial year / year / weekday of a date column (one or several)
+                mode, keys = str(v), (v2 if isinstance(v2, list) else [v2])
+                dd = self._date_dim(d, i)
+                if mode == "weekday":
+                    keys = [str(k) for k in keys][:7]
+                    parts.append(f"{c} IN (SELECT v FROM {dd} WHERE strftime(xd, '%a') IN ({','.join('?' * len(keys))}))"); params += keys
+                else:
+                    spans = [self._bucket_range(mode, str(k)) for k in keys][:400]
+                    ors = " OR ".join("(xd >= CAST(? AS DATE) AND xd < CAST(? AS DATE))" for _ in spans) or "FALSE"
+                    parts.append(f"{c} IN (SELECT v FROM {dd} WHERE {ors})")
+                    for lo, hi in spans:
+                        params += [lo, hi]
             elif op == "in":
                 vals = [str(x) for x in (v or [])][:5000]
                 if not vals:
@@ -383,6 +408,253 @@ class Engine:
             raise EngineError(f"SQL error: {exc}")
         return {"headers": names, "rows": [["" if v is None else v for v in r] for r in data[:MAX_QUERY_ROWS]],
                 "truncated": len(data) > MAX_QUERY_ROWS}
+
+
+    # ------------------------------------------------------------------ charts
+    # Everything below answers a chart from the whole table inside DuckDB and returns only a small result
+    # (a few hundred groups, bins, quartiles or a sample of points), so a chart of 5 million rows is as light as one of 500.
+    DATE_FORMATS = ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%m-%d-%Y", "%m/%d/%Y", "%m.%d.%Y"]
+    TIME_MODES = ("day", "month", "quarter", "fy", "year", "weekday")
+    OTHERS = "(others)"
+
+    @classmethod
+    def _date_expr(cls, c):
+        """Text -> DATE the way the browser reads dates: day first (15-02-2025), then month first only if day first is impossible."""
+        txt = f"regexp_extract(translate({c}, '०१२३४५६७८९', '0123456789'), '^[0-9]{{1,4}}[-/.][0-9]{{1,2}}[-/.][0-9]{{1,4}}')"
+        return "CAST(coalesce(" + ", ".join(f"try_strptime({txt}, '{f}')" for f in cls.DATE_FORMATS) + ") AS DATE)"
+
+    def _date_dim(self, d, i):
+        """A small table of every different text in a date column and the date it means. Dates repeat a lot (a few
+        thousand days in millions of rows), so each text is read once, not once per row. Cached for the dataset."""
+        with self.lock:
+            dims = d.setdefault("date_dims", {})
+            if i not in dims:
+                name = f"{d['table']}_dd{i}"
+                self.db.cursor().execute(
+                    f"CREATE TABLE {name} AS SELECT v, {self._date_expr('v')} AS xd "
+                    f"FROM (SELECT DISTINCT {_col(i)} AS v FROM {d['table']} WHERE {_col(i)} IS NOT NULL)")
+                dims[i] = name
+            return dims[i]
+
+    @staticmethod
+    def _bucket_label(xd, mode):
+        fy = f"(CASE WHEN month({xd}) >= 4 THEN year({xd}) ELSE year({xd}) - 1 END)"
+        return {
+            "year": f"strftime({xd}, '%Y')",
+            "month": f"strftime({xd}, '%Y-%m')",
+            "quarter": f"(strftime({xd}, '%Y') || '-Q' || CAST(quarter({xd}) AS VARCHAR))",
+            "fy": f"(CAST({fy} AS VARCHAR) || '-' || lpad(CAST(({fy} + 1) % 100 AS VARCHAR), 2, '0'))",
+            "weekday": f"strftime({xd}, '%a')",
+            "day": f"strftime({xd}, '%Y-%m-%d')",
+        }[mode]
+
+    @staticmethod
+    def _bucket_range(mode, key):
+        """The first day of a period and the first day after it, from its label ('2025-03', '2025-Q2', '2024-25', '2025')."""
+        try:
+            if mode == "year":
+                y = int(key); return date(y, 1, 1).isoformat(), date(y + 1, 1, 1).isoformat()
+            if mode == "month":
+                y, m = (int(v) for v in key.split("-")); n = date(y + (m == 12), m % 12 + 1, 1)
+                return date(y, m, 1).isoformat(), n.isoformat()
+            if mode == "quarter":
+                y, q = key.split("-Q"); y, q = int(y), int(q); m = 3 * (q - 1) + 1
+                n = date(y + (m + 3 > 12), (m + 3 - 1) % 12 + 1, 1)
+                return date(y, m, 1).isoformat(), n.isoformat()
+            if mode == "fy":
+                a = int(key.split("-")[0]); return date(a, 4, 1).isoformat(), date(a + 1, 4, 1).isoformat()
+            if mode == "day":
+                d0 = date.fromisoformat(key); return d0.isoformat(), date.fromordinal(d0.toordinal() + 1).isoformat()
+        except (ValueError, IndexError):
+            pass
+        raise EngineError("That period is not valid.")
+
+    _FN_SQL = {"sum": "sum({m})", "avg": "avg({m})", "min": "min({m})", "max": "max({m})",
+               "median": "median({m})", "count": "count(*)", "distinct": "count(DISTINCT lower({t}))"}
+
+    def _opt_col(self, d, i):
+        if i is None or i == "":
+            return None
+        try:
+            if int(i) < 0:
+                return None
+        except (TypeError, ValueError):
+            raise EngineError("Invalid column.")
+        return self._check_col(d, i)
+
+    def chart_agg(self, ds_id, x=None, time=None, g=None, g2=None, measures=None, rank="value",
+                  max_cats=300, max_groups=9, search=None, filters=None):
+        """Group by up to three columns (x, g, g2) with up to six measures. Groups beyond the biggest `max_cats`
+        (x) or `max_groups - 1` (g, g2) are folded into '(Others)' and calculated from the real rows, so even an
+        average of the leftovers is exact. A date column is cut into day / month / quarter / fy / year / weekday."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        xi, gi, g2i = self._opt_col(d, x), self._opt_col(d, g), self._opt_col(d, g2)
+        time = time if time in self.TIME_MODES else None
+        ms = []
+        for m in (measures or [{"col": -1, "fn": "count"}])[:6]:
+            fn, ci = m.get("fn", "sum"), self._opt_col(d, m.get("col", -1))
+            if fn not in self._FN_SQL:
+                raise EngineError(f"Unknown function '{fn}'.")
+            ms.append((ci, "count" if ci is None else fn))
+        max_cats = max(1, min(int(max_cats), 5000)); max_groups = max(2, min(int(max_groups), 60))
+
+        def text(i):
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+
+        s_cols, k_cols, dims = [], [], []                 # k_cols: key + label of every dimension
+        if xi is None:
+            s_cols.append("'' AS xl")
+        elif time:
+            s_cols.append(f"{_col(xi)} AS xraw")
+        else:
+            s_cols.append(f"{text(xi)} AS xl")
+        for n, i in (("g", gi), ("g2", g2i)):
+            if i is not None:
+                s_cols.append(f"{text(i)} AS {n}l")
+        for k, (ci, fn) in enumerate(ms):
+            if ci is not None:
+                s_cols.append(f"{_num(ci)} AS m{k}")
+                if fn == "distinct":
+                    s_cols.append(f"trim({_col(ci)}) AS t{k}")
+        x_label = self._bucket_label("xd", time) if (xi is not None and time) else "xl"
+        k_cols.append(f"{x_label} AS xl")
+        k_cols.append("lower(" + x_label + ") AS xk" if not time else f"{x_label} AS xk")
+        for n, i in (("g", gi), ("g2", g2i)):
+            if i is not None:
+                k_cols += [f"{n}l", f"lower({n}l) AS {n}k"]
+        for k, (ci, fn) in enumerate(ms):
+            if ci is not None:
+                k_cols.append(f"m{k}")
+                if fn == "distinct":
+                    k_cols.append(f"t{k}")
+        dd = self._date_dim(d, xi) if (xi is not None and time) else None
+        k_from = f"s JOIN {dd} ON s.xraw = {dd}.v WHERE xd IS NOT NULL" if dd else "s"
+        agg = [self._FN_SQL[fn].format(m=f"m{k}", t=f"t{k}") for k, (ci, fn) in enumerate(ms)]
+        rank_expr = "xk DESC" if rank == "label" else f"abs(coalesce({agg[0]}, 0)) DESC, xk"
+        ctes = [f"s AS (SELECT {', '.join(s_cols)} FROM {d['table']}{where})",
+                f"k AS (SELECT {', '.join(k_cols)} FROM {k_from})",
+                f"tx AS (SELECT xk FROM k GROUP BY xk ORDER BY {rank_expr} LIMIT {max_cats})"]
+        fold = [f"CASE WHEN xk IN (SELECT xk FROM tx) THEN xk ELSE '{self.OTHERS}' END AS fx"]
+        keys, labels = ["fx"], ["min(xl) AS lx"]
+        for n, i in (("g", gi), ("g2", g2i)):
+            if i is not None:
+                ctes.append(f"t{n} AS (SELECT {n}k FROM k GROUP BY {n}k ORDER BY count(*) DESC, {n}k LIMIT {max_groups - 1})")
+                fold.append(f"CASE WHEN {n}k IN (SELECT {n}k FROM t{n}) THEN {n}k ELSE '{self.OTHERS}' END AS f{n}")
+                keys.append(f"f{n}"); labels.append(f"min({n}l) AS l{n}")
+        sel_agg = ", ".join(f"{a} AS a{k}" for k, a in enumerate(agg))
+        extra = ", ".join(c for c in ["xl"] + [f"{n}l" for n, i in (("g", gi), ("g2", g2i)) if i is not None] +
+                          [c2 for k, (ci, fn) in enumerate(ms) if ci is not None for c2 in ([f"m{k}"] + ([f"t{k}"] if fn == "distinct" else []))])
+        sql = (f"WITH {', '.join(ctes)}, f AS (SELECT {', '.join(fold)}, {extra} FROM k) "
+               f"SELECT {', '.join(keys)}, {', '.join(labels)}, {sel_agg} FROM f GROUP BY {', '.join(keys)} LIMIT 20000")
+        cur = self.db.cursor()
+        try:
+            data = cur.execute(sql, params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not calculate this chart: {exc}")
+        nd = len(keys)
+        rows = []
+        for r in data:
+            lab = [self.OTHERS_LABEL if r[j] == self.OTHERS else r[nd + j] for j in range(nd)]
+            rows.append(lab + list(r[2 * nd:]))
+        matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}", params).fetchone()[0]
+        return {"rows": rows, "matched": matched, "dims": nd, "measures": len(ms), "total": d["rows"]}
+
+    OTHERS_LABEL = "(Others)"
+
+    def chart_hist(self, ds_id, col, bins=0, search=None, filters=None):
+        d = self._ds(ds_id)
+        i = self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        cur = self.db.cursor()
+        base = f"SELECT {_num(i)} AS v FROM {d['table']}{where}"
+        n, mn, mx, mean, med, sd = cur.execute(
+            f"SELECT count(v), min(v), max(v), avg(v), median(v), stddev_pop(v) FROM ({base}) WHERE v IS NOT NULL", params).fetchone()
+        out = {"n": n, "min": mn, "max": mx, "mean": mean, "median": med, "sd": sd, "edges": [], "counts": []}
+        if not n:
+            return out
+        k = int(bins) if int(bins or 0) > 1 else max(5, min(40, math.ceil(math.log2(n) + 1)))
+        if mn == mx:
+            out["edges"], out["counts"] = [mn - 0.5, mx + 0.5], [n]
+            return out
+        w = (mx - mn) / k
+        counts = [0] * k
+        for b, c in cur.execute(
+                f"SELECT least({k - 1}, CAST(floor((v - ?) / ?) AS INTEGER)) AS b, count(*) FROM ({base}) WHERE v IS NOT NULL GROUP BY 1",
+                [mn, w] + params).fetchall():
+            counts[int(b)] += c
+        out["edges"] = [mn + w * j for j in range(k + 1)]
+        out["counts"] = counts
+        return out
+
+    def chart_box(self, ds_id, x, col, top=20, search=None, filters=None):
+        d = self._ds(ds_id)
+        xi, ci = self._check_col(d, x), self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        xc = _col(xi)
+        top = max(1, min(int(top), 40))
+        sql = (f"WITH v AS (SELECT lower(trim({xc})) AS xk, trim({xc}) AS xl, {_num(ci)} AS v FROM {d['table']}{where}), "
+               f"v2 AS (SELECT * FROM v WHERE xk <> '' AND v IS NOT NULL), "
+               f"tp AS (SELECT xk FROM v2 GROUP BY xk HAVING count(*) >= 3 ORDER BY count(*) DESC, xk LIMIT {top}), "
+               f"q AS (SELECT xk, min(xl) AS xl, count(*) AS n, quantile_cont(v, 0.25) AS q1, quantile_cont(v, 0.5) AS q2, quantile_cont(v, 0.75) AS q3 "
+               f"      FROM v2 WHERE xk IN (SELECT xk FROM tp) GROUP BY xk) "
+               f"SELECT q.xl, q.n, q.q1, q.q2, q.q3, "
+               f"  min(v) FILTER (WHERE v >= q.q1 - 1.5 * (q.q3 - q.q1)), max(v) FILTER (WHERE v <= q.q3 + 1.5 * (q.q3 - q.q1)) "
+               f"FROM v2 JOIN q USING (xk) GROUP BY q.xk, q.xl, q.n, q.q1, q.q2, q.q3 ORDER BY q.n DESC, q.xk")
+        cur = self.db.cursor()
+        rows = cur.execute(sql, params).fetchall()
+        labels = [r[0] for r in rows]
+        stats = [[r[5], r[2], r[3], r[4], r[6]] for r in rows]
+        outliers = []
+        if rows:
+            odd = cur.execute(
+                f"WITH v AS (SELECT lower(trim({xc})) AS xk, {_num(ci)} AS v FROM {d['table']}{where}), "
+                f"v2 AS (SELECT * FROM v WHERE xk <> '' AND v IS NOT NULL), "
+                f"q AS (SELECT xk, quantile_cont(v, 0.25) AS q1, quantile_cont(v, 0.75) AS q3 FROM v2 GROUP BY xk HAVING count(*) >= 3) "
+                f"SELECT v2.xk, v FROM v2 JOIN q USING (xk) WHERE v < q1 - 1.5 * (q3 - q1) OR v > q3 + 1.5 * (q3 - q1) "
+                f"ORDER BY hash(v2.xk || CAST(v AS VARCHAR)) LIMIT 4000", params).fetchall()
+            pos = {lab.strip().lower(): n for n, lab in enumerate(labels)}
+            outliers = [[pos[k], v] for k, v in odd if k in pos][:600]
+        return {"labels": labels, "stats": stats, "outliers": outliers, "counts": [r[1] for r in rows]}
+
+    def chart_points(self, ds_id, xnum, ynum, size=None, g=None, limit=5000, search=None, filters=None, max_groups=8):
+        d = self._ds(ds_id)
+        xi, yi = self._check_col(d, xnum), self._check_col(d, ynum)
+        zi, gi = self._opt_col(d, size), self._opt_col(d, g)
+        where, params = self._where(d, search, filters)
+        limit = max(100, min(int(limit), 20000))
+        cols = [f"__rid", f"{_num(xi)} AS x", f"{_num(yi)} AS y"]
+        if zi is not None:
+            cols.append(f"{_num(zi)} AS z")
+        if gi is not None:
+            cols.append(f"CASE WHEN {_col(gi)} IS NULL OR trim({_col(gi)}) = '' THEN '(blank)' ELSE trim({_col(gi)}) END AS g")
+        need = "x IS NOT NULL AND y IS NOT NULL" + (" AND z IS NOT NULL" if zi is not None else "")
+        base = f"SELECT {', '.join(cols)} FROM {d['table']}{where}"
+        cur = self.db.cursor()
+        n, slope, icpt, r, xmin, xmax = cur.execute(
+            f"SELECT count(*), regr_slope(y, x), regr_intercept(y, x), corr(y, x), min(x), max(x) FROM ({base}) WHERE {need}", params).fetchone()
+        pts = []
+        if n:
+            gsel = ""
+            if gi is not None:
+                gsel = (f", CASE WHEN g IN (SELECT g FROM (SELECT g FROM b WHERE {need} GROUP BY g ORDER BY count(*) DESC, g LIMIT {max_groups - 1})) "
+                        f"THEN g ELSE '{self.OTHERS_LABEL}' END AS g2")
+            order = f"SELECT __rid, x, y{', z' if zi is not None else ''}{gsel} FROM b WHERE {need} ORDER BY hash(__rid) LIMIT {limit}"
+            for row in cur.execute(f"WITH b AS ({base}) {order}", params).fetchall():
+                pts.append(list(row))
+        return {"n": n, "points": pts, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
+                "reg": {"slope": slope, "intercept": icpt, "r": r, "n": n, "xmin": xmin, "xmax": xmax} if n >= 3 else None}
+
+    def sample(self, ds_id, n=4000):
+        """An evenly random handful of rows (always the same ones) so the browser can tell which columns are
+        numbers, dates or categories without loading the file."""
+        d = self._ds(ds_id)
+        n = max(100, min(int(n), 20000))
+        cols = ", ".join(_col(i) for i in range(len(d["headers"])))
+        data = self.db.cursor().execute(
+            f"SELECT {cols} FROM {d['table']} USING SAMPLE reservoir({n} ROWS) REPEATABLE (42)").fetchall()
+        return {"headers": d["headers"], "rows": [["" if v is None else v for v in r] for r in data], "total": d["rows"]}
 
     # ------------------------------------------------------------------ export
     def to_arrow(self, ds_id, search=None, filters=None, sort=None, desc=False, numeric=False, limit=None):

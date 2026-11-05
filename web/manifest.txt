@@ -61,4 +61,5 @@
 @file js/charts/60-chart-engine.js
 @file js/charts/61-chart-studio.js
 @file js/charts/62-table-viz.js
+@file js/charts/63-big-charts.js
 @file html/90-tail.html

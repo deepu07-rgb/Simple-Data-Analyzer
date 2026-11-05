@@ -110,6 +110,7 @@
         '<select id="bigSheet" class="big-select" style="display:none"></select></div>' +
         '<input id="bigSearch" class="big-input" type="search" autocomplete="off">' +
         '<div class="big-actions">' +
+          '<button class="tb-btn" id="bigChartBtn"></button>' +
           '<button class="tb-btn" id="bigFiltBtn"></button>' +
           '<button class="tb-btn success" id="bigCopyBtn"></button>' +
           '<button class="tb-btn" id="bigCsvBtn">CSV</button>' +
@@ -132,6 +133,7 @@
     $('bigSearch').addEventListener('input', debounce(function () { BIG.search = $('bigSearch').value.trim(); BIG.refresh(); }, 300));
     $('bigScroll').addEventListener('scroll', function () { requestAnimationFrame(render); });
     window.addEventListener('resize', function () { if (BIG.active) render(); });
+    $('bigChartBtn').onclick = function () { if (window.STL && STL.openChartStudio) STL.openChartStudio(); };
     $('bigFiltBtn').onclick = function () { showFilterEditor(); };
     $('bigCopyBtn').onclick = function () { BIG.copyToEditor(); };
     $('bigCsvBtn').onclick = function () { BIG.exportView('csv'); };
@@ -147,6 +149,8 @@
   function labels() {
     $('bigBadge').textContent = T('Large file', 'बड़ी फ़ाइल');
     $('bigSearch').placeholder = T('Search all columns…', 'सभी कॉलम में खोजें…');
+    $('bigChartBtn').textContent = '📊 ' + T('Charts', 'चार्ट');
+    $('bigChartBtn').title = T('Charts from every row of the file, calculated on this PC. Click a bar to filter the file.', 'फ़ाइल की हर पंक्ति से चार्ट, इसी पीसी पर गणना। फ़ाइल फ़िल्टर करने के लिए पट्टी पर क्लिक करें।');
     $('bigFiltBtn').textContent = T('Filters', 'फ़िल्टर');
     $('bigCopyBtn').textContent = T('Work on a copy', 'प्रति पर काम करें');
     $('bigCopyBtn').title = T('Bring up to 100,000 matching rows into the full editor', 'पूर्ण संपादक में 1,00,000 तक मेल खाती पंक्तियाँ लाएँ');
@@ -188,6 +192,7 @@
 
   BIG.exit = function () {
     BIG.active = false;
+    if (window.STL && STL.closeChartStudio) STL.closeChartStudio();
     var v = $('bigview'); if (v) v.classList.remove('visible');
     try { sessionStorage.removeItem('stellura_big'); } catch (e) {}
     var dn = $('documentName'); if (dn && typeof rawData !== 'undefined' && !rawData.length) dn.textContent = 'Untitled Analysis';
@@ -205,6 +210,7 @@
       BIG.matched = r.matched;
       BIG.cache.set(0, r);
       sizeSpacer(); render(); status();
+      if (window.STL && STL.redrawChartStudio) STL.redrawChartStudio();                 // an open chart follows the grid's search and filters
     }).catch(function (e) { toast(e.message, 'error'); });
   };
 
@@ -303,11 +309,15 @@
     bar.style.display = BIG.filters.length ? 'flex' : 'none';
     bar.innerHTML = BIG.filters.map(function (f, i) {
       var v = (f.op === 'empty' || f.op === 'notempty') ? '' : ' ' + esc(f.value) + (f.op === 'between' ? ' – ' + esc(f.value2) : '');
-      return '<span class="big-chip">' + esc(BIG.headers[f.col]) + ' ' + opLabel(f.op) + v + ' <button data-i="' + i + '" aria-label="remove">×</button></span>';
+      var txt = f.label ? esc(f.label) : opLabel(f.op) + v;
+      return '<span class="big-chip' + (f._chart ? ' big-chip-chart' : '') + '">' + esc(BIG.headers[f.col]) + ' ' + txt + ' <button data-i="' + i + '" aria-label="remove">×</button></span>';
     }).join('') + (BIG.filters.length ? '<button class="big-link" id="bigClearF">' + T('Clear all', 'सब हटाएँ') + '</button>' : '');
     bar.querySelectorAll('.big-chip button').forEach(function (b) { b.onclick = function () { BIG.filters.splice(+b.dataset.i, 1); renderFilterBar(); BIG.refresh(); }; });
     var c = $('bigClearF'); if (c) c.onclick = function () { BIG.filters = []; renderFilterBar(); BIG.refresh(); };
   }
+
+  // used by the charts: show the filters in the bar and reload the grid
+  BIG.syncFilters = function () { renderFilterBar(); BIG.refresh(); };
 
   function showFilterEditor(presetCol, presetVal) {
     var old = $('bigFilterEditor'); if (old) old.remove();
@@ -353,12 +363,13 @@
       BIG.profile.columns.map(function (c) {
         var filledPct = BIG.profile.rows ? Math.round(c.filled / BIG.profile.rows * 100) : 0;
         var stats = c.type === 'number' ? T('min ', 'न्यूनतम ') + fmtNum(c.min) + ' · ' + T('max ', 'अधिकतम ') + fmtNum(c.max) + ' · ' + T('avg ', 'औसत ') + fmtNum(c.avg) : '~' + fmtInt(c.distinct) + ' ' + T('different values', 'अलग मान');
-        return '<div class="big-card" data-i="' + c.index + '"><div class="big-card-h"><b>' + esc(c.name) + '</b><span class="big-tag">' + (c.type === 'number' ? T('number', 'संख्या') : (c.type === 'categorical' ? T('category', 'श्रेणी') : T('text', 'पाठ'))) + '</span></div>' +
+        return '<div class="big-card" data-i="' + c.index + '"><div class="big-card-h"><b>' + esc(c.name) + '</b><span class="big-tag">' + (c.type === 'number' ? T('number', 'संख्या') : (c.type === 'categorical' ? T('category', 'श्रेणी') : T('text', 'पाठ'))) + '</span><button class="big-chart" data-chart="' + c.index + '" title="' + T('Chart this column', 'इस कॉलम का चार्ट') + '">📊</button></div>' +
           '<div class="big-bar"><i style="width:' + filledPct + '%"></i></div><div class="big-sub">' + filledPct + '% ' + T('filled', 'भरा') + ' · ' + stats + '</div><div class="big-top-vals"></div></div>';
       }).join('');
     pane.querySelectorAll('.big-card').forEach(function (card) {
       card.onclick = function (ev) {
         if (ev.target.closest('.big-val')) return;
+        var cb = ev.target.closest('.big-chart'); if (cb) { ev.stopPropagation(); if (window.STL && STL.chartColumn) STL.chartColumn(+cb.dataset.chart); return; }
         var i = +card.dataset.i, box = card.querySelector('.big-top-vals');
         if (box.dataset.open) { box.innerHTML = ''; delete box.dataset.open; return; }
         box.dataset.open = '1'; box.textContent = '…';

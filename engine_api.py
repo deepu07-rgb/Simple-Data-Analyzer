@@ -116,6 +116,29 @@ def aggregate(ds):
         b.get("search") or None, b.get("filters"))))
 
 
+@bp.route("/api/engine/<ds>/sample", methods=["POST"])
+def sample(ds):
+    return jsonify(json_safe(get_engine().sample(ds, _body().get("n", 4000))))
+
+
+@bp.route("/api/engine/<ds>/chart", methods=["POST"])
+def chart(ds):
+    """Chart data computed over the whole table. body.kind: agg | hist | box | points (+ search, filters)."""
+    b, eng = _body(), get_engine()
+    kind, s, f = b.get("kind"), b.get("search") or None, b.get("filters")
+    if kind == "agg":
+        return jsonify(json_safe(eng.chart_agg(ds, b.get("x"), b.get("time"), b.get("g"), b.get("g2"), b.get("measures"),
+                                               b.get("rank", "value"), b.get("maxCats", 300), b.get("maxGroups", 9), s, f)))
+    if kind == "hist":
+        return jsonify(json_safe(eng.chart_hist(ds, b.get("col"), b.get("bins", 0), s, f)))
+    if kind == "box":
+        return jsonify(json_safe(eng.chart_box(ds, b.get("x"), b.get("col"), b.get("top", 20), s, f)))
+    if kind == "points":
+        return jsonify(json_safe(eng.chart_points(ds, b.get("xnum"), b.get("ynum"), b.get("size"), b.get("g"),
+                                                  b.get("limit", 5000), s, f, b.get("maxGroups", 8))))
+    return _err("Unknown chart kind.")
+
+
 @bp.route("/api/engine/<ds>/query", methods=["POST"])
 def query(ds):
     return jsonify(json_safe(get_engine().query(ds, _body().get("sql", ""))))

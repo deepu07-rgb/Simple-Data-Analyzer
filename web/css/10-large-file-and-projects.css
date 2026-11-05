@@ -82,3 +82,8 @@
 #bigview .tb-btn.danger{background:transparent;color:#f87171;border:1px solid #f87171;text-shadow:none}
 #bigview .tb-btn.danger:hover{background:#f87171;color:#1a1020}
 .prj-box .tb-btn.danger{background:transparent;color:#f87171;border:1px solid #f87171;text-shadow:none}
+/* charts in Large File mode */
+.big-chip-chart{background:rgba(109,91,208,.14);border-color:rgba(109,91,208,.45)}
+.big-chart{margin-left:auto;border:0;background:transparent;cursor:pointer;font-size:14px;opacity:.55;padding:0 4px;border-radius:6px}
+.big-chart:hover{opacity:1;background:rgba(109,91,208,.14)}
+body.cs-open #bigview .big-side{display:none}
