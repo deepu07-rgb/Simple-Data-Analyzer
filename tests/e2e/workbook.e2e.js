@@ -27,7 +27,7 @@ const T = JSON.parse(execFileSync(PY, ['-I', '-X', 'utf8', path.join(__dirname, 
   // ---- the workbook has several sheets: the picker offers them
   await page.setInputFiles('#fileInput', XL);
   await page.waitForFunction(() => { const m = document.getElementById('sheetModal'); return m && getComputedStyle(m).display !== 'none' && m.innerText.includes('FY A'); }, null, { timeout: 60000 });
-  const picker = await ev(() => document.getElementById('sheetList').innerText); ok(/Cover/.test(picker) && /FY A/.test(picker) && /FY B/.test(picker), 'The sheet picker lists all three sheets', picker);
+  const picker = await ev(() => document.getElementById('sheetList').innerText); ok(/Cover/.test(picker) && /FY A/.test(picker) && /FY B/.test(picker) && /Summary/.test(picker), 'The sheet picker lists all four sheets', picker);
   await ev(() => closeModal('sheetModal'));
 
   // ---- combine the two data sheets of the one workbook
@@ -37,7 +37,7 @@ const T = JSON.parse(execFileSync(PY, ['-I', '-X', 'utf8', path.join(__dirname, 
   const plan = await ev(() => ({ files: Array.from(document.querySelectorAll('.stl-file > summary')).map(s => s.innerText.replace(/\s+/g, ' ')), fresh: Array.from(document.querySelectorAll('tr.lvl-new td:first-child')).map(x => x.innerText), review: Array.from(document.querySelectorAll('tr.lvl-review td:first-child')).map(x => x.innerText), prev: (document.querySelector('.stl-opts + .prj-sub') || {}).innerText }));
   const rowsOf = s => +(/([\d,]+) rows/.exec(s)[1].replace(/,/g, ''));
   ok(rowsOf(plan.files[0]) === T.rowsA && rowsOf(plan.files[1]) === T.rowsB, 'Titles, repeated headers, subtotals, month totals and signature lines are removed: ' + rowsOf(plan.files[0]) + ' + ' + rowsOf(plan.files[1]) + ' rows (' + T.rowsA + ' + ' + T.rowsB + ' expected)', plan.files);
-  ok(plan.review.length === 0 && plan.fresh.length === 1 && /Mobile/.test(plan.fresh[0]), 'Columns named differently ("Date of Reg", "Dept", "Amt Claimed", "Current Status", group headers) are matched by the app; only "Mobile" is new', plan);
+  ok(plan.review.length === 1 && /Wing/.test(plan.review[0]) && plan.fresh.length === 1 && /Mobile/.test(plan.fresh[0]), 'Columns named differently ("Date of Reg", "Amt Claimed", "Current Status", group headers) are matched by the app; "Wing" has no word in common with "Department" and is matched by its values, marked "please check"; only "Mobile" is new', plan);
   await page.click('#mgGo'); await page.waitForFunction(n => typeof rawData !== 'undefined' && rawData.length === n, T.rowsA + T.rowsB, { timeout: 60000 }); await wait(500);
   const hd = await ev(() => headers.slice()); ok(hd.includes('Block') && hd.includes('Date of Registration') && hd.includes('Status'), 'The Block that only existed in the "Block: X" titles of the first sheet is now a column', hd);
   const blocks0 = await ev(n => { const i = headers.indexOf('Block'); return Array.from(new Set(rawData.slice(0, n).map(r => r[i]))); }, T.rowsA);
@@ -67,9 +67,21 @@ const T = JSON.parse(execFileSync(PY, ['-I', '-X', 'utf8', path.join(__dirname, 
   // ---- the same case entered twice
   await ev(() => STL.openDuplicates()); await page.waitForSelector('#dpRemove', { timeout: 30000 });
   const sug = await ev(() => Array.from(document.querySelectorAll('#dupDialog [data-p]')).map(b => b.innerText)); ok(sug.length === 2 && /registration number/i.test(sug[0]), 'The duplicate finder suggests the registration number + applicant, and person + place + department', sug);
-  const msg = await ev(() => document.querySelector('#dupDialog .fr-verdict').innerText); ok(new RegExp('\\b' + T.dups + ' extra rows').test(msg), 'It finds exactly the ' + T.dups + ' rows that were entered twice (capitals, "Shri", spaces ignored)', msg);
+  const msg = await ev(() => document.querySelector('#dupDialog .fr-verdict').innerText); ok(new RegExp('\\b' + T.dups + ' extra rows').test(msg), 'It finds exactly the ' + T.dups + ' rows that were entered twice (capitals, "Shri", spaces and the name written in Hindi ignored)', msg);
   await page.click('#dpRemove'); await page.waitForFunction(() => !document.getElementById('dupDialog'), null, { timeout: 30000 }); await wait(500);
   ok(await ev(() => rawData.length) === T.cases, 'After removing them: ' + T.cases + ' cases', await ev(() => rawData.length));
+
+  // ---- the summary sent upward, against the register
+  await ev(() => STL.openReconcile()); await page.waitForSelector('#rcAdd', { timeout: 30000 }); await page.setInputFiles('#reconFileInput', XL);
+  await page.waitForSelector('#rcSheet', { timeout: 60000 }); await page.selectOption('#rcSheet', 'Summary');
+  await page.waitForFunction(() => /numbers in the summary|agree with the detail/.test(document.getElementById('reconDialog').innerText), null, { timeout: 60000 }); await wait(300);
+  const rc = await ev(() => ({ text: document.getElementById('reconDialog').innerText.replace(/\s+/g, ' '), rows: Array.from(document.querySelectorAll('#reconDialog table')).map(t => Array.from(t.querySelectorAll('tr')).slice(1).map(r => r.innerText.replace(/\s+/g, ' ').trim())) }));
+  const [w0] = T.summary_wrong; const wrongTbl = rc.rows[1] || [];
+  ok(/1 of 8 numbers/.test(rc.text) || /1 \/ 8/.test(rc.text) || /^1/.test(rc.text.replace(/^.*?(\d+ (of|\/) \d+ numbers)/, '$1')), 'Of the 8 numbers in the summary exactly one does not agree', rc.text.slice(0, 400));
+  ok(wrongTbl.length === 1 && wrongTbl[0].startsWith(w0[0]) && wrongTbl[0].includes(w0[1]) && wrongTbl[0].includes(String(w0[2])) && wrongTbl[0].includes(String(w0[3])), 'It names the wrong number: ' + w0[0] + ' ' + w0[1] + ' says ' + w0[2] + ', the register gives ' + w0[3], rc.rows);
+  ok((rc.rows[2] || []).length === 1 && /Cases received/.test(rc.rows[2][0]) && /285/.test(rc.rows[2][0]) && /280/.test(rc.rows[2][0]), 'The Total line is checked too: it repeats the wrong number (285 against the real 280)', rc.rows[2]);
+  ok(/number of rows/.test(rc.text) && /Status = pending/.test(rc.text), 'It says how each column is made from the register (count of rows; rows where Status = pending)');
+  await ev(() => { const x = document.getElementById('rcX'); if (x) x.click(); });
 
   // ---- Pendency Radar
   const pend = await ev(() => { const g = STL.pend.guess(headers, rawData), sv = STL.pend.statusValues(rawData, g.status), bi = headers.indexOf('Block'); const r = STL.pend.compute(rawData, { dateCol: g.date, statusCol: g.status, groupCol: bi, pendingValues: sv.filter(x => x.pending).map(x => x.value), asOn: '2026-01-31' }); return { cols: [headers[g.date], headers[g.status]], total: r.total.total, by: Object.fromEntries(r.groups.map(x => [x.name, x.total])) }; });

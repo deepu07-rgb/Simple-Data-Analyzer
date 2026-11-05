@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { sandbox } = require('./load');
-const ctx = sandbox(['web/js/tasks/33-value-groups.js']); const V = ctx.STL.values;
+const ctx = sandbox(['web/js/tasks/28-lexicon.js', 'web/js/tasks/33-value-groups.js']); const V = ctx.STL.values;
 const plain = x => JSON.parse(JSON.stringify(x));
 const bag = spec => Object.entries(spec).flatMap(([v, n]) => Array(n).fill(v));
 const groupOf = (gs, v) => gs.find(g => g.variants.some(x => x.v === v));
@@ -37,11 +37,12 @@ test('officers: re-ordered words, titles and initials', () => {
   assert.equal(groupOf(gs, 'Smt. Sunita Meena').canonical, 'Sunita Meena');
   assert.ok(!groupOf(gs, 'M. Joshi') || groupOf(gs, 'M. Joshi').canonical === 'Mahesh Joshi', '"M. Joshi" is only a suggestion at most');
 });
-test('statuses: spelling and case merge; true synonyms (Closed / Disposed) are left to the person', () => {
+test('statuses: spelling and case merge; true synonyms (Closed / Disposed) are offered to check, never pre-ticked', () => {
   const gs = V.groups(bag({ Disposed: 30000, DISPOSED: 500, disposed: 300, 'Disposed Off': 900, 'Disposed of': 200, Closed: 400, Pending: 1000, pending: 70, PENDING: 60, 'Pending ': 40, Pendng: 20, Rejected: 2000, REJECTED: 100, Reject: 90, Transferred: 800, Transfered: 60, Forwarded: 50 }));
   assert.equal(groupOf(gs, 'Pendng').canonical, 'Pending'); assert.equal(groupOf(gs, 'Transfered').canonical, 'Transferred'); assert.equal(groupOf(gs, 'Reject').canonical, 'Rejected');
   assert.ok(groupOf(gs, 'DISPOSED').variants.length >= 3);
-  assert.ok(!groupOf(gs, 'Closed'), '"Closed" is a synonym, not a spelling: it stays for the person to merge');
+  const cl = groupOf(gs, 'Closed'); assert.ok(cl && cl.kind === 'meaning' && V.WEAK[cl.kind], '"Closed" is a synonym: offered as "same meaning? check"');
+  assert.ok(groupOf(gs, 'Forwarded').kind === 'meaning' && groupOf(gs, 'Forwarded').variants.some(x => x.v === 'Transferred'));
 });
 test('apply changes only the chosen group, in the chosen spelling', () => {
   const rows = [['a', 'Kishangrah'], ['b', 'KISHANGARH'], ['c', 'Kishangarh'], ['d', 'Beawar'], ['e', 'Byawar']];
@@ -71,4 +72,31 @@ test('a two-letter typo in a 6+ letter word is grouped even when about one row i
   const gs = V.groups(bag({ Masuda: 50, Masooda: 5, MASUDA: 4 }));
   assert.equal(gs.length, 1); assert.equal(gs[0].canonical, 'Masuda'); assert.equal(gs[0].variants.length, 3);
   assert.equal(V.groups(bag({ Masuda: 50, Masooda: 25 })).length, 0, 'but when a quarter of the rows has it, it may be a real second value');
+});
+
+test('Hindi and English spellings of the same name or place are one group (and pre-ticked)', () => {
+  const gs = V.groups(bag({ Beawar: 500, 'ब्यावर': 20, Byawar: 8, Pushkar: 400, 'पुष्कर': 9, Bhinay: 100, 'भीनाय': 5, Kishangarh: 90, 'किशनगढ़': 4, Arain: 60, 'अराईं': 3 }));
+  ['ब्यावर', 'पुष्कर', 'भीनाय', 'किशनगढ़', 'अराईं'].forEach(h => { const g = groupOf(gs, h); assert.ok(g && g.kind === 'script' && !V.WEAK.script, h); });
+  assert.ok(groupOf(gs, 'Byawar').variants.some(x => x.v === 'Beawar'));
+  assert.ok(!groupOf(gs, 'Pushkar').variants.some(x => x.v === 'Beawar'), 'two different places stay apart');
+  const names = V.groups(bag({ 'Kamla Lodha': 30, 'कमला लोढ़ा': 3, 'Suresh Rathore': 20, 'सुरेश राठौड़': 2, 'Ramesh Choudhary': 10, 'रमेश चौधरी': 1, 'Ramesh Meena': 10, 'रमेश मीणा': 1 }));
+  ['कमला लोढ़ा', 'सुरेश राठौड़', 'रमेश चौधरी', 'रमेश मीणा'].forEach(h => assert.ok(groupOf(names, h), h));
+  assert.notEqual(groupOf(names, 'रमेश चौधरी'), groupOf(names, 'रमेश मीणा'));
+});
+test('Hindi status words and office synonyms; acronyms; initials only when one person fits', () => {
+  const gs = V.groups(bag({ Pending: 700, 'लंबित': 30, 'Under Process': 12, Disposed: 900, 'निस्तारित': 20, Rejected: 100, 'खारिज': 4 }));
+  assert.ok(groupOf(gs, 'लंबित').variants.some(x => x.v === 'Pending') && groupOf(gs, 'Under Process') === groupOf(gs, 'Pending'));
+  assert.ok(groupOf(gs, 'निस्तारित').variants.some(x => x.v === 'Disposed') && groupOf(gs, 'खारिज').variants.some(x => x.v === 'Rejected'));
+  const d = V.groups(bag({ 'Public Works (Roads)': 300, PWD: 40, Health: 200, 'Water Supply (PHED)': 300, PHED: 20 }));
+  assert.ok(V.WEAK[groupOf(d, 'PWD').kind], 'a short form is offered to check, never pre-ticked'); assert.ok(groupOf(d, 'PWD').variants.some(x => x.v === 'Public Works (Roads)')); assert.ok(!groupOf(d, 'Health'));
+  const o = V.groups(bag({ 'Mahesh Joshi': 100, 'M. Joshi': 10, 'Anil Sharma': 100, 'A. Sharma': 8, 'Ashok Sharma': 50 }));
+  assert.ok(groupOf(o, 'M. Joshi') && groupOf(o, 'M. Joshi').variants.some(x => x.v === 'Mahesh Joshi'));
+  assert.ok(!groupOf(o, 'A. Sharma'), '"A. Sharma" fits Anil and Ashok: not joined to either');
+});
+test('what the person taught the app is offered pre-ticked in every later file', () => {
+  ctx.STL.lex._reset(); ctx.STL.lex.forget();
+  assert.equal(groupOf(V.groups(bag({ 'Transferred to DM': 20, Disposed: 200 })), 'Transferred to DM'), undefined);
+  ctx.STL.lex.learn([['Transferred to DM', 'Disposed']]);
+  const g = groupOf(V.groups(bag({ 'Transferred to DM': 20, Disposed: 200 })), 'Transferred to DM'); assert.ok(g && g.learned && g.canonical === 'Disposed');
+  ctx.STL.lex.forget();
 });

@@ -230,10 +230,10 @@
     return file.text().then(function (t) { return { grid: M.parseDelimited(t), sheets: [], sheet: null }; });
   }
 
-  function cleanFile(entry, grid) {
+  function cleanFile(entry, grid, steps) {
     var prepared = F.prepare(grid[0] || [], grid.slice(1));
     var before = prepared.length - 1;
-    var out = F.apply(prepared, AUTO_CLEAN);
+    var out = F.apply(prepared, steps || AUTO_CLEAN);
     entry.headers = out.grid[0]; entry.rows = out.grid.slice(1);
     entry.cleaned = out.applied;
     entry.removed = Math.max(before - entry.rows.length, 0);
@@ -284,7 +284,8 @@
           var opts = '<option value="__skip"' + (m.tgt < 0 ? ' selected' : '') + '>' + T('(leave out)', '(छोड़ें)') + '</option>' +
             plan.headers.map(function (h, j) { return '<option value="' + esc(h) + '"' + (m.tgt === j ? ' selected' : '') + '>' + esc(h) + '</option>'; }).join('');
           var badge = { auto: T('matched', 'मिला'), review: T('please check', 'जाँचें'), 'new': T('new column', 'नया कॉलम'), first: '', manual: T('your choice', 'आपकी पसंद') }[m.level] || '';
-          return '<tr class="lvl-' + m.level + '"><td>' + esc(f.headers[m.src] || 'Column ' + (m.src + 1)) + '</td><td>→</td><td><select class="big-select" data-f="' + fi + '" data-s="' + m.src + '">' + opts + '</select></td><td class="stl-b">' + badge + '</td></tr>';
+          var why = /^values:/.test(m.reason || '') ? ' <span class="big-sub">(' + { 'values:code': T('same kind of number', 'उसी तरह की संख्या'), 'values:set': T('same values inside', 'भीतर वही मान'), 'values:dates': T('dates of the same period', 'उसी अवधि की तारीखें'), 'values:numbers': T('numbers of the same size', 'उसी आकार की संख्याएँ') }[m.reason] + ')</span>' : (m.reason === 'learned' ? ' <span class="big-sub">(' + T('you matched these before', 'आपने पहले ये मिलाए थे') + ')</span>' : '');
+          return '<tr class="lvl-' + m.level + '"><td>' + esc(f.headers[m.src] || 'Column ' + (m.src + 1)) + why + '</td><td>→</td><td><select class="big-select" data-f="' + fi + '" data-s="' + m.src + '">' + opts + '</select></td><td class="stl-b">' + badge + '</td></tr>';
         }).join('');
         return '<details class="stl-file"' + ((review || fresh) ? ' open' : '') + '><summary><b>' + esc(f.name) + '</b> <span class="big-sub">' + fmt(f.rows.length) + ' ' + T('rows', 'पंक्तियाँ') + (f.removed ? ' · ' + T('cleaned: ', 'साफ़: ') + f.removed + ' ' + T('rows removed', 'पंक्तियाँ हटीं') : '') + (review ? ' · <span class="stl-warn">' + review + ' ' + T('to check', 'जाँचने हैं') + '</span>' : '') + '</span>' +
           '<span class="stl-file-a">' + (f.sheets.length > 1 ? '<select class="big-select" data-sheet="' + fi + '">' + f.sheets.map(function (s) { return '<option' + (s === f.sheet ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') + '</select>' : '') +
@@ -309,7 +310,11 @@
     drop.ondrop = function (e) { e.preventDefault(); drop.classList.remove('over'); addFiles(Array.prototype.slice.call(e.dataTransfer.files)); };
     if (!n) return;
     o.querySelectorAll('select[data-f]').forEach(function (sel) {
-      sel.onchange = function () { MG.over[MG.files[+sel.dataset.f].name + '|' + sel.dataset.s] = sel.value; renderMerge(); };
+      sel.onchange = function () {
+        var f = MG.files[+sel.dataset.f]; MG.over[f.name + '|' + sel.dataset.s] = sel.value;
+        if (sel.value !== '__skip' && STL.lex) STL.lex.learnColumn(f.headers[+sel.dataset.s], sel.value);                       // next time these two headings match by themselves
+        renderMerge();
+      };
     });
     o.querySelectorAll('[data-rm]').forEach(function (b) { b.onclick = function (e) { e.preventDefault(); MG.files.splice(+b.dataset.rm, 1); MG.over = {}; renderMerge(); }; });
     o.querySelectorAll('[data-up]').forEach(function (b) { b.onclick = function (e) { e.preventDefault(); var i = +b.dataset.up, t = MG.files[i]; MG.files[i] = MG.files[i - 1]; MG.files[i - 1] = t; MG.over = {}; renderMerge(); }; });

@@ -14,6 +14,8 @@ DEPTS = ['Revenue (Land)', 'Water Supply (PHED)', 'Pension', 'Health']
 FIRST = ['Ramesh', 'Suresh', 'Kamla', 'Geeta', 'Salim', 'Mohan', 'Pushpa', 'Dinesh', 'Rekha', 'Hanuman', 'Sunita', 'Prakash']
 LAST = ['Gurjar', 'Jat', 'Rawat', 'Meena', 'Sharma', 'Rathore', 'Prajapat', 'Mali', 'Bhati', 'Yadav', 'Khan', 'Saini']
 MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+HI_FIRST = {'Ramesh': 'रमेश', 'Suresh': 'सुरेश', 'Kamla': 'कमला', 'Geeta': 'गीता', 'Salim': 'सलीम', 'Mohan': 'मोहन', 'Pushpa': 'पुष्पा', 'Dinesh': 'दिनेश', 'Rekha': 'रेखा', 'Hanuman': 'हनुमान', 'Sunita': 'सुनीता', 'Prakash': 'प्रकाश'}
+HI_LAST = {'Gurjar': 'गुर्जर', 'Jat': 'जाट', 'Rawat': 'रावत', 'Meena': 'मीणा', 'Sharma': 'शर्मा', 'Rathore': 'राठौड़', 'Prajapat': 'प्रजापत', 'Mali': 'माली', 'Bhati': 'भाटी', 'Yadav': 'यादव', 'Khan': 'खान', 'Saini': 'सैनी'}
 HI = str.maketrans('0123456789', '०१२३४५६७८९')
 ASOF = dt.date(2026, 1, 31)
 
@@ -33,6 +35,11 @@ def amount(a):
     return a if x < .4 else f'₹ {a:,}' if x < .7 else f'{a}/-' if x < .85 else f'Rs.{a:,}.00'
 
 
+def hindi(n):
+    f, l = n.split()
+    return HI_FIRST[f] + ' ' + HI_LAST[l]
+
+
 def make(path):
     cases = []
     n = 0
@@ -44,7 +51,7 @@ def make(path):
             disp = d + dt.timedelta(days=took)
             status = 'Pending' if disp > ASOF or R.random() < .08 else R.choice(['Disposed', 'Disposed', 'Disposed', 'Rejected'])
             cases.append(dict(sheet=sheet, reg=f'GRV/{d.year}/{n:05d}', date=d, name=f'{R.choice(FIRST)} {R.choice(LAST)}', block=R.choice(BLOCKS), village=f'V{R.randint(1, 9)}',
-                              dept=R.choice(DEPTS), amt=R.choice([None, None, R.randint(1000, 90000)]), status=status, disp=None if status == 'Pending' else disp))
+                              dept=R.choice(DEPTS), amt=R.choice([None, None, R.randint(1000, 90000)]), status=status, disp=None if status == 'Pending' else disp, mob=9000000000 + R.randint(0, 99999999)))
     wb = Workbook(); ws = wb.active; ws.title = 'Cover'; ws.merge_cells('A1:F1'); ws['A1'] = 'District Collectorate — Grievance Register'; ws['A1'].font = Font(bold=True, size=14); ws['A3'] = 'Report as on: 31/01/2026'
     ws['A4'] = 'Sheet FY A is block-wise; FY B has month totals; some applicants were entered twice.'
     # ---- FY A: block-wise
@@ -63,7 +70,7 @@ def make(path):
             copies = 2 if R.random() < .06 else 1
             dupsA += copies - 1
             for _ in range(copies):
-                nm = c['name'] if _ == 0 else R.choice([c['name'].upper(), 'Shri ' + c['name'], c['name'] + ' '])
+                nm = c['name'] if _ == 0 else R.choice([c['name'].upper(), 'Shri ' + c['name'], c['name'] + ' ', hindi(c['name']), hindi(c['name'])])
                 vals = [i, c['reg'], shape(c['date']), nm, c['village'], c['dept'], amount(c['amt']), R.choice([c['status'], c['status']]) if c['status'] != 'Disposed' else R.choice(['Disposed', 'Disposed', 'disposed', 'Disposed Off']), shape(c['disp']) if c['disp'] else None]
                 for k, v in enumerate(vals, 1): wa.cell(row=row, column=k, value=v)
                 row += 1
@@ -74,7 +81,7 @@ def make(path):
     for a, b, t in [(1, 3, 'Case'), (4, 5, 'Applicant'), (6, 8, 'Location / Department'), (9, 10, 'Outcome')]:
         wbk.merge_cells(start_row=4, start_column=a, end_row=4, end_column=b); wbk.cell(row=4, column=a, value=t).font = Font(bold=True)
     HB = ['S.No', 'Reg. No', 'Date of Reg', 'Applicant Name', 'Village', 'Block', 'Village2', 'Dept', 'Amt Claimed', 'Current Status']
-    HB = ['S.No', 'Reg. No', 'Date of Reg', 'Applicant Name', 'Mobile', 'Block', 'Village', 'Dept', 'Amt Claimed', 'Current Status']
+    HB = ['S.No', 'Reg. No', 'Date of Reg', 'Applicant Name', 'Mobile', 'Block', 'Village', 'Wing', 'Amt Claimed', 'Current Status']
     for c, h in enumerate(HB, 1): wbk.cell(row=5, column=c, value=h).font = Font(bold=True)
     row = 6; k = 0; prev = None; mc = 0; dupsB = 0
     mine = sorted([c for c in cases if c['sheet'] == 'B'], key=lambda c: c['date'])
@@ -85,18 +92,23 @@ def make(path):
         copies = 2 if R.random() < .06 else 1
         dupsB += copies - 1
         for _ in range(copies):
-            nm = c['name'] if _ == 0 else R.choice([c['name'].lower(), c['name'].upper()])
+            nm = c['name'] if _ == 0 else R.choice([c['name'].lower(), c['name'].upper(), hindi(c['name'])])
             blk = R.choice(VARIANTS[c['block']]) if R.random() < .12 else c['block']
             st = c['status'] if c['status'] != 'Disposed' else R.choice(['Disposed', 'Disposed', 'Closed'])
-            vals = [k, c['reg'], shape(c['date']), nm, 9000000000 + R.randint(0, 99999999), blk, c['village'], c['dept'], amount(c['amt']), st]
+            vals = [k, c['reg'], shape(c['date']), nm, c['mob'], blk, c['village'], c['dept'], amount(c['amt']), st]
             for q, v in enumerate(vals, 1): wbk.cell(row=row, column=q, value=v)
             row += 1
     wbk.cell(row=row, column=1, value=f'Total for {MON[prev[1] - 1]}-{prev[0]} :'); wbk.cell(row=row, column=2, value=mc); row += 2
     wbk.cell(row=row, column=1, value='GRAND TOTAL'); wbk.cell(row=row, column=2, value=k); wbk.cell(row=row + 2, column=1, value='Verified by: ____________  Signature')
+    # ---- Summary sent upward, typed by a clerk: Beawar's case count is 5 too high; every other number is right
+    wsm = wb.create_sheet('Summary'); wsm['A1'] = 'Block-wise summary sent to the State'; wsm.append([]); wsm.append(['Block', 'Cases received', 'Pending'])
+    cnt = {b: sum(1 for c in cases if c['block'] == b) for b in BLOCKS}; pen = {b: sum(1 for c in cases if c['block'] == b and c['status'] == 'Pending') for b in BLOCKS}
+    for b in BLOCKS: wsm.append([b, cnt[b] + (5 if b == 'Beawar' else 0), pen[b]])
+    wsm.append(['Total', sum(cnt.values()) + 5, sum(pen.values())])
     wb.save(path)
     pending = {b: sum(1 for c in cases if c['block'] == b and c['status'] == 'Pending') for b in BLOCKS}
     return {'cases': len(cases), 'rowsA': len([c for c in cases if c['sheet'] == 'A']) + dupsA, 'rowsB': len([c for c in cases if c['sheet'] == 'B']) + dupsB, 'dups': dupsA + dupsB, 'pending': pending, 'pending_total': sum(pending.values()),
-            'blocks': len(BLOCKS), 'unique_after': len(cases)}
+            'blocks': len(BLOCKS), 'unique_after': len(cases), 'summary_wrong': [['Beawar', 'Cases received', cnt['Beawar'] + 5, cnt['Beawar']]]}
 
 
 if __name__ == '__main__':

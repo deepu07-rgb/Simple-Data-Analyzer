@@ -6,6 +6,9 @@
 //    format   - same after ignoring capitals, spaces, dots, titles (Shri, Dr.) and words like "Dept."      (safe, pre-ticked)
 //    spelling - one or two letters different, and the odd spelling is much rarer than the common one      (pre-ticked)
 //    part     - one value is a part of the other ("Revenue" / "Revenue (Land)"), or the words are re-ordered   (to check)
+//    script   - the same word in Hindi and in English ("कमला लोढ़ा" / "Kamla Lodha", "ब्यावर" / "Beawar")       (pre-ticked)
+//    meaning  - a different word for the same thing ("Closed" / "Disposed", "लंबित" / "Pending")             (to check; pre-ticked once you taught it)
+//    acronym  - "PWD" / "Public Works (Roads)";  initials - "M. Joshi" / "Mahesh Joshi" (never when two people fit) (to check)
 //    STL.values.groups(values)            -> [{ canonical, kind, n, variants: [{ v, n }] }]    (groups with 2+ spellings)
 //    STL.values.apply(rows, col, mapping) -> number of cells changed (mapping: { oldValue: newValue })
 // =====================================================================
@@ -30,6 +33,8 @@
   }
   function toks(k) { return k.split(' ').filter(Boolean); }
 
+  V.WEAK = { part: 1, meaning: 1, acronym: 1, initials: 1 };                                         // kinds that must be checked by a person
+  function topOf(g) { var b = g.variants[0]; g.variants.forEach(function (x) { if (x.n > b.n) b = x; }); return b.v; }
   // values: array of cell values -> groups of two or more spellings
   V.groups = function (values, opt) {
     opt = opt || {}; var counts = {}, order = [], total = 0;
@@ -40,12 +45,26 @@
     // merge groups of nearly the same value (only when the column has a manageable number of different values)
     var parent = G.map(function (_, i) { return i; }), why = {};
     function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
-    function join(a, b, kind) { a = find(a); b = find(b); if (a === b) return; if (G[a].n < G[b].n) { var t = a; a = b; b = t; } parent[b] = a; why[a] = (why[a] === 'part' || kind === 'part') ? 'part' : (why[a] || kind); if (kind === 'part') why[a] = 'part'; }
+    function join(a, b, kind) {
+      a = find(a); b = find(b); if (a === b) return; if (G[a].n < G[b].n) { var t = a; a = b; b = t; } parent[b] = a;
+      var ka = why[a], kb = why[b], ks = [ka, kb, kind].filter(Boolean), weak = ks.filter(function (k) { return V.WEAK[k]; });
+      why[a] = weak.length ? weak[weak.length - 1] : (ks.indexOf('script') >= 0 ? 'script' : ks.indexOf('learned') >= 0 ? 'learned' : (ks.indexOf('spelling') >= 0 ? 'spelling' : kind));
+    }
+    var cand = [];
     if (G.length <= (opt.maxDistinct || 600)) {
-      var sk = G.map(function (g) { return sortedKey(g.key); }), tk = G.map(function (g) { return toks(g.key); });
+      var sk = G.map(function (g) { return sortedKey(g.key); }), tk = G.map(function (g) { return toks(g.key); }), LX = STL.lex;
+      var top = G.map(topOf), dev = G.map(function (g, i) { return LX ? LX.isDev(top[i]) : false; }), cc = G.map(function (g) { return LX ? LX.concept(g.key) : g.key; }),
+          lrn = G.map(function (g) { return LX && LX.learned ? LX.learned(g.key) !== undefined : false; }), ini = G.map(function (g, i) { return tk[i].some(function (w) { return w.length === 1; }); }),
+          skl = G.map(function (g, i) { return LX && g.key.length >= 3 ? LX.skeleton(top[i]).filter(function (w) { return w.length >= 2; }) : []; });
       for (var i = 0; i < G.length; i++) for (var j = i + 1; j < G.length; j++) {
         var a = G[i], b = G[j], big = Math.max(a.n, b.n), small = Math.min(a.n, b.n), ratio = small / big;
         if (sk[i] === sk[j]) { join(i, j, 'part'); continue; }                                         // the same words in another order
+        if (LX) {
+          if (dev[i] !== dev[j] && LX.scriptPair(top[i], top[j])) { join(i, j, 'script'); continue; }   // Hindi / English
+          if (cc[i] === cc[j] && a.key !== b.key) { join(i, j, lrn[i] || lrn[j] ? 'learned' : 'meaning'); continue; }
+          if ((LX.acronymOf(top[i], top[j]) || LX.acronymOf(top[j], top[i])) && G.length <= 200) { cand.push([i, j, 'acronym', LX.acronymOf(top[i], top[j]) ? i : j]); continue; }
+          if ((ini[i] || ini[j]) && skl[i].length && skl[j].length && skl[i].some(function (w) { return skl[j].indexOf(w) >= 0; }) && LX.sameName(top[i], top[j])) { cand.push([i, j, 'initials', ini[i] ? i : j]); continue; }
+        }
         var la = a.key.length, lb = b.key.length, mn = Math.min(la, lb);
         var maxD = mn >= 10 ? 2 : ((mn >= 6 && ratio <= 0.12) || (mn >= 5 && ratio <= 0.05) ? 2 : 1), dist = mn >= 5 ? lev(a.key, b.key, maxD) : 9;                    // a typo is much rarer than the right spelling
         if (mn >= 5 && ((dist <= maxD && ratio <= 0.15) || (dist === 1 && mn >= 8 && ratio <= 0.35))) { join(i, j, 'spelling'); continue; }      // one letter in a long word is a typo even when it is common
@@ -56,6 +75,11 @@
         if (sh.length < lo.length && sh.length >= 1 && sh.join('').length >= 3 && ratio <= 0.35 && sh.every(function (w) { return lo.indexOf(w) >= 0; })) join(i, j, 'part');
       }
     }
+    var asShort = {}; cand.forEach(function (c) { (asShort[c[3]] = asShort[c[3]] || []).push(c); });          // "A. Sharma" fits both Anil and Ashok Sharma: join neither
+    Object.keys(asShort).forEach(function (sIdx) {                                                    // the other side must be ONE value after the groups found so far (Anil Sharma + Anil Kumar Sharma = one)
+      var list = asShort[sIdx], others = {}; list.forEach(function (c) { others[find(c[0] === +sIdx ? c[1] : c[0])] = 1; });
+      if (Object.keys(others).length === 1) list.forEach(function (c) { join(c[0], c[1], c[2]); });
+    });
     var merged = {};
     G.forEach(function (g, i) { var r = find(i); if (!merged[r]) merged[r] = { variants: [], n: 0, kind: why[r] || 'format' }; g.variants.forEach(function (x) { merged[r].variants.push(x); }); merged[r].n += g.n; });
     var out = [];
@@ -65,6 +89,7 @@
       var distinctKeys = {}; m.variants.forEach(function (x) { distinctKeys[V.key(x.v)] = 1; });
       m.canonical = m.variants[0].v.replace(/\s+/g, ' ').trim();
       if (Object.keys(distinctKeys).length === 1) m.kind = 'format';
+      if (m.kind === 'learned') m.kind = 'meaning', m.learned = true;
       out.push(m);
     });
     out.sort(function (x, y) { return y.n - x.n; });
@@ -125,9 +150,10 @@
     c.groups.forEach(function (g, gi) { items.push({ v: g.canonical, n: g.n, group: gi, spellings: g.variants.length }); });      // a group can be merged with other values as a whole
     return items.sort(function (a, b) { return b.n - a.n; }).slice(0, 80);
   }
-  var KIND = { format: ['#14a38b', T('same, written differently', 'वही, अलग लिखा')], manual: ['#3b82c4', T('you merged', 'आपने जोड़ा')], spelling: ['#e8913a', T('spelling', 'वर्तनी')], part: ['#6d5bd0', T('part of / re-ordered', 'का भाग / क्रम बदला')] };
+  var KIND = { format: ['#14a38b', T('same, written differently', 'वही, अलग लिखा')], manual: ['#3b82c4', T('you merged', 'आपने जोड़ा')], spelling: ['#e8913a', T('spelling', 'वर्तनी')], part: ['#6d5bd0', T('part of / re-ordered', 'का भाग / क्रम बदला')],
+    script: ['#0e8fb0', T('Hindi ↔ English', 'हिंदी ↔ अंग्रेज़ी')], meaning: ['#b0589f', T('same meaning? check', 'एक अर्थ? जाँचें')], acronym: ['#6d5bd0', T('short form? check', 'संक्षिप्त रूप? जाँचें')], initials: ['#6d5bd0', T('initials? check', 'आद्याक्षर? जाँचें')] };
   function render() {
-    var c = ST.cols[ST.cur], chosen = ST.chosen[c.col] || (ST.chosen[c.col] = c.groups.map(function (g) { return g.kind !== 'part'; }));
+    var c = ST.cols[ST.cur], chosen = ST.chosen[c.col] || (ST.chosen[c.col] = c.groups.map(function (g) { return !V.WEAK[g.kind] || !!g.learned; }));
     var html = '<div class="prj-h"><b>🔤 ' + T('Same thing, different spelling', 'एक ही चीज़, अलग वर्तनी') + '</b><button id="vgX" aria-label="close">×</button></div>' +
       '<div class="big-note">' + T('Tick the groups that are really one value and choose how it should be written. Nothing changes until you press Apply, and you can undo it. A group marked “part of” may be two different things: check it.', 'जो समूह असल में एक ही मान हैं उन पर निशान लगाएँ और चुनें कि वह कैसे लिखा जाए। "लागू करें" से पहले कुछ नहीं बदलता, और पूर्ववत किया जा सकता है। “का भाग” वाला समूह दो अलग चीज़ें भी हो सकता है: जाँचें।') + '</div>' +
       '<div class="fr-form"><label class="rp-field"><span>' + T('Column', 'कॉलम') + '</span><select id="vgCol" class="big-select">' + ST.cols.map(function (x, i) { return '<option value="' + i + '"' + (i === ST.cur ? ' selected' : '') + '>' + esc(x.name) + ' — ' + fmt(x.cells) + T(' cells to change', ' सेल बदलेंगे') + '</option>'; }).join('') + '</select></label></div>' +
@@ -165,6 +191,7 @@
       setTimeout(function () {
         try {
           var grid = [headers.slice()].concat(rawData.map(function (r) { return r.slice(); })), body = grid.slice(1), n = V.apply(body, c.col, map);
+          if (STL.lex) { var teach = []; c.groups.forEach(function (g, gi) { if (chosen[gi] === false || !(g.kind === 'manual' || g.kind === 'meaning' || g.kind === 'acronym')) return; var to = (typeof chosen[gi] === 'string') ? chosen[gi] : g.canonical; g.variants.forEach(function (x) { if (x.v !== to) teach.push([x.v, to]); }); }); STL.lex.learn(teach); }      // remembered for every later file
           U.loadGrid(grid);
           STL.logStep('values', { en: 'Grouped different spellings', hi: 'अलग वर्तनी को एक किया' }, { en: name + ': ' + fmt(n) + ' cells now use one spelling', hi: name + ': ' + fmt(n) + ' सेल में एक वर्तनी' }, { col: name, cells: n });
           toast(T('Done: ', 'हो गया: ') + fmt(n) + T(' cells in “' + name + '” changed', ' सेल “' + name + '” में बदले'), 'success');

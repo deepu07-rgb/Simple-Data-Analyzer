@@ -39,16 +39,16 @@
     ['amount', 'amt', 'राशि', 'रकम', 'धनराशि', 'रुपये', 'rs', 'rupees', 'amount involved', 'amount involved rs', 'amount claimed', 'claim amount', 'विवादित राशि'],
     ['total', 'कुल', 'योग', 'जोड़', 'grand total', 'कुल योग'],
     ['case no', 'case number', 'प्रकरण संख्या', 'प्रकरण क्रमांक', 'मुकदमा संख्या', 'fir no', 'fir number', 'एफआईआर संख्या', 'एफआईआर नंबर', 'एफ आई आर संख्या'],
-    ['status', 'स्थिति', 'वर्तमान स्थिति', 'current status'],
+    ['status', 'स्थिति', 'वर्तमान स्थिति', 'current status', 'case status', 'stage', 'state of case', 'progress', 'प्रगति', 'वर्तमान अवस्था', 'अवस्था'],
     ['address', 'पता', 'पते', 'addr'],
     ['mobile', 'mobile no', 'mobile number', 'phone', 'phone no', 'contact', 'contact no', 'मोबाइल', 'मोबाइल नंबर', 'मोबाइल संख्या', 'फोन', 'फ़ोन', 'संपर्क', 'दूरभाष'],
     ['designation', 'post', 'rank', 'पद', 'पदनाम', 'पद नाम'],
     ['department', 'dept', 'विभाग', 'विभाग का नाम'],
     ['salary', 'pay', 'वेतन', 'मासिक वेतन', 'basic pay', 'मूल वेतन'],
     ['village', 'gram', 'ग्राम', 'गाँव', 'गांव'],
-    ['tehsil', 'tahsil', 'तहसील'],
-    ['block', 'ब्लॉक', 'खंड', 'विकास खंड'],
-    ['remarks', 'remark', 'टिप्पणी', 'रिमार्क', 'विशेष', 'अभ्युक्ति', 'नोट', 'note', 'notes'],
+    ['tehsil', 'tahsil', 'तहसील', 'taluka', 'taluk', 'तालुका'],
+    ['block', 'ब्लॉक', 'खंड', 'विकास खंड', 'panchayat samiti', 'पंचायत समिति', 'development block'],
+    ['remarks', 'action taken', 'action taken report', 'atr', 'reply', 'response', 'disposal remarks', 'कृत कार्यवाही', 'की गई कार्यवाही', 'उत्तर', 'remark', 'टिप्पणी', 'रिमार्क', 'विशेष', 'अभ्युक्ति', 'नोट', 'note', 'notes'],
     ['year', 'वर्ष', 'साल'],
     ['month', 'माह', 'महीना', 'मास'],
     ['pending', 'लंबित', 'लम्बित', 'पेंडिंग', 'pendency'],
@@ -57,7 +57,7 @@
     ['male', 'पुरुष'], ['female', 'महिला'],
     ['category', 'श्रेणी', 'वर्ग', 'cat'],
     ['section', 'धारा', 'sections', 'ipc section'],
-    ['complainant', 'परिवादी', 'शिकायतकर्ता', 'प्रार्थी'],
+    ['complainant', 'परिवादी', 'शिकायतकर्ता', 'प्रार्थी', 'applicant', 'petitioner', 'grievant', 'informant', 'name of complainant', 'complainant name', 'आवेदक', 'आवेदक का नाम', 'applicant name', 'name of applicant', 'citizen', 'नागरिक का नाम'],
     ['accused', 'आरोपी', 'अभियुक्त'],
     ['beneficiary', 'लाभार्थी', 'हितग्राही'],
     ['scheme', 'योजना', 'yojana'],
@@ -72,9 +72,11 @@
     ['registration number', 'registration', 'पंजीयन संख्या', 'पंजीकरण क्रमांक', 'पंजीयन क्रमांक', 'reg number', 'complaint number', 'application number'],
     ['date of registration', 'registration date', 'पंजीयन दिनांक', 'पंजीकरण दिनांक', 'date of filing', 'filing date'],
     ['date of disposal', 'disposal date', 'निस्तारण दिनांक', 'निस्तारण की तिथि', 'date of closure', 'closure date'],
-    ['name of applicant', 'applicant name', 'applicant', 'आवेदक का नाम', 'आवेदक', 'name of complainant', 'complainant name'],
-    ['officer', 'officer assigned', 'assigned officer', 'concerned officer', 'अधिकारी', 'संबंधित अधिकारी'],
-    ['rating', 'satisfaction', 'feedback rating', 'संतुष्टि', 'रेटिंग']
+    ['officer', 'handled by', 'dealing officer', 'dealing assistant', 'concerned official', 'official', 'pointer', 'attended by', 'officer assigned', 'in charge', 'incharge', 'प्रभारी', 'कार्यवाहक अधिकारी', 'assigned officer', 'concerned officer', 'अधिकारी', 'संबंधित अधिकारी'],
+    ['rating', 'satisfaction', 'feedback rating', 'संतुष्टि', 'रेटिंग', 'citizen rating', 'feedback score', 'score'],
+    ['subject', 'nature of complaint', 'nature of grievance', 'grievance type', 'complaint type', 'issue', 'topic', 'विषय', 'शिकायत का प्रकार', 'शिकायत का विषय', 'category of grievance'],
+    ['ward', 'वार्ड', 'locality', 'mohalla', 'मोहल्ला', 'colony', 'कॉलोनी'],
+    ['cost', 'estimated cost', 'project cost', 'लागत', 'अनुमानित लागत']
   ];
   var ALIAS = {};
   GLOSSARY.forEach(function (g, i) { g.forEach(function (a) { var n = normalize(a); if (n && ALIAS[n] === undefined) ALIAS[n] = i; }); });
@@ -145,6 +147,38 @@
   }
   M.normalize = normalize; M.score = score; M.groupOf = groupOf;
 
+  // ---------------------------------------------------------------- what is inside the column
+  // Two columns with no word in common can still hold the same thing: the same registration-number pattern, the same set of
+  // values (Status: Pending / Disposed), dates in the same period, numbers of the same size. Used only when the names do not decide.
+  function shapeOf(v) { return s(v).trim().replace(/[A-Za-z]+/g, 'A').replace(/[०-९0-9]+/g, '9').replace(/\s+/g, ' '); }
+  var DATE_RE = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}[ \-][A-Za-z]{3,9}[ \-,]+\d{2,4})/;
+  function profile(vals) {
+    var nz = vals.map(function (v) { return s(v).trim(); }).filter(Boolean), n = nz.length, p = { n: n };
+    if (n < 5) return p;
+    var distinct = {}, shapes = {}, dates = 0, nums = 0, letters = 0, dev = 0, k = 0, d = 0;
+    nz.forEach(function (v) { if (!distinct[v]) { distinct[v] = 1; d++; } var sh = shapeOf(v); shapes[sh] = (shapes[sh] || 0) + 1; if (DATE_RE.test(v)) dates++; else if (!isNaN(Number(v.replace(/,/g, '')))) nums++; if (/[A-Za-z]/.test(v)) letters++; if (/[ऀ-ॿ]/.test(v)) dev++; });
+    p.d = d; p.dates = dates / n; p.nums = nums / n; p.text = letters / n; p.dev = dev / n; p.cat = d <= Math.max(30, n * 0.1) ? Object.keys(distinct) : null;
+    var best = ''; Object.keys(shapes).forEach(function (x) { if (!best || shapes[x] > shapes[best]) best = x; }); p.shape = best; p.shapeShare = shapes[best] / n; p.unique = d / n;
+    if (p.nums > 0.8) { var xs = nz.map(function (v) { return Number(v.replace(/,/g, '')); }).filter(function (x) { return isFinite(x); }).sort(function (a, b) { return a - b; }); p.med = xs[Math.floor(xs.length / 2)]; p.lo = xs[Math.floor(xs.length * 0.05)]; p.hi = xs[Math.floor(xs.length * 0.95)]; }
+    if (p.dates > 0.8) { var ts = nz.map(function (v) { var m = /^(\d{4})-(\d{2})/.exec(v); return m ? +m[1] * 12 + +m[2] : null; }).filter(function (x) { return x !== null; }).sort(function (a, b) { return a - b; }); if (ts.length) { p.t0 = ts[0]; p.t1 = ts[ts.length - 1]; } }
+    return p;
+  }
+  function conceptKey(v) { var L = STL.lex; return L ? L.concept(s(v).toLowerCase().replace(/\s+/g, ' ').trim()) : s(v).toLowerCase().trim(); }
+  // -> { score, reason } or null.  Never above 0.88: a match from content alone is shown for checking, not applied silently.
+  function byValues(pa, pb) {
+    if (!pa || !pb || pa.n < 5 || pb.n < 5) return null;
+    if (pa.shapeShare >= 0.8 && pb.shapeShare >= 0.8 && pa.shape === pb.shape && pa.unique > 0.7 && pb.unique > 0.7 && /[A-Za-z]/.test(pa.shape) && /9/.test(pa.shape) && pa.shape.length >= 5) return { score: 0.86, reason: 'values:code' };   // GRV/2025/00012
+    if (pa.cat && pb.cat && pa.cat.length >= 2 && pb.cat.length >= 2) {
+      var A = {}, B = {}; pa.cat.forEach(function (v) { A[conceptKey(v)] = 1; }); pb.cat.forEach(function (v) { B[conceptKey(v)] = 1; });
+      var ka = Object.keys(A), kb = Object.keys(B), inter = ka.filter(function (k) { return B[k]; }).length, small = Math.min(ka.length, kb.length);
+      if (small >= 2 && inter / small >= 0.6 && inter / (ka.length + kb.length - inter) >= 0.4) return { score: 0.8 + 0.06 * (inter / small), reason: 'values:set' };
+    }
+    if (pa.dates > 0.8 && pb.dates > 0.8 && pa.t0 !== undefined && pb.t0 !== undefined && Math.abs(pa.t0 - pb.t0) <= 24 && Math.abs(pa.t1 - pb.t1) <= 24) return { score: 0.72, reason: 'values:dates' };
+    if (pa.nums > 0.8 && pb.nums > 0.8 && pa.med > 0 && pb.med > 0 && pa.d > 12 && pb.d > 12) { var r = pa.med / pb.med; if (r > 0.6 && r < 1.67 && pa.hi / pb.hi > 0.5 && pa.hi / pb.hi < 2) return { score: 0.72, reason: 'values:numbers' }; }
+    return null;
+  }
+  M.profile = profile; M.byValues = byValues;
+
   // ---------------------------------------------------------------- planning
   var AUTO = 0.9, REVIEW = 0.7;
   // "Location / Department / Block": the group words are not part of the name. Use the last part when it is unique in its file.
@@ -155,17 +189,21 @@
     leaves.forEach(function (l) { var k = normalize(l); cnt[k] = (cnt[k] || 0) + 1; });
     return headers.map(function (h, i) { return cnt[normalize(leaves[i])] === 1 && leaves[i] ? leaves[i] : s(h); });
   }
-  function column(file, i) { var v = []; for (var r = 0; r < Math.min(file.rows.length, 200); r++) v.push(file.rows[r][i]); return v; }
+  function column(file, i, max) { var v = [], n = Math.min(file.rows.length, max || 200), step = Math.max(1, Math.floor(file.rows.length / n)); for (var r = 0; r < file.rows.length && v.length < n; r += (max ? step : 1)) v.push(file.rows[r][i]); return v; }
 
   // files: [{name, headers, rows}] (already cleaned: header row first). Returns the combined header list and,
   // for every file, which of its columns goes where.
   M.plan = function (files) {
-    var headers = [], tnames = [], samples = [], maps = [];
+    var headers = [], tnames = [], samples = [], maps = [], profs = [];
     files.forEach(function (f, fi) {
-      var pairs = [], sn = scoringNames(f.headers);
+      var pairs = [], sn = scoringNames(f.headers), fp = f.headers.map(function (h, i) { return fi ? profile(column(f, i, 1500)) : null; });
       f.headers.forEach(function (h, i) {
         headers.forEach(function (t, j) {
-          var sc = score(sn[i], tnames[j], column(f, i), samples[j]);
+          var sc = score(sn[i], tnames[j], column(f, i), samples[j]), L = STL.lex;
+          if (sc.score < REVIEW && L && L.columnLearned(sn[i], tnames[j])) sc = { score: 0.95, reason: 'learned' };           // the person said so once
+          else if (sc.score < REVIEW && fp[i] && profs[j] && sc.reason !== 'different' && sc.reason.indexOf('+type') < 0) {
+            var bv = byValues(fp[i], profs[j]); if (bv && bv.score > sc.score) sc = bv;
+          }
           if (sc.score >= REVIEW) pairs.push({ src: i, tgt: j, score: sc.score, reason: sc.reason });
         });
       });
@@ -184,7 +222,7 @@
         } else {
           headers.push(isBlankHeader(h) ? 'Column ' + (headers.length + 1) : s(sn[i]).trim());
           tnames.push(isBlankHeader(h) ? 'Column ' + (headers.length) : sn[i]);
-          samples.push(column(f, i));
+          samples.push(column(f, i)); profs.push(profile(column(f, i, 1500)));
           map.push({ src: i, tgt: headers.length - 1, score: fi === 0 ? 1 : 0, level: fi === 0 ? 'first' : 'new', reason: fi === 0 ? 'first' : 'new' });
         }
       });
