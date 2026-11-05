@@ -40,6 +40,7 @@
     { id: 'scatter', group: 'relate',  name: B('Scatter', 'बिखराव'),             needs: 'num2' },
     { id: 'bubble',  group: 'relate',  name: B('Bubble', 'बबल'),                 needs: 'num3' },
     { id: 'heatmap', group: 'relate',  name: B('Heat map', 'हीट मैप'),           needs: 'cat2' },
+    { id: 'sankey',  group: 'relate',  name: B('Flow (Sankey)', 'प्रवाह (सैंकी)'), needs: 'cat2' },
     { id: 'radar',   group: 'relate',  name: B('Radar', 'रडार'),                 needs: 'cat+num3' },
     { id: 'histogram', group: 'dist',  name: B('Histogram', 'हिस्टोग्राम'),      needs: 'num' },
     { id: 'boxplot', group: 'dist',    name: B('Box plot', 'बॉक्स प्लॉट'),       needs: 'cat+num' },
@@ -403,6 +404,21 @@
     o.series = [{ type: 'heatmap', data: m.cells, label: { show: m.xs.length * m.ys.length <= 120, color: '#111', formatter: function (p) { return compact(p.value[2], env.hi); } }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,.35)' } }, itemStyle: { borderColor: '#fff', borderWidth: 1 } }];
     return o;
   };
+  BUILD.sankey = function (spec, headers, data, env, ctx) {
+    var sk = ctx.sankey, o = base(spec, env, { feature: {} }); o.legend = undefined;
+    var lab = function (n) { var t = n.label; return t.length > 22 ? t.slice(0, 21) + '…' : t; };
+    o.tooltip.trigger = 'item';
+    o.tooltip.formatter = function (p) {
+      if (p.dataType === 'edge') { var L = sk.links[p.data._li], a = sk.nodes[L.s], b = sk.nodes[L.t]; return a.label + ' → ' + b.label + '<br/><b>' + indian(L.value) + '</b> (' + pctText(sk.total ? L.value / sk.total * 100 : 0) + T(env, ' of all', ' कुल का') + ')'; }
+      var N = sk.nodes[p.data._ni]; return N.label + '<br/><b>' + indian(N.value) + '</b> (' + pctText(sk.total ? N.value / sk.total * 100 : 0) + ')<br/><span style="color:#94a3b8">' + headers[sk.levels[N.level]] + '</span>';
+    };
+    o.series = [{ type: 'sankey', left: 14, right: 120, top: spec.title ? 56 : 28, bottom: 24, nodeWidth: 16, nodeGap: 10, draggable: true, layoutIterations: 24,
+      emphasis: { focus: 'adjacency' }, lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.38 }, itemStyle: { borderWidth: 0, borderRadius: 3 },
+      label: { color: env.text, fontSize: 12, formatter: function (p) { return lab(p.data); } },
+      data: sk.nodes.map(function (n, i) { return { name: n.name, label: n.label, _ni: i, depth: n.level }; }),
+      links: sk.links.map(function (L, i) { return { source: sk.nodes[L.s].name, target: sk.nodes[L.t].name, value: L.value, _li: i }; }) }];
+    return o;
+  };
   BUILD.radar = function (spec, headers, data, env, ctx) {
     var o = base(spec, env, { feature: {} }), ind = ctx.indicators, cats = data.cats.slice(0, 6);
     o.tooltip.trigger = 'item';
@@ -455,6 +471,8 @@
       ctx.hist = histogram(vals, spec.bins); data = { cats: [], series: [], rowsUsed: idx.length };
     } else if (type === 'heatmap') {
       ctx.matrix = matrix2(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
+    } else if (type === 'sankey') {
+      ctx.sankey = sankeyData(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
     } else if (type === 'boxplot') {
       ctx.box = boxData(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
     } else if (type === 'calendar') {
@@ -509,6 +527,34 @@
     Object.keys(cell).forEach(function (k) { var p = k.split('|'); if (xpos[p[0]] === undefined || ypos[p[1]] === undefined) return; var v = reduce(cell[k], mc < 0 ? 'count' : fn); if (v === null) return; cells.push([xpos[p[0]], ypos[p[1]], v]); if (v < mn) mn = v; if (v > mx) mx = v; });
     return { xs: xo.map(function (o) { return xs[o]; }), ys: yo.map(function (o) { return ys[o]; }), cells: cells, min: isFinite(mn) ? Math.min(0, mn) : 0, max: isFinite(mx) ? mx : 1 };
   }
+  // Flow between two or three category columns (A -> B -> C). Flows must be additive, so the measure is a total
+  // (or a row count); negative or blank values cannot flow and are counted as left out.
+  function sankeyData(spec, headers, rows, idx) {
+    var levels = [spec.x, spec.g, spec.g2].filter(function (c) { return c !== undefined && c !== null && c >= 0; });
+    if (levels.length < 2 || levels[0] === levels[1]) throw new Error('Choose two different category columns');
+    var mc = spec.ys && spec.ys[0] ? spec.ys[0].col : -1, useVal = mc >= 0, topN = spec.topN > 0 ? spec.topN : 10, paths = [], tot = levels.map(function () { return {}; }), skipped = 0;
+    idx.forEach(function (i) {
+      var row = rows[i], p = [], v = 1, bad = false;
+      for (var l = 0; l < levels.length; l++) { var t = s(row[levels[l]]).trim(); if (!t) { bad = true; break; } p.push(t); }
+      if (!bad && useVal) { v = num(row[mc]); if (v === null || v < 0) bad = true; }
+      if (bad) { skipped++; return; }
+      paths.push({ p: p, v: v, i: i }); p.forEach(function (t, l2) { tot[l2][t] = (tot[l2][t] || 0) + v; });
+    });
+    var keep = tot.map(function (m) { var ks = Object.keys(m).sort(function (a, b) { return m[b] - m[a] || (a < b ? -1 : 1); }); var o = {}; ks.slice(0, topN).forEach(function (k) { o[k] = 1; }); o.__more = ks.length > topN; return o; });
+    var nodes = [], nmap = {}, links = [], lmap = {}, others = false;
+    function node(l, label) { var key = l + '|' + label, n = nmap[key]; if (!n) { n = nmap[key] = { name: key, label: label, level: l, value: 0, rows: [], isOthers: label === '(Others)' }; nodes.push(n); } return n; }
+    paths.forEach(function (pt) {
+      var seq = pt.p.map(function (t, l) { var lb = keep[l][t] ? t : '(Others)'; if (lb === '(Others)') others = true; return node(l, lb); });
+      seq.forEach(function (n) { n.value += pt.v; n.rows.push(pt.i); });
+      for (var l = 0; l < seq.length - 1; l++) {
+        var k = seq[l].name + '>' + seq[l + 1].name, L = lmap[k];
+        if (!L) { L = lmap[k] = { s: nodes.indexOf(seq[l]), t: nodes.indexOf(seq[l + 1]), value: 0, rows: [] }; links.push(L); }
+        L.value += pt.v; L.rows.push(pt.i);
+      }
+    });
+    var total = nodes.filter(function (n) { return n.level === 0; }).reduce(function (a, n) { return a + n.value; }, 0);
+    return { nodes: nodes, links: links, total: total, levels: levels, skipped: skipped, others: others, measure: useVal ? s(headers[mc]) : '', used: paths.length };
+  }
   function boxData(spec, headers, rows, idx) {
     var col = spec.ys[0].col, by = {}, order = [];
     idx.forEach(function (i) { var k = s(rows[i][spec.x]).trim(); if (!k) return; var x = num(rows[i][col]); if (x === null) return; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(x); });
@@ -559,6 +605,17 @@
       }
       if (type === 'gauge') { add(ctx.kpi.label + ': ' + indian(ctx.kpi.value) + ' across ' + indian(data.rowsUsed) + ' rows.', ctx.kpi.label + ': ' + indian(ctx.kpi.value) + ', ' + indian(data.rowsUsed) + ' पंक्तियों में।'); return out; }
       if (type === 'heatmap') { var m = ctx.matrix; if (m.cells.length) { var top = m.cells.slice().sort(function (p, q) { return q[2] - p[2]; })[0]; add('The busiest combination is ' + m.xs[top[0]] + ' × ' + m.ys[top[1]] + ' (' + indian(top[2]) + ').', 'सबसे अधिक संयोजन ' + m.xs[top[0]] + ' × ' + m.ys[top[1]] + ' है (' + indian(top[2]) + ')।'); } return out; }
+      if (type === 'sankey') {
+        var K = ctx.sankey, big = K.links.slice().sort(function (a, b) { return b.value - a.value; })[0];
+        if (big && K.total) {
+          var a1 = K.nodes[big.s], b1 = K.nodes[big.t];
+          add('The biggest flow is ' + a1.label + ' → ' + b1.label + ': ' + indian(big.value) + ' (' + pctText(big.value / K.total * 100) + ' of ' + indian(K.total) + '). The thicker the band, the more rows move along it.',
+              'सबसे बड़ा प्रवाह ' + a1.label + ' → ' + b1.label + ' है: ' + indian(big.value) + ' (' + indian(K.total) + ' का ' + pctText(big.value / K.total * 100) + ')। जितनी मोटी पट्टी, उतनी अधिक पंक्तियाँ।');
+        }
+        if (K.skipped) add(indian(K.skipped) + ' rows were left out (a blank category or a missing/negative amount).', indian(K.skipped) + ' पंक्तियाँ छोड़ी गईं (खाली श्रेणी या अनुपलब्ध/ऋणात्मक राशि)।');
+        if (K.others) add('Smaller groups are combined as "Others".', 'छोटे समूह "अन्य" में जोड़े गए।');
+        return out;
+      }
       if (type === 'calendar') { if (ctx.cal.days) add(indian(ctx.cal.days) + ' days with data; the busiest day has ' + indian(ctx.cal.max) + '.', indian(ctx.cal.days) + ' दिनों का डेटा; सबसे व्यस्त दिन में ' + indian(ctx.cal.max) + ' हैं।'); return out; }
       if (type === 'boxplot') { if (ctx.box.labels.length) add('The box shows the middle half of the values, the line the median, dots are unusual values. ' + ctx.box.labels.length + ' groups with at least 3 rows.', 'डिब्बा मध्य आधे मान दिखाता है, रेखा माध्यिका, बिंदु असामान्य मान। कम से कम 3 पंक्तियों वाले ' + ctx.box.labels.length + ' समूह।'); return out; }
       if (type === 'radar') {
@@ -608,6 +665,7 @@
     if (n1) add('histogram', { xnum: n1.index, title: T({ hi: false }, 'Spread of ', '') + n1.name }, 'How the values of ' + n1.name + ' are spread', n1.name + ' के मान कैसे फैले हैं', 70);
     if (c1 && c2 && c1.distinct <= 25 && c2.distinct <= 25) add('heatmap', { x: c1.index, g: c2.index, ys: [{ col: -1, fn: 'count' }], title: c1.name + ' × ' + c2.name }, 'Where ' + c1.name + ' and ' + c2.name + ' overlap most', c1.name + ' और ' + c2.name + ' कहाँ सबसे अधिक मिलते हैं', 66);
     if (c1 && c1.distinct >= 12 && n1) add('treemap', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 40, title: n1.name + ' — ' + c1.name }, 'Which ' + c1.name + ' values are biggest', 'कौन-से ' + c1.name + ' सबसे बड़े हैं', 64);
+    if (c1 && c2 && c1.distinct <= 14 && c2.distinct <= 14) add('sankey', { x: c1.index, g: c2.index, ys: [{ col: -1, fn: 'count' }], topN: 8, title: c1.name + ' → ' + c2.name }, 'How rows flow from ' + c1.name + ' to ' + c2.name, 'पंक्तियाँ ' + c1.name + ' से ' + c2.name + ' में कैसे बँटती हैं', 63);
     if (c1 && n1 && c1.distinct >= 5) add('pareto', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Pareto: ', 'पैरेटो: ') + n1.name + ' / ' + c1.name }, 'Do a few ' + c1.name + ' values make most of the total?', 'क्या कुछ ' + c1.name + ' कुल का अधिकांश बनाते हैं?', 62);
     if (c1 && n1 && c1.distinct <= 12) add('boxplot', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], title: n1.name + ' — ' + c1.name }, 'How widely ' + n1.name + ' varies inside each ' + c1.name, 'हर ' + c1.name + ' में ' + n1.name + ' कितना बदलता है', 58);
     if (c1 && nums.length >= 3 && c1.distinct <= 8) add('radar', { x: c1.index, ys: nums.slice(0, 5).map(function (p) { return { col: p.index, fn: 'avg' }; }), sort: 'desc', title: c1.name }, 'Profile of each ' + c1.name + ' across several measures', 'कई मापों में हर ' + c1.name + ' का स्वरूप', 54);

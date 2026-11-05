@@ -82,7 +82,7 @@ test('every chart type builds a valid option from the same data', () => {
     waterfall: { x: 1, ys: [{ col: 3, fn: 'sum' }] }, line: { x: 5, time: 'month', ys: [{ col: 3, fn: 'sum' }] }, area: { x: 5, time: 'month', ys: [{ col: 3, fn: 'sum' }] },
     stackedArea: { x: 5, time: 'month', g: 1, ys: [{ col: -1, fn: 'count' }] }, calendar: { x: 5, ys: [{ col: -1, fn: 'count' }] }, pie: { x: 1, ys: [{ col: 3, fn: 'sum' }] },
     donut: { x: 1, ys: [{ col: 3, fn: 'sum' }] }, rose: { x: 1, ys: [{ col: 3, fn: 'sum' }] }, funnel: { x: 2, ys: [{ col: -1, fn: 'count' }] }, treemap: { x: 1, g: 2, ys: [{ col: 3, fn: 'sum' }] },
-    sunburst: { x: 1, g: 2, ys: [{ col: 3, fn: 'sum' }] }, scatter: { xnum: 3, ynum: 4, trend: true }, bubble: { xnum: 3, ynum: 4, size: 0 }, heatmap: { x: 1, g: 2, ys: [{ col: -1, fn: 'count' }] },
+    sunburst: { x: 1, g: 2, ys: [{ col: 3, fn: 'sum' }] }, scatter: { xnum: 3, ynum: 4, trend: true }, bubble: { xnum: 3, ynum: 4, size: 0 }, heatmap: { x: 1, g: 2, ys: [{ col: -1, fn: 'count' }] }, sankey: { x: 1, g: 2, ys: [{ col: -1, fn: 'count' }] },
     radar: { x: 1, ys: [{ col: 3, fn: 'avg' }, { col: 4, fn: 'avg' }, { col: 0, fn: 'max' }] }, histogram: { xnum: 3 }, boxplot: { x: 1, ys: [{ col: 3, fn: 'sum' }] }, gauge: { ys: [{ col: 3, fn: 'sum' }] }
   };
   CH.TYPES.forEach(t => {
@@ -195,4 +195,34 @@ test('performance: 100,000 rows, 50 categories', () => {
   const t = Date.now(); const out = CH.build('column', { x: 0, ys: [{ col: 1, fn: 'sum' }, { col: 2, fn: 'avg' }] }, ['a', 'b', 'c'], rows, idx, {}); const ms = Date.now() - t;
   assert.equal(out.data.cats.length, 50); assert.ok(ms < 3000, 'took ' + ms);
   const t2 = Date.now(); CH.recommend(['a', 'b', 'c'], rows, idx); console.log('      100,000 rows: column in ' + ms + ' ms, recommendations in ' + (Date.now() - t2) + ' ms');
+});
+
+test('Sankey: every flow is exact and remembers its rows', () => {
+  const o = CH.build('sankey', { x: 1, g: 2, ys: [{ col: -1, fn: 'count' }] }, HEAD, ROWS, IDX, {}), K = o.ctx.sankey;
+  assert.equal(K.total, 240); assert.equal(K.links.reduce((a, l) => a + l.value, 0), 240);
+  K.links.forEach(l => {
+    assert.equal(l.rows.length, l.value);
+    l.rows.forEach(ri => { assert.equal(ROWS[ri][1], K.nodes[l.s].label); assert.equal(ROWS[ri][2], K.nodes[l.t].label); });
+  });
+  K.nodes.filter(n => n.level === 0).forEach(n => assert.equal(n.value, ROWS.filter(x => x[1] === n.label).length));
+  assert.equal(o.option.series[0].type, 'sankey'); assert.equal(o.option.series[0].links.length, K.links.length);
+  assert.ok(/biggest flow/.test(o.caption[0]));
+  assert.ok(o.option.series[0].data.every(n => /^[01]\|/.test(n.name)), 'same value in two columns stays two nodes');
+});
+
+test('Sankey: totals of a measure, three steps, Top N and left-out rows', () => {
+  const amt = CH.build('sankey', { x: 1, g: 2, ys: [{ col: 3, fn: 'sum' }] }, HEAD, ROWS, IDX, {}).ctx.sankey;
+  assert.equal(amt.total, ROWS.reduce((a, x) => a + +x[3], 0));
+  const three = CH.build('sankey', { x: 1, g: 2, g2: 6, ys: [{ col: -1, fn: 'count' }], topN: 3 }, HEAD, ROWS, IDX, {}).ctx.sankey;
+  assert.equal(three.levels.length, 3); assert.ok(three.nodes.some(n => n.isOthers), 'the long tail becomes Others');
+  assert.equal(three.nodes.filter(n => n.level === 2 && !n.isOthers).length, 3);
+  const rows2 = ROWS.map(x => x.slice()); rows2[0][1] = ''; rows2[1][3] = '-500'; rows2[2][3] = 'abc';
+  const lo = CH.build('sankey', { x: 1, g: 2, ys: [{ col: 3, fn: 'sum' }] }, HEAD, rows2, IDX, {});
+  assert.equal(lo.ctx.sankey.skipped, 3); assert.ok(lo.caption.some(c => /3 rows were left out/.test(c)));
+  assert.throws(() => CH.build('sankey', { x: 1, g: 1, ys: [{ col: -1, fn: 'count' }] }, HEAD, ROWS, IDX, {}), /two different/);
+});
+
+test('Sankey is recommended for two small category columns', () => {
+  const rec = CH.recommend(HEAD, ROWS, IDX, 12);
+  assert.ok(rec.some(x => x.type === 'sankey'), rec.map(x => x.type).join(','));
 });

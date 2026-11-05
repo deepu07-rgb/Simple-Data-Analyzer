@@ -23,7 +23,7 @@
   function dmy(ms) { var d = new Date(ms), p = function (n) { return (n < 10 ? '0' : '') + n; }; return p(d.getUTCDate()) + '-' + p(d.getUTCMonth() + 1) + '-' + d.getUTCFullYear(); }
 
   // ================================================================= 1. column visuals
-  var TV = { mode: {}, stats: {} };                                      // mode: header name -> bars|scale|dots|dotsrev
+  var TV = { mode: {}, stats: {}, spark: null };                                      // mode: header name -> bars|scale|dots|dotsrev
   function colStats(ci) {
     var key = ci + ':' + rawData.length; if (TV.stats[key]) return TV.stats[key];
     var vals = [], mn = Infinity, mx = -Infinity;
@@ -61,12 +61,41 @@
     }
     return '';
   }
+  // ---- sparklines: a tiny trend line drawn inside the last cell of a block of number columns (Jan ... Dec)
+  var SPARK_W = 68, sparkCache = new Map();
+  function sparkStyle(ri, ci) {
+    var sp = TV.spark; if (!sp || headers[ci] !== sp.target) return '';
+    var vals = [], key = ri + ':';
+    for (var k = 0; k < sp.cols.length; k++) { var c = headers.indexOf(sp.cols[k]); if (c < 0) continue; var x = numOf(rawData[ri][c]); vals.push(x); key += x + ','; }
+    var n = vals.filter(function (v) { return v !== null; }).length; if (n < 2) return '';
+    var hit = sparkCache.get(key); if (!hit) {
+      var mn = Infinity, mx = -Infinity; vals.forEach(function (v) { if (v !== null) { if (v < mn) mn = v; if (v > mx) mx = v; } });
+      var pts = [], W = SPARK_W, H = 20, pad = 3, lastX = 0, lastY = 0;
+      vals.forEach(function (v, i) { if (v === null) return; var px = pad + (vals.length === 1 ? 0 : i / (vals.length - 1)) * (W - 2 * pad), py = mx === mn ? H / 2 : H - pad - (v - mn) / (mx - mn) * (H - 2 * pad); pts.push(px.toFixed(1) + ',' + py.toFixed(1)); lastX = px; lastY = py; });
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '"><polyline points="' + pts.join(' ') + '" fill="none" stroke="#6d5bd0" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="2.4" fill="#d6456b"/></svg>';
+      hit = 'background-image:url(data:image/svg+xml,' + encodeURIComponent(svg) + ');background-repeat:no-repeat;background-position:right 6px center;background-size:' + W + 'px 20px;padding-right:' + (W + 14) + 'px;';
+      if (sparkCache.size > 4000) sparkCache.clear(); sparkCache.set(key, hit);
+    }
+    return hit;
+  }
   var _gcs = window.getCellStyle;
   window.getCellStyle = function (ri, ci) {
     var base = _gcs.apply(this, arguments);
-    var any = false; for (var k in TV.mode) { any = true; break; }
-    return any ? vizStyle(ri, ci) + base : base;                                    // the user's own colours (with !important) still win
+    var any = !!TV.spark; for (var k in TV.mode) { any = true; break; }
+    return any ? vizStyle(ri, ci) + sparkStyle(ri, ci) + base : base;                // the user's own colours (with !important) still win
   };
+  // which columns? the selected ones, or the whole run of number columns around the clicked heading
+  TV.sparkFrom = function (ci) {
+    if (!U.hasData()) return;
+    var s0 = typeof selectionStart !== 'undefined' ? selectionStart : null, e0 = typeof selectionEnd !== 'undefined' ? selectionEnd : null, cols = [];
+    if (s0 && e0 && s0.ci !== null && e0.ci !== null && Math.abs(e0.ci - s0.ci) >= 2) { for (var c = Math.min(s0.ci, e0.ci); c <= Math.max(s0.ci, e0.ci); c++) if (numeric(c)) cols.push(c); }
+    else if (ci >= 0 && numeric(ci)) { var a = ci, b = ci; while (a > 0 && numeric(a - 1)) a--; while (b < headers.length - 1 && numeric(b + 1)) b++; for (var d = a; d <= b; d++) cols.push(d); }
+    if (cols.length < 3) { toast(T('Sparklines need 3 or more number columns side by side (for example Jan, Feb, Mar…). Select them first, then try again.', 'स्पार्कलाइन के लिए साथ-साथ 3 या अधिक संख्या कॉलम चाहिए (जैसे जन, फ़र, मार्च…)। पहले उन्हें चुनें, फिर दोबारा करें।'), 'info'); return; }
+    TV.spark = { cols: cols.map(function (c) { return headers[c]; }), target: headers[cols[cols.length - 1]] };
+    sparkCache.clear(); renderTableHeader(); renderTable();
+    toast(T('Trend lines added in “', 'ट्रेंड लाइन जोड़ी गई “') + TV.spark.target + T('” for ', '” में, ') + cols.length + T(' columns.', ' कॉलम के लिए।'), 'success');
+  };
+  TV.sparkOff = function () { TV.spark = null; sparkCache.clear(); renderTableHeader(); renderTable(); };
   TV.set = function (ci, mode) {
     if (ci < 0 || ci >= headers.length) return;
     var name = headers[ci];
@@ -89,7 +118,7 @@
     var r = _rth.apply(this, arguments), th = $('vthead'); if (!th) return r;
     th.querySelectorAll('th').forEach(function (h) {
       var oc = h.getAttribute('oncontextmenu') || '', m = /showColumnHeaderMenu\(event,(\d+)\)/.exec(oc); if (!m) return;
-      var ci = +m[1], b = document.createElement('span'); b.className = 'tv-i' + (TV.mode[headers[ci]] ? ' on' : ''); b.dataset.ci = ci; b.textContent = 'ⓘ';
+      var ci = +m[1], b = document.createElement('span'); b.className = 'tv-i' + (TV.mode[headers[ci]] || (TV.spark && TV.spark.target === headers[ci]) ? ' on' : ''); b.dataset.ci = ci; b.textContent = 'ⓘ';
       b.title = T('About this column', 'इस कॉलम के बारे में'); h.appendChild(b);
     });
     return r;
@@ -226,6 +255,8 @@
       addItem(cm, 'tvm-scale', function () { TV.set(ctxHeaderColIdx, 'scale'); });
       addItem(cm, 'tvm-dots', function () { TV.set(ctxHeaderColIdx, 'dots'); });
       addItem(cm, 'tvm-dotsr', function () { TV.set(ctxHeaderColIdx, 'dotsrev'); });
+      addItem(cm, 'tvm-spark', function () { TV.sparkFrom(ctxHeaderColIdx); });
+      addItem(cm, 'tvm-sparkoff', function () { TV.sparkOff(); });
       addItem(cm, 'tvm-off', function () { TV.set(ctxHeaderColIdx, null); });
     }
     if (cell && !$('tvc-sep')) {
@@ -235,10 +266,12 @@
     }
   }
   function labelMenus() {
-    var L = { 'tvm-ins': ['ⓘ  About this column', 'ⓘ  इस कॉलम के बारे में'], 'tvm-chart': ['📊  Chart this column', '📊  इस कॉलम का चार्ट'], 'tvm-bars': ['▮  Data bars', '▮  डेटा बार'], 'tvm-scale': ['🎨  Colour scale', '🎨  रंग-पैमाना'], 'tvm-dots': ['🚦  Traffic lights (high = good)', '🚦  ट्रैफ़िक लाइट (अधिक = अच्छा)'], 'tvm-dotsr': ['🚦  Traffic lights (high = bad)', '🚦  ट्रैफ़िक लाइट (अधिक = बुरा)'], 'tvm-off': ['✕  Remove visual', '✕  दृश्य हटाएँ'], 'tvc-ins': ['ⓘ  About this column', 'ⓘ  इस कॉलम के बारे में'], 'tvc-chart': ['📊  Chart this column', '📊  इस कॉलम का चार्ट'] };
+    var L = { 'tvm-ins': ['ⓘ  About this column', 'ⓘ  इस कॉलम के बारे में'], 'tvm-chart': ['📊  Chart this column', '📊  इस कॉलम का चार्ट'], 'tvm-bars': ['▮  Data bars', '▮  डेटा बार'], 'tvm-scale': ['🎨  Colour scale', '🎨  रंग-पैमाना'], 'tvm-dots': ['🚦  Traffic lights (high = good)', '🚦  ट्रैफ़िक लाइट (अधिक = अच्छा)'], 'tvm-dotsr': ['🚦  Traffic lights (high = bad)', '🚦  ट्रैफ़िक लाइट (अधिक = बुरा)'], 'tvm-spark': ['📈  Trend line in each row (sparkline)', '📈  हर पंक्ति में ट्रेंड लाइन (स्पार्कलाइन)'], 'tvm-sparkoff': ['✕  Remove trend lines', '✕  ट्रेंड लाइन हटाएँ'], 'tvm-off': ['✕  Remove visual', '✕  दृश्य हटाएँ'], 'tvc-ins': ['ⓘ  About this column', 'ⓘ  इस कॉलम के बारे में'], 'tvc-chart': ['📊  Chart this column', '📊  इस कॉलम का चार्ट'] };
     Object.keys(L).forEach(function (id) { var e = $(id); if (e) e.textContent = T(L[id][0], L[id][1]); });
+    var so = $('tvm-sparkoff'); if (so) so.style.display = TV.spark ? '' : 'none';
     var off = $('tvm-off'); if (off) off.style.display = TV.mode[headers[ctxHeaderColIdx]] ? '' : 'none';
   }
+  (STL.actions || []).push({ en: 'Trend lines (sparklines) across number columns', hi: 'संख्या कॉलमों में ट्रेंड लाइन (स्पार्कलाइन)', kw: 'sparkline trend line months columns row mini chart', run: function () { TV.sparkFrom(typeof ctxHeaderColIdx !== 'undefined' ? ctxHeaderColIdx : -1); }, group: 'Charts' });
   ready(buildMenus);
   var _shm = window.showColumnHeaderMenu; window.showColumnHeaderMenu = function () { buildMenus(); var r = _shm.apply(this, arguments); labelMenus(); return r; };
   var _scm = window.showContextMenu; window.showContextMenu = function () { buildMenus(); var r = _scm.apply(this, arguments); labelMenus(); return r; };
@@ -246,7 +279,7 @@
   // new data: forget the visuals of the old file, redraw the chips
   var _lastSig = '', _st = window.showTable;
   window.showTable = function () {
-    var sig = headers.join('|'); if (sig !== _lastSig) { TV.mode = {}; TV.stats = {}; _lastSig = sig; }
+    var sig = headers.join('|'); if (sig !== _lastSig) { TV.mode = {}; TV.stats = {}; TV.spark = null; sparkCache.clear(); _lastSig = sig; }
     var r = _st.apply(this, arguments); chips(); return r;
   };
 })();

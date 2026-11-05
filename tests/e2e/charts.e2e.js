@@ -51,7 +51,7 @@ function makeCsv() {
   await wait(400);
   ok(await ev(() => document.getElementById('chartStudio').classList.contains('open')), 'The Charts tool opens the Chart Studio beside the table');
   const gallery = await ev(() => Array.from(document.querySelectorAll('#csGallery .cs-t')).map(b => b.dataset.type));
-  ok(gallery.length === 24, 'The gallery offers 24 chart types', gallery.length);
+  ok(gallery.length === 25, 'The gallery offers 25 chart types', gallery.length);
   const firstCap = await ev(() => Array.from(document.querySelectorAll('#csCap p')).map(p => p.textContent));
   ok(firstCap.length >= 1 && firstCap[0].length > 20, 'A plain-language sentence describes the chart', firstCap);
   const startType = await ev(() => document.querySelector('#csGallery .cs-t.on').dataset.type);
@@ -69,7 +69,7 @@ function makeCsv() {
     });
   }
   const bad = Object.entries(results).filter(([t, r]) => r.series < 1 || r.data < 1 || r.msg || r.nan);
-  ok(bad.length === 0, 'All 24 chart types draw real data with the sample register', bad);
+  ok(bad.length === 0, 'All 25 chart types draw real data with the sample register', bad);
   ok(Object.values(results).every(r => r.cap >= 1), 'Every chart type writes its caption', Object.entries(results).filter(([t, r]) => r.cap < 1).map(([t]) => t));
   if (process.env.SHOTS) for (const t of ['treemap', 'heatmap', 'scatter', 'calendar', 'radar', 'sunburst', 'waterfall', 'pareto', 'boxplot', 'histogram', 'donut', 'area']) { await ev(tp => document.querySelector('#csGallery .cs-t[data-type="' + tp + '"]').click(), t); await shot('t-' + t); }
 
@@ -206,6 +206,32 @@ function makeCsv() {
   await ev(() => STL.closeChartStudio()); await wait(200);
   ok(await ev(() => !document.body.classList.contains('cs-open') && !document.getElementById('chartStudio').classList.contains('open')), 'The Studio closes and the table gets its width back');
 
+  // ---- Sankey: flow between two columns; clicking a box or a band shows those rows
+  await ev(() => { filteredData = null; activeFilters = []; STL.openChartStudio(); }); await wait(300);
+  await ev(() => document.querySelector('#csGallery .cs-t[data-type="sankey"]').click()); await wait(700);
+  const sk = await ev(() => { const inst = echarts.getInstanceByDom(document.getElementById('csChart')), o = inst.getOption(); return { type: o.series[0].type, nodes: o.series[0].data.length, links: o.series[0].links.length, g2: getComputedStyle(document.getElementById('csG2').parentElement).display, cap: (document.querySelector('#csCap p') || {}).textContent || '', x: document.getElementById('csX').selectedOptions[0].textContent, g: document.getElementById('csG').selectedOptions[0].textContent }; });
+  ok(sk.type === 'sankey' && sk.nodes >= 4 && sk.links >= 4, 'Flow (Sankey) draws boxes and bands from two category columns (' + sk.x + ' → ' + sk.g + ')', sk);
+  ok(sk.g2 !== 'none' && /biggest flow/.test(sk.cap), 'The Sankey offers an optional third step and explains its biggest flow', sk);
+  const boxPos = await ev(() => { const inst = echarts.getInstanceByDom(document.getElementById('csChart')), g = inst.getModel().getSeriesByIndex(0).getGraph(), l = g.getNodeByIndex(0).getLayout(), r = document.getElementById('csChart').getBoundingClientRect(); const s0 = inst.getOption().series[0]; return { x: r.left + s0.left + l.x + l.dx / 2, y: r.top + s0.top + l.y + l.dy / 2, name: g.getNodeByIndex(0).id }; });
+  await page.mouse.click(boxPos.x, boxPos.y); await wait(500);
+  const skSel = await ev(() => ({ shown: filteredData ? filteredData.length : -1, bar: document.getElementById('csSelBar').style.display }));
+  ok(skSel.shown > 0 && skSel.shown < 320 && skSel.bar !== 'none', 'Clicking a Sankey box shows only those rows in the table (' + skSel.shown + ' of 320)', skSel);
+  await ev(() => document.getElementById('csClear').click()); await wait(300);
+  ok(await ev(() => !filteredData || filteredData.length === rawData.length), 'Show all rows brings the full table back after a Sankey click');
+  await ev(() => STL.closeChartStudio()); await wait(200);
+
+  // ---- sparklines: a trend line in each row, across a block of number columns
+  await ev(() => { const mon = ['जन', 'फ़र', 'मार्च', 'अप्रैल', 'मई', 'जून']; const rows = []; for (let i = 0; i < 40; i++) rows.push(['थाना ' + (i + 1)].concat(mon.map((_, m) => String(100 + ((i * 7 + m * 13) % 50) + m * (i % 3 === 0 ? 10 : -4))))); rawData = rows; headers = ['थाना'].concat(mon); colTypes = ['text'].concat(mon.map(() => 'number')); filteredData = null; activeFilters = []; showTable(); });
+  await wait(500);
+  await ev(() => STL.tableViz.sparkFrom(3)); await wait(400);
+  const spark = await ev(() => { const tds = Array.from(document.querySelectorAll('#vtbody tr')).slice(0, 8).map(tr => tr.querySelector('td[data-ci="6"]')).filter(Boolean); const none = document.querySelector('#vtbody td[data-ci="2"]'); return { n: tds.length, svg: tds.filter(td => /data:image\/svg\+xml/.test(td.getAttribute('style') || '')).length, other: /svg/.test((none && none.getAttribute('style')) || ''), target: STL.tableViz.spark && STL.tableViz.spark.target, cols: STL.tableViz.spark && STL.tableViz.spark.cols.length }; });
+  ok(spark.n > 0 && spark.svg === spark.n && !spark.other, 'Sparklines appear only in the last column of the block (' + spark.target + ', ' + spark.cols + ' columns)', spark);
+  await shot('20-sparklines');
+  await ev(() => STL.tableViz.sparkOff()); await wait(300);
+  ok(await ev(() => !document.querySelector('#vtbody td[data-ci="6"]').getAttribute('style').includes('svg')), 'Sparklines can be removed');
+  await ev(() => STL.tableViz.sparkFrom(0)); await wait(200);
+  ok(await ev(() => !STL.tableViz.spark), 'A text column does not get sparklines (needs 3 number columns side by side)');
+  // restore the register for the big-table check
   // ---- a big table stays fast
   const big = await ev(() => { const t0 = performance.now(); const rows = []; for (let i = 0; i < 60000; i++) rows.push(['G' + (i % 40), 'S' + (i % 3), 'C' + (i % 5), i % 1000, '01-02-2025', 1, 20]); rawData = rows; headers = ['थाना', 'स्थिति', 'श्रेणी', 'राशि', 'तारीख', 'गवाह', 'आयु']; colTypes = ['text', 'text', 'text', 'number', 'text', 'number', 'number']; filteredData = null; activeFilters = []; showTable(); STL.openChartStudio(); return performance.now() - t0; });
   await wait(1200);

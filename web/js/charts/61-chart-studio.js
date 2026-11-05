@@ -1,6 +1,6 @@
 // =====================================================================
 //  CHART STUDIO  /  चार्ट स्टूडियो      and      INSIGHTS BOARD  /  अंतर्दृष्टि बोर्ड
-//  A docked panel beside the table. Pick any of 24 chart types; the charts are alive:
+//  A docked panel beside the table. Pick any of 25 chart types; the charts are alive:
 //    click a bar / slice / cell  -> the table shows exactly those rows (Ctrl+click adds more)
 //    drag on the chart (brush)   -> the table shows the selected range
 //    filter the table            -> the chart redraws
@@ -55,6 +55,7 @@
     heatmap: '<rect x="3" y="3" width="5" height="5"/><rect x="10" y="3" width="5" height="5" opacity=".5"/><rect x="17" y="3" width="4" height="5" opacity=".25"/><rect x="3" y="10" width="5" height="5" opacity=".4"/><rect x="10" y="10" width="5" height="5"/><rect x="17" y="10" width="4" height="5" opacity=".6"/>',
     radar: '<polygon points="12 3 20 9 17 19 7 19 4 9" fill="none"/><polygon points="12 7 16 10 15 15 9 15 8 10" opacity=".5"/>',
     histogram: '<rect x="3" y="14" width="3" height="7"/><rect x="7" y="9" width="3" height="12"/><rect x="11" y="4" width="3" height="17"/><rect x="15" y="10" width="3" height="11"/><rect x="19" y="16" width="2" height="5"/>',
+    sankey: '<rect x="3" y="4" width="3" height="7"/><rect x="3" y="14" width="3" height="6"/><rect x="18" y="4" width="3" height="16"/><path d="M6 6C12 6 12 8 18 8M6 17C12 17 12 15 18 15" fill="none" opacity=".6" stroke-width="3"/>',
     boxplot: '<rect x="7" y="8" width="10" height="8" fill="none"/><line x1="12" y1="3" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="21"/><line x1="7" y1="12" x2="17" y2="12"/>',
     gauge: '<path d="M4 17a8 8 0 0 1 16 0" fill="none" stroke-width="3" opacity=".4"/><path d="M4 17a8 8 0 0 1 8-8" fill="none" stroke-width="3"/><line x1="12" y1="17" x2="16" y2="11"/>'
   };
@@ -84,12 +85,12 @@
 
   // which spec fields each chart uses
   var USES = {
-    x: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea calendar pie donut rose funnel treemap sunburst heatmap radar boxplot',
-    measure: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea calendar pie donut rose funnel treemap sunburst heatmap radar boxplot gauge',
+    x: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea calendar pie donut rose funnel treemap sunburst heatmap sankey radar boxplot',
+    measure: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea calendar pie donut rose funnel treemap sunburst heatmap sankey radar boxplot gauge',
     multi: 'column bar line area combo radar',
-    split: 'column bar stackedColumn percentColumn line area stackedArea treemap sunburst heatmap scatter bubble',
+    split: 'column bar stackedColumn percentColumn line area stackedArea treemap sunburst heatmap sankey scatter bubble', then: 'sankey',
     xy: 'scatter bubble histogram', y: 'scatter bubble', size: 'bubble', bins: 'histogram',
-    sort: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot', top: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot',
+    sort: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot sankey', top: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot',
     labels: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea pie donut rose funnel', smooth: 'line area stackedArea combo', trend: 'scatter',
     time: 'column bar stackedColumn percentColumn combo line area stackedArea pie donut rose funnel calendar'
   };
@@ -115,12 +116,14 @@
       if (type === 'calendar') sp.time = 'day';
       else if (curDate) { if (uses('time', type) && (!sp.time || sp.time === 'none')) sp.time = 'month'; if (!uses('time', type)) sp.time = 'none'; }
       else sp.time = 'none';
-      if (['stackedColumn', 'percentColumn', 'stackedArea', 'sunburst', 'heatmap'].indexOf(type) >= 0 && !(sp.g >= 0 && sp.g !== sp.x)) sp.g = (cats.filter(function (c) { return c.index !== sp.x; })[0] || {}).index;
+      if (['stackedColumn', 'percentColumn', 'stackedArea', 'sunburst', 'heatmap', 'sankey'].indexOf(type) >= 0 && !(sp.g >= 0 && sp.g !== sp.x)) sp.g = (cats.filter(function (c) { return c.index !== sp.x; })[0] || {}).index;
       if (!uses('split', type)) sp.g = -1;
+      if (type !== 'sankey' || sp.g2 === sp.x || sp.g2 === sp.g) sp.g2 = -1;
     }
     if (!sp.ys || !sp.ys.length || (sp.ys.length === 1 && sp.ys[0].col < 0 && nums[0] && !sp._userMeasure)) sp.ys = nums[0] ? [{ col: nums[0].index, fn: 'sum' }] : [{ col: -1, fn: 'count' }];
     if (type === 'combo' || type === 'radar') { var need = type === 'radar' ? 3 : 2; nums.forEach(function (n) { if (sp.ys.length < need && !sp.ys.some(function (y) { return y.col === n.index; })) sp.ys.push({ col: n.index, fn: 'avg' }); }); }
     if (!uses('multi', type) && sp.ys.length > 1) sp.ys = sp.ys.slice(0, 1);
+    if (type === 'sankey') { sp.ys = sp.ys.slice(0, 1); sp.ys[0].fn = sp.ys[0].col < 0 ? 'count' : 'sum'; if (!(sp.topN > 0)) sp.topN = 8; }
     if (sp.g >= 0 && sp.ys.length > 1) sp.g = -1;
   }
 
@@ -138,6 +141,7 @@
         '<label class="cs-f" data-use="time"><span id="csTl"></span><select id="csTime" class="big-select"></select></label>' +
         '<div class="cs-f wide" data-use="measure"><span id="csMl"></span><div id="csMeasures"></div><button class="cs-link" id="csAddM"></button></div>' +
         '<label class="cs-f" data-use="split"><span id="csGl"></span><select id="csG" class="big-select"></select></label>' +
+        '<label class="cs-f" data-use="then"><span id="csG2l"></span><select id="csG2" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="xy"><span id="csXnl"></span><select id="csXn" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="y"><span id="csYnl"></span><select id="csYn" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="size"><span id="csSzl"></span><select id="csSz" class="big-select"></select></label>' +
@@ -161,6 +165,7 @@
     on('csX', 'change', function () { CS.spec.x = +this.value; adapt(CS.type, true); sync(); redraw(); });
     on('csTime', 'change', function () { CS.spec.time = this.value; redraw(); });
     on('csG', 'change', function () { CS.spec.g = +this.value; if (CS.spec.g >= 0 && CS.spec.ys.length > 1) CS.spec.ys = CS.spec.ys.slice(0, 1); sync(); redraw(); });
+    on('csG2', 'change', function () { CS.spec.g2 = +this.value; sync(); redraw(); });
     on('csXn', 'change', function () { CS.spec.xnum = +this.value; redraw(); }); on('csYn', 'change', function () { CS.spec.ynum = +this.value; redraw(); }); on('csSz', 'change', function () { CS.spec.size = +this.value; redraw(); });
     on('csBins', 'change', function () { CS.spec.bins = +this.value; redraw(); }); on('csSort', 'change', function () { CS.spec.sort = this.value; redraw(); });
     on('csTop', 'change', function () { CS.spec.topN = +this.value; redraw(); }); on('csPal', 'change', function () { CS.palette = this.value; redraw(); });
@@ -179,18 +184,19 @@
     $('csFieldsLbl').textContent = T('What to show', 'क्या दिखाएँ');
     $('csTypeLbl').textContent = T('Chart type', 'चार्ट का प्रकार');
     document.querySelectorAll('#csGallery .cs-t').forEach(function (b) { var tt = CH.TYPES.filter(function (x) { return x.id === b.dataset.type; })[0]; b.innerHTML = icon(b.dataset.type) + '<span>' + esc(nm(tt.name)) + '</span>'; b.classList.toggle('on', b.dataset.type === type); b.title = nm(CH.GROUPS[tt.group]) + ' · ' + nm(tt.name); });
-    var xl = type === 'calendar' ? T('Date column', 'तारीख कॉलम') : type === 'heatmap' ? T('Rows (category)', 'पंक्तियाँ (श्रेणी)') : T('Category or date', 'श्रेणी या तारीख');
+    var xl = type === 'calendar' ? T('Date column', 'तारीख कॉलम') : type === 'sankey' ? T('From (category)', 'से (श्रेणी)') : type === 'heatmap' ? T('Rows (category)', 'पंक्तियाँ (श्रेणी)') : T('Category or date', 'श्रेणी या तारीख');
     $('csXl').textContent = xl; $('csX').innerHTML = opts(all, sp.x); $('csTl').textContent = T('Group dates by', 'तारीख इस प्रकार समूहित');
     $('csTime').innerHTML = [['none', T('(as is)', '(जैसा है)')], ['day', T('Day', 'दिन')], ['month', T('Month', 'माह')], ['quarter', T('Quarter', 'तिमाही')], ['fy', T('Financial year', 'वित्त वर्ष')], ['year', T('Year', 'वर्ष')], ['weekday', T('Weekday', 'सप्ताह का दिन')]].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.time || 'none') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
     $('csMl').textContent = type === 'radar' ? T('Measures (3 or more)', 'माप (3 या अधिक)') : (uses('multi', type) ? T('Measure(s)', 'माप') : T('Measure', 'माप'));
     $('csMeasures').innerHTML = sp.ys.map(function (y, i) {
-      return '<div class="cs-m"><select class="big-select" data-mc="' + i + '">' + opts(numeric, y.col, T('(count of rows)', '(पंक्तियों की गिनती)')) + '</select><select class="big-select" data-mf="' + i + '"' + (y.col < 0 ? ' disabled' : '') + '>' + CH.FUNCS.filter(function (f) { return y.col >= 0 || f[0] === 'count'; }).map(function (f) { return '<option value="' + f[0] + '"' + (f[0] === y.fn ? ' selected' : '') + '>' + nm(f[1]) + '</option>'; }).join('') + '</select>' + (sp.ys.length > 1 ? '<button class="cs-ic sm" data-mr="' + i + '" aria-label="remove">×</button>' : '') + '</div>';
+      return '<div class="cs-m"><select class="big-select" data-mc="' + i + '">' + opts(numeric, y.col, T('(count of rows)', '(पंक्तियों की गिनती)')) + '</select><select class="big-select" data-mf="' + i + '"' + (y.col < 0 ? ' disabled' : '') + '>' + CH.FUNCS.filter(function (f) { return type === 'sankey' ? f[0] === (y.col >= 0 ? 'sum' : 'count') : (y.col >= 0 || f[0] === 'count'); }).map(function (f) { return '<option value="' + f[0] + '"' + (f[0] === y.fn ? ' selected' : '') + '>' + nm(f[1]) + '</option>'; }).join('') + '</select>' + (sp.ys.length > 1 ? '<button class="cs-ic sm" data-mr="' + i + '" aria-label="remove">×</button>' : '') + '</div>';
     }).join('');
     $('csMeasures').querySelectorAll('[data-mc]').forEach(function (e) { e.onchange = function () { var y = sp.ys[+e.dataset.mc]; y.col = +e.value; if (y.col < 0) y.fn = 'count'; else if (y.fn === 'count') y.fn = 'sum'; sp._userMeasure = true; sync(); redraw(); }; });
     $('csMeasures').querySelectorAll('[data-mf]').forEach(function (e) { e.onchange = function () { sp.ys[+e.dataset.mf].fn = e.value; redraw(); }; });
     $('csMeasures').querySelectorAll('[data-mr]').forEach(function (e) { e.onclick = function () { sp.ys.splice(+e.dataset.mr, 1); sync(); redraw(); }; });
     $('csAddM').textContent = '+ ' + T('Add a measure', 'माप जोड़ें'); $('csAddM').style.display = uses('multi', type) ? '' : 'none';
-    $('csGl').textContent = type === 'heatmap' ? T('Columns (category)', 'स्तंभ (श्रेणी)') : T('Split / colour by', 'इसके अनुसार बाँटें / रंग'); $('csG').innerHTML = opts(all.filter(function (a) { return a[0] !== sp.x; }), sp.g, T('(none)', '(कोई नहीं)'));
+    $('csGl').textContent = type === 'sankey' ? T('To (category)', 'तक (श्रेणी)') : type === 'heatmap' ? T('Columns (category)', 'स्तंभ (श्रेणी)') : T('Split / colour by', 'इसके अनुसार बाँटें / रंग'); $('csG').innerHTML = opts(all.filter(function (a) { return a[0] !== sp.x; }), sp.g, T('(none)', '(कोई नहीं)'));
+    $('csG2l').textContent = T('Then to (optional)', 'फिर (वैकल्पिक)'); $('csG2').innerHTML = opts(all.filter(function (a) { return a[0] !== sp.x && a[0] !== sp.g; }), sp.g2, T('(none)', '(कोई नहीं)'));
     $('csXnl').textContent = type === 'histogram' ? T('Number column', 'संख्या कॉलम') : T('X (number)', 'X (संख्या)'); $('csXn').innerHTML = opts(numeric, sp.xnum);
     $('csYnl').textContent = T('Y (number)', 'Y (संख्या)'); $('csYn').innerHTML = opts(numeric, sp.ynum);
     $('csSzl').textContent = T('Bubble size (number)', 'बबल आकार (संख्या)'); $('csSz').innerHTML = opts(numeric, sp.size, T('(none)', '(कोई नहीं)'));
@@ -231,6 +237,7 @@
     if (type === 'histogram') return T('Spread of ', '') + nmOf(sp.xnum);
     if (type === 'gauge') return m;
     if (type === 'heatmap') return nmOf(sp.x) + ' × ' + nmOf(sp.g);
+    if (type === 'sankey') return nmOf(sp.x) + ' → ' + nmOf(sp.g) + (sp.g2 >= 0 ? ' → ' + nmOf(sp.g2) : '');
     if (type === 'calendar') return T('Rows per day — ', 'प्रतिदिन — ') + nmOf(sp.x);
     if (sp.ys && sp.ys.length > 1) return nmOf(sp.x);
     return m + ' — ' + nmOf(sp.x);
@@ -259,6 +266,12 @@
   // dim what is not selected
   function decorate(option) {
     var o = option, sel = CS.sel, d = CS.out && CS.out.data;
+    if (sel && CS.type === 'sankey' && CS.out.ctx.sankey) {
+      var K = CS.out.ctx.sankey, hit = function (rs) { for (var q = 0; q < rs.length; q++) if (sel.has(rs[q])) return true; return false; }, sr0 = o.series[0];
+      sr0.data = sr0.data.map(function (n) { return hit(K.nodes[n._ni].rows) ? n : Object.assign({}, n, { itemStyle: { opacity: 0.25 }, label: { opacity: 0.4 } }); });
+      sr0.links = sr0.links.map(function (l) { return hit(K.links[l._li].rows) ? l : Object.assign({}, l, { lineStyle: { opacity: 0.05 } }); });
+      return o;
+    }
     if (!sel || !d || !d.cats || !d.cats.length) return o;
     var cats = o._cats || d.cats, on = cats.map(function (c) { return c.rows.some(function (r) { return sel.has(r); }); });
     var dim = { opacity: 0.25 };
@@ -283,6 +296,11 @@
         else if (type === 'calendar') { var day = p.value[0]; rows = viewIdx().filter(function (i) { var ms = STL.pend.parseDate(rawData[i][CS.spec.x], false); return ms !== null && CH.bucketKey(ms, 'day') === day; }); label = day; }
         else if (type === 'boxplot') { var bl = out.ctx.box.labels[p.dataIndex !== undefined && p.seriesType === 'boxplot' ? p.dataIndex : (p.value ? p.value[0] : 0)]; rows = viewIdx().filter(function (i) { return String(rawData[i][CS.spec.x]).trim() === bl; }); label = bl; }
         else if (type === 'gauge') return;
+        else if (type === 'sankey') {
+          var K2 = out.ctx.sankey, itm = p.dataType === 'edge' ? K2.links[p.data._li] : K2.nodes[p.data._ni];
+          if (!itm) return; if (itm.isOthers) { toast(T('"Others" combines smaller groups. Choose a single band or box.', '"अन्य" छोटे समूहों को जोड़ता है। कोई एक पट्टी या डिब्बा चुनें।'), 'info'); return; }
+          rows = itm.rows; label = p.dataType === 'edge' ? K2.nodes[itm.s].label + ' → ' + K2.nodes[itm.t].label : itm.label;
+        }
         else {
           var ci = (p.data && p.data._cat !== undefined) ? p.data._cat : p.dataIndex, c = cats[ci]; if (!c) return;
           if (c.isOthers) { toast(T('"Others" combines smaller groups. Choose a single bar.', '"अन्य" छोटे समूहों को जोड़ता है। कोई एक पट्टी चुनें।'), 'info'); return; }
@@ -416,7 +434,7 @@
 
   // palette entries and Home tile
   (STL.actions || []).push(
-    { en: 'Chart Studio (24 chart types)', hi: 'चार्ट स्टूडियो (24 प्रकार)', kw: 'chart graph studio bar pie line scatter heatmap treemap histogram charts banao', run: function () { STL.openChartStudio(); }, group: 'Charts' },
+    { en: 'Chart Studio (25 chart types)', hi: 'चार्ट स्टूडियो (25 प्रकार)', kw: 'chart graph studio bar pie line scatter heatmap treemap histogram charts banao', run: function () { STL.openChartStudio(); }, group: 'Charts' },
     { en: 'Auto charts for this data (Insights board)', hi: 'इस डेटा के ऑटो चार्ट (बोर्ड)', kw: 'auto charts board insights suggest dashboard', run: function () { STL.openBoard(); }, group: 'Charts' },
     { en: 'Chart the selected column / cells', hi: 'चुने कॉलम / सेल का चार्ट', kw: 'chart selection column cells', run: function () { STL.chartSelection(); }, group: 'Charts' });
   (STL.extraTiles = STL.extraTiles || []).splice(2, 0, ['📊', 'Charts for my data', 'मेरे डेटा के चार्ट', 'One click: the best charts, clickable', 'एक क्लिक: सबसे उपयुक्त चार्ट, क्लिक योग्य', function () { if (!U.hasData()) { toast(T('Open a file first, or try the sample data.', 'पहले फ़ाइल खोलें, या नमूना डेटा आज़माएँ।'), 'info'); return; } STL.openBoard(); }, true]);
