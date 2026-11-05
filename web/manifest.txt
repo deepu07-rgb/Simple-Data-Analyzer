@@ -65,4 +65,5 @@
 @file js/charts/63-big-charts.js
 @file js/charts/64-dashboard.js
 @file js/charts/65-fair-compare.js
+@file js/charts/66-drivers.js
 @file html/90-tail.html

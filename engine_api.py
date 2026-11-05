@@ -129,7 +129,7 @@ def chart(ds):
     if kind == "agg":
         return jsonify(json_safe(eng.chart_agg(ds, b.get("x"), b.get("time"), b.get("g"), b.get("g2"), b.get("measures"),
                                                b.get("rank", "value"), b.get("maxCats", 300), b.get("maxGroups", 9), s, f,
-                                               bool(b.get("multi")), bool(b.get("nozero")), b.get("minRows", 0))))
+                                               bool(b.get("multi")), bool(b.get("nozero")), b.get("minRows", 0), b.get("xbands"))))
     if kind == "hist":
         return jsonify(json_safe(eng.chart_hist(ds, b.get("col"), b.get("bins", 0), s, f, bool(b.get("nozero")))))
     if kind == "box":
@@ -138,7 +138,7 @@ def chart(ds):
         return jsonify(json_safe(eng.chart_points(ds, b.get("xnum"), b.get("ynum"), b.get("size"), b.get("g"),
                                                   b.get("limit", 5000), s, f, b.get("maxGroups", 8), bool(b.get("nozero")))))
     if kind == "fair":
-        return jsonify(json_safe(eng.fair_cells(ds, b.get("y"), b.get("factor"), b.get("adjusters"), bool(b.get("nozero")), s, f)))
+        return jsonify(json_safe(eng.fair_cells(ds, b.get("y"), b.get("factor"), b.get("adjusters"), bool(b.get("nozero")), s, f, bands=b.get("bands"))))
     return _err("Unknown chart kind.")
 
 

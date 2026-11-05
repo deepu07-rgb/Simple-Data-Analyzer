@@ -42,7 +42,7 @@
 
   // the question: which columns to group by, what to calculate, how many groups to keep
   BC.plan = function (type, spec, headers) {
-    var ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col >= 0 ? y.col : -1, fn: y.col >= 0 ? (y.fn || 'sum') : 'count' }; });
+    var ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col >= 0 ? y.col : -1, fn: y.col >= 0 ? (y.fn || 'sum') : 'count', op: y.op, value: y.value }; });
     var multi = ' column bar line area combo radar '.indexOf(' ' + type + ' ') >= 0;
     if (!multi) ys = ys.slice(0, 1);
     var date = isTime(spec) && type !== 'gauge';
@@ -56,7 +56,7 @@
     else if (spec.topN > 0 && !date) req.maxCats = spec.topN;
     if (type !== 'sankey' && type !== 'heatmap') req.g2 = -1;
     if (type === 'sunburst' || type === 'treemap') req.maxGroups = 9;
-    req.measures = ys.map(function (y) { return { col: y.col, fn: y.fn }; });
+    req.measures = ys.map(function (y) { return y.fn === 'pct' ? { col: y.col, fn: 'pct', op: y.op, value: y.value } : { col: y.col, fn: y.fn }; });
     req.multi = !!spec.multi && req.x >= 0 && !date; req.nozero = !!spec.noZero; req.minRows = spec.minRows > 0 ? spec.minRows : 0;
     return { req: req, ys: ys, date: date, hasG: req.g >= 0, hasG2: req.g2 >= 0, hasX: req.x >= 0 };
   };
@@ -73,15 +73,17 @@
       var rank = function (g) { return g === '(Others)' ? Infinity : -tot[g]; };
       rows = rows.map(function (r, i) { return { r: r, i: i }; }).sort(function (a, b) { return (rank(a.r[1]) - rank(b.r[1])) || (a.i - b.i); }).map(function (o) { return o.r; });
     }
-    var names = plan.ys.map(function (y) { return y.col < 0 ? 'Rows' : String(headers[y.col]); });
+    var names = plan.ys.map(function (y) { return y.col < 0 ? 'Rows' : (y.fn === 'pct' ? '% ' + CH.condText(y, headers) : String(headers[y.col])); });
+    if (plan.bands) rows.forEach(function (r) { var m = /^b(\d+)$/.exec(r[0]); if (m) r[0] = plan.bands.labels[+m[1]]; });
     var head = [plan.hasX ? headers[plan.req.x] : '', plan.hasG ? headers[plan.req.g] : '', plan.hasG2 ? headers[plan.req.g2] : ''].concat(names);
     return { rows: rows, headers: head, idx: rows.map(function (_, i) { return i; }) };
   };
   BC.spec2 = function (type, spec, plan, headers) {
     var s = Object.assign({}, spec, {
       x: plan.hasX ? 0 : -1, g: plan.hasG ? 1 : -1, g2: plan.hasG2 ? 2 : -1, time: 'none', topN: type === 'sankey' ? 1000 : 0, maxGroups: 99, preOthers: true, multi: false, noZero: false, minRows: 0,
-      ys: plan.ys.map(function (y, k) { return { col: 3 + k, fn: 'sum', as: y.fn, name: y.col < 0 ? undefined : String(headers[y.col]) }; })
+      ys: plan.ys.map(function (y, k) { return { col: 3 + k, fn: 'sum', as: y.fn, name: y.col < 0 ? undefined : (y.fn === 'pct' ? '% ' + CH.condText(y, headers) : String(headers[y.col])) }; }), bands: 0
     });
+    if (plan.bands && !spec.sort) s.sort = 'natural';
     if (plan.date) { s.sort = type === 'calendar' ? s.sort : (spec.sort || 'label'); if (spec.time === 'weekday') s.labelOrder = 'weekday'; }
     return s;
   };
@@ -90,8 +92,14 @@
   BC.build = function (type, spec, env) {
     var big = B(), H = big.headers, sc = scope();
     function done(out, matched, extra) { out.big = Object.assign({ matched: matched }, extra || {}); return out; }
+    if (BC.isAgg(type) && spec.bands && spec.x >= 0 && !isTime(spec) && !spec._bandsReady) {          // bands need the true min and max of the whole column
+      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'hist', col: spec.x, bins: 2 }, sc)).then(function (h) {
+        var b = h.n ? CH.makeBands(h.min, h.max, spec.bands) : null; return BC.build(type, Object.assign({}, spec, { _bandsReady: true, _bandsObj: b }), env);
+      });
+    }
     if (BC.isAgg(type)) {
       var plan = BC.plan(type, spec, H);
+      if (spec._bandsObj) { plan.bands = spec._bandsObj; plan.req.xbands = plan.bands.edges; }
       if (type === 'heatmap' && !plan.hasG) return Promise.reject(new Error(T('Choose a second category column.', 'दूसरा श्रेणी कॉलम चुनें।')));
       if (type === 'sankey' && (!plan.hasG || spec.x === spec.g)) return Promise.reject(new Error(T('Choose two different category columns.', 'दो अलग श्रेणी कॉलम चुनें।')));
       return api('/api/engine/' + big.ds + '/chart', Object.assign({}, plan.req, sc)).then(function (res) {
@@ -101,7 +109,7 @@
         c.data.rowsUsed = res.matched; c.data.zeroSkipped = res.zeroSkipped || 0; c.data.zeroName = res.zeroName || ''; c.data.hiddenSmall = res.hiddenSmall || 0; c.data.minRows = spec.minRows || 0; c.data.multi = !!plan.req.multi;
         var out = CH.finish(type, spec2for(type, s2, spec), sy.headers, c.data, c.ctx, env);
         var more = res.rows.some(function (r) { return r[0] === '(Others)' || (plan.hasG && r[1] === '(Others)'); });
-        return done(out, res.matched, { plan: plan, more: more });
+        return done(out, res.matched, { plan: plan, more: more, bands: plan.bands || null });
       });
     }
     if (type === 'histogram') {
@@ -160,7 +168,9 @@
     }
     var ci = (p.data && p.data._cat !== undefined) ? p.data._cat : p.dataIndex, c = cats[ci];
     if (!c) return null; if (c.isOthers) return { others: true };
-    f.push(catFilter(spec.x, spec, c.label, isTime(spec))); label = c.label; xkeys = [c.label];
+    var bb = out.big && out.big.bands, bi = bb ? bb.labels.indexOf(c.label) : -1;
+    if (bi >= 0) { var lo = bb.edges[bi], hi2 = bb.edges[bi + 1], lastB = bi === bb.n - 1; f.push({ col: spec.x, op: 'between', value: bi === 0 ? -1e300 : lo, value2: lastB ? 1e300 : hi2 - Math.abs(hi2 - lo) * 1e-9, label: '= ' + c.label }); }
+    else f.push(catFilter(spec.x, spec, c.label, isTime(spec))); label = c.label; xkeys = [c.label];
     var si = (p.data && p.data._ser !== undefined) ? p.data._ser : (d.split && p.seriesIndex !== undefined ? p.seriesIndex : -1);
     if (d.split && si >= 0 && d.series[si] && d.series[si].name !== '(Others)') { f.push(catFilter(spec.g, spec, d.series[si].name)); label += ' · ' + d.series[si].name; }
     return res(f, label, xkeys);

@@ -328,3 +328,29 @@ def test_fair_cells_fold_rare_levels_and_refuse_bad_columns(zm):
         eng.fair_cells(i, 2, 1, [1])
     with pytest.raises(eng_mod.EngineError):
         eng.fair_cells(i, 99, 1, [])
+
+
+def test_number_bands_and_condition_shares(ds):
+    eng, i, truth = ds
+    edges = [18, 30, 40, 50, 60, 70]
+    res = eng.chart_agg(i, x=3, xbands=edges, measures=[{"col": -1, "fn": "count"}, {"col": 2, "fn": "pct", "op": ">", "value": 50000}])
+    got = {r[0]: (r[1], r[2]) for r in res["rows"]}
+    for b in range(5):
+        lo, hi = edges[b], edges[b + 1]
+        inb = [t for t in truth if (lo <= t["age"] < hi) or (b == 0 and t["age"] < lo) or (b == 4 and t["age"] >= hi)]
+        amts = [t["amt"] for t in inb if t["amt"] is not None]
+        assert got[f"b{b:03d}"][0] == len(inb)
+        assert got[f"b{b:03d}"][1] == pytest.approx(sum(1 for a in amts if a > 50000) / len(amts) * 100, rel=1e-9)
+    st = eng.chart_agg(i, x=1, measures=[{"col": 1, "fn": "pct", "op": "=", "value": "pending"}])
+    assert {r[0]: r[1] for r in st["rows"]} == {"Pending": 100.0, "Disposed": 0.0, "Under inquiry": 0.0}
+    with pytest.raises(eng_mod.EngineError):
+        eng.chart_agg(i, x=1, measures=[{"col": 2, "fn": "pct", "op": "; drop", "value": 1}])
+    with pytest.raises(eng_mod.EngineError):
+        eng.chart_agg(i, x=3, xbands=["a", "b"])
+
+
+def test_fair_cells_with_number_bands(zm):
+    eng, i, truth = zm
+    res = eng.fair_cells(i, 2, 1, [3], bands={3: [0, 300, 600, 901]})
+    assert {c["k"][1] for c in res["cells"]} <= {"b000", "b001", "b002"}
+    assert sum(c["n"] for c in res["cells"]) == len(truth)

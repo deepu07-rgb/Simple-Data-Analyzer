@@ -163,3 +163,4 @@ body.cs-open .document-meta,body.cs-open .product-subtitle{display:none}
 .fr-tbl tr.fr-main td{background:rgba(109,91,208,.09)}
 .fr-chart{height:270px;background:#fff;border:1px solid var(--border);border-radius:12px;margin:6px 0}
 .fr-how{font-size:12px;color:var(--text-secondary);margin-top:10px;line-height:1.5}
+.cs-m .cs-op{width:64px;flex:none}.cs-m .cs-val{width:90px;flex:none;padding:4px 8px}

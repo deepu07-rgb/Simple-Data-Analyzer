@@ -97,7 +97,7 @@
     xy: 'scatter bubble histogram', y: 'scatter bubble', size: 'bubble', bins: 'histogram',
     sort: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot sankey', top: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot',
     labels: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea pie donut rose funnel', smooth: 'line area stackedArea combo', trend: 'scatter',
-    time: 'column bar stackedColumn percentColumn combo line area stackedArea pie donut rose funnel calendar',
+    time: 'column bar stackedColumn percentColumn combo line area stackedArea pie donut rose funnel calendar', bands: 'x',
     zero: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea pie donut rose funnel treemap sunburst heatmap radar boxplot gauge histogram scatter bubble',
     listx: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst', minrows: 'column bar stackedColumn percentColumn combo pareto pie donut rose funnel treemap sunburst boxplot'
   };
@@ -125,6 +125,8 @@
       else sp.time = 'none';
       if (['stackedColumn', 'percentColumn', 'stackedArea', 'sunburst', 'heatmap', 'sankey'].indexOf(type) >= 0 && !(sp.g >= 0 && sp.g !== sp.x)) sp.g = (cats.filter(function (c) { return c.index !== sp.x; })[0] || {}).index;
       if (!uses('split', type)) sp.g = -1;
+      var xp = sp.x >= 0 && p[sp.x];
+      if (xp && xp.numeric && !xp.date && type !== 'calendar') { if (sp.bands === undefined && xp.distinct > 20) { sp.bands = 6; if (!sp.sort || sp.sort === 'desc') sp.sort = 'natural'; } } else sp.bands = 0;
       if (type !== 'sankey' || sp.g2 === sp.x || sp.g2 === sp.g) sp.g2 = -1;
     }
     if (!sp.ys || !sp.ys.length || (sp.ys.length === 1 && sp.ys[0].col < 0 && nums[0] && !sp._userMeasure)) sp.ys = nums[0] ? [{ col: nums[0].index, fn: 'sum' }] : [{ col: -1, fn: 'count' }];
@@ -141,10 +143,11 @@
       '<div class="cs-chartwrap"><div id="csChart"></div><div class="cs-msg" id="csMsg" style="display:none"></div></div>' +
       '<div class="cs-selbar" id="csSelBar" style="display:none"></div>' +
       '<div class="cs-cap" id="csCap"></div>' +
-      '<div class="cs-tools"><button class="tb-btn" id="csPng"></button><button class="tb-btn" id="csCopy"></button><button class="tb-btn" id="csCsv"></button><button class="tb-btn" id="csPin"></button><button class="tb-btn" id="csBoard"></button><button class="tb-btn" id="csDash"></button><button class="tb-btn" id="csFair"></button></div>' +
+      '<div class="cs-tools"><button class="tb-btn" id="csPng"></button><button class="tb-btn" id="csCopy"></button><button class="tb-btn" id="csCsv"></button><button class="tb-btn" id="csPin"></button><button class="tb-btn" id="csBoard"></button><button class="tb-btn" id="csDash"></button><button class="tb-btn" id="csFair"></button><button class="tb-btn" id="csDrv"></button></div>' +
       '<div class="cs-sec" id="csTypeLbl"></div><div class="cs-gallery" id="csGallery">' + gal + '</div>' +
       '<details class="cs-fields" id="csFieldsBox" open><summary id="csFieldsLbl"></summary><div class="cs-grid" id="csFields">' +
         '<label class="cs-f" data-use="x"><span id="csXl"></span><select id="csX" class="big-select"></select></label>' +
+        '<label class="cs-f" data-use="bands"><span id="csBandl"></span><select id="csBand" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="time"><span id="csTl"></span><select id="csTime" class="big-select"></select></label>' +
         '<div class="cs-f wide" data-use="measure"><span id="csMl"></span><div id="csMeasures"></div><button class="cs-link" id="csAddM"></button></div>' +
         '<label class="cs-f" data-use="split"><span id="csGl"></span><select id="csG" class="big-select"></select></label>' +
@@ -170,8 +173,9 @@
     $('csAuto').onclick = function () { STL.openBoard(); };
     d.querySelectorAll('.cs-t').forEach(function (b) { b.onclick = function () { setType(b.dataset.type); }; });
     var on = function (id, ev, fn) { var e = $(id); if (e) e.addEventListener(ev, fn); };
-    on('csX', 'change', function () { CS.spec.x = +this.value; adapt(CS.type, true); sync(); redraw(); });
+    on('csX', 'change', function () { CS.spec.x = +this.value; delete CS.spec.bands; adapt(CS.type, true); sync(); redraw(); });
     on('csTime', 'change', function () { CS.spec.time = this.value; redraw(); });
+    on('csBand', 'change', function () { CS.spec.bands = +this.value; CS.spec.sort = CS.spec.bands ? 'natural' : CS.spec.sort; redraw(); });
     on('csG', 'change', function () { CS.spec.g = +this.value; if (CS.spec.g >= 0 && CS.spec.ys.length > 1) CS.spec.ys = CS.spec.ys.slice(0, 1); sync(); redraw(); });
     on('csZero', 'change', function () { CS.spec.noZero = this.checked; redraw(); }); on('csMulti', 'change', function () { CS.spec.multi = this.checked; redraw(); }); on('csMin', 'change', function () { CS.spec.minRows = +this.value; redraw(); });
     on('csG2', 'change', function () { CS.spec.g2 = +this.value; sync(); redraw(); });
@@ -182,6 +186,7 @@
     on('csLab', 'change', function () { CS.spec.labels = this.checked; redraw(); }); on('csSm', 'change', function () { CS.spec.smooth = this.checked; redraw(); }); on('csTr', 'change', function () { CS.spec.trend = this.checked; redraw(); });
     on('csAddM', 'click', function () { var p = profile(), n = p.filter(good).filter(function (c) { return !CS.spec.ys.some(function (y) { return y.col === c.index; }); })[0]; if (CS.spec.ys.length >= 6) return; CS.spec.ys.push({ col: n ? n.index : -1, fn: n ? 'sum' : 'count' }); CS.spec.g = -1; CS.spec._userMeasure = true; sync(); redraw(); });
     on('csPng', 'click', savePng); on('csCopy', 'click', copyPng); on('csCsv', 'click', saveCsv); on('csPin', 'click', pin); on('csBoard', 'click', function () { STL.openBoard(); }); on('csDash', 'click', function () { STL.openDashboard(); });
+    on('csDrv', 'click', function () { var y = (CS.spec.ys || []).filter(function (q) { return q.col >= 0; })[0]; STL.openDrivers({ y: y ? y.col : (CS.spec.xnum >= 0 ? CS.spec.xnum : -1), noZero: CS.spec.noZero }); });
     on('csFair', 'click', function () { var sp = CS.spec || {}, y = (sp.ys || []).filter(function (q) { return q.col >= 0; })[0], pr = profile(), f = sp.x >= 0 && pr[sp.x] && !pr[sp.x].numeric && !pr[sp.x].date ? sp.x : (sp.g >= 0 ? sp.g : -1); STL.openFair({ y: y ? y.col : -1, f: f, noZero: sp.noZero }); });
     if (window.ResizeObserver) new ResizeObserver(function () { resize(); }).observe($('csChart'));
   }
@@ -205,10 +210,12 @@
     $('csTime').innerHTML = [['none', T('(as is)', '(जैसा है)')], ['day', T('Day', 'दिन')], ['month', T('Month', 'माह')], ['quarter', T('Quarter', 'तिमाही')], ['fy', T('Financial year', 'वित्त वर्ष')], ['year', T('Year', 'वर्ष')], ['weekday', T('Weekday', 'सप्ताह का दिन')]].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.time || 'none') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
     $('csMl').textContent = type === 'radar' ? T('Measures (3 or more)', 'माप (3 या अधिक)') : (uses('multi', type) ? T('Measure(s)', 'माप') : T('Measure', 'माप'));
     $('csMeasures').innerHTML = sp.ys.map(function (y, i) {
-      return '<div class="cs-m"><select class="big-select" data-mc="' + i + '">' + opts(numeric, y.col, T('(count of rows)', '(पंक्तियों की गिनती)')) + '</select><select class="big-select" data-mf="' + i + '"' + (y.col < 0 ? ' disabled' : '') + '>' + CH.FUNCS.filter(function (f) { return type === 'sankey' ? f[0] === (y.col >= 0 ? 'sum' : 'count') : (y.col >= 0 || f[0] === 'count'); }).map(function (f) { return '<option value="' + f[0] + '"' + (f[0] === y.fn ? ' selected' : '') + '>' + nm(f[1]) + '</option>'; }).join('') + '</select>' + (sp.ys.length > 1 ? '<button class="cs-ic sm" data-mr="' + i + '" aria-label="remove">×</button>' : '') + '</div>';
+      return '<div class="cs-m"><select class="big-select" data-mc="' + i + '">' + opts(y.fn === 'pct' ? all : numeric, y.col, T('(count of rows)', '(पंक्तियों की गिनती)')) + '</select><select class="big-select" data-mf="' + i + '"' + (y.col < 0 ? ' disabled' : '') + '>' + CH.FUNCS.filter(function (f) { return type === 'sankey' ? f[0] === (y.col >= 0 ? 'sum' : 'count') : (y.col >= 0 || f[0] === 'count'); }).map(function (f) { return '<option value="' + f[0] + '"' + (f[0] === y.fn ? ' selected' : '') + '>' + nm(f[1]) + '</option>'; }).join('') + '</select>' + (y.fn === 'pct' ? '<select class="big-select cs-op" data-mo="' + i + '">' + CH.OPS.map(function (o) { return '<option value="' + o + '"' + (o === (y.op || '<') ? ' selected' : '') + '>' + ({ '<=': '≤', '>=': '≥', '!=': '≠' }[o] || o) + '</option>'; }).join('') + '</select><input class="big-input cs-val" data-mv="' + i + '" value="' + esc(y.value === undefined ? '' : y.value) + '" placeholder="' + esc(T('value', 'मान')) + '">' : '') + (sp.ys.length > 1 ? '<button class="cs-ic sm" data-mr="' + i + '" aria-label="remove">×</button>' : '') + '</div>';
     }).join('');
     $('csMeasures').querySelectorAll('[data-mc]').forEach(function (e) { e.onchange = function () { var y = sp.ys[+e.dataset.mc]; y.col = +e.value; if (y.col < 0) y.fn = 'count'; else if (y.fn === 'count') y.fn = 'sum'; sp._userMeasure = true; sync(); redraw(); }; });
-    $('csMeasures').querySelectorAll('[data-mf]').forEach(function (e) { e.onchange = function () { sp.ys[+e.dataset.mf].fn = e.value; redraw(); }; });
+    $('csMeasures').querySelectorAll('[data-mf]').forEach(function (e) { e.onchange = function () { var y = sp.ys[+e.dataset.mf], was = y.fn; y.fn = e.value; if (y.fn === 'pct' && y.op === undefined) { y.op = '<'; var pp = profile()[y.col]; y.value = pp && pp.numeric && isFinite(pp.min) ? String(Math.round(((pp.min + pp.max) / 2) * 100) / 100) : ''; } if (was === 'pct' || y.fn === 'pct') sync(); redraw(); }; });
+    $('csMeasures').querySelectorAll('[data-mo]').forEach(function (e) { e.onchange = function () { sp.ys[+e.dataset.mo].op = e.value; redraw(); }; });
+    $('csMeasures').querySelectorAll('[data-mv]').forEach(function (e) { e.oninput = function () { sp.ys[+e.dataset.mv].value = e.value; clearTimeout(CS._mv); CS._mv = setTimeout(redraw, 350); }; });
     $('csMeasures').querySelectorAll('[data-mr]').forEach(function (e) { e.onclick = function () { sp.ys.splice(+e.dataset.mr, 1); sync(); redraw(); }; });
     $('csAddM').textContent = '+ ' + T('Add a measure', 'माप जोड़ें'); $('csAddM').style.display = uses('multi', type) ? '' : 'none';
     $('csGl').textContent = type === 'sankey' ? T('To (category)', 'तक (श्रेणी)') : type === 'heatmap' ? T('Columns (category)', 'स्तंभ (श्रेणी)') : T('Split / colour by', 'इसके अनुसार बाँटें / रंग'); $('csG').innerHTML = opts(all.filter(function (a) { return a[0] !== sp.x; }), sp.g, T('(none)', '(कोई नहीं)'));
@@ -224,13 +231,15 @@
     $('csZerol').textContent = T('Ignore zeros (0 usually means “no value”)', 'शून्य छोड़ें (0 का अर्थ प्रायः “कोई मान नहीं”)') + (zp >= 0.005 ? ' — ' + Math.round(zp * 100) + T('% of rows have 0', '% पंक्तियों में 0') : ''); $('csZero').checked = !!sp.noZero;
     $('csMultil').textContent = T('Each item of a list counts separately (e.g. cuisines)', 'सूची की हर वस्तु अलग गिनें (जैसे व्यंजन)'); $('csMulti').checked = !!sp.multi;
     $('csMinl').textContent = T('Hide groups with fewer rows than', 'इससे कम पंक्तियों वाले समूह छिपाएँ'); $('csMin').innerHTML = [[0, T('(show all)', '(सभी दिखाएँ)')], [5, '5'], [10, '10'], [20, '20'], [30, '30'], [50, '50'], [100, '100']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.minRows || 0) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+    $('csBandl').textContent = T('Group the numbers into', 'संख्याओं को समूहों में बाँटें'); $('csBand').innerHTML = [[0, T('(each value)', '(हर मान)')], [4, T('4 bands', '4 समूह')], [6, T('6 bands', '6 समूह')], [8, T('8 bands', '8 समूह')], [12, T('12 bands', '12 समूह')]].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.bands || 0) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
     $('csTil').textContent = T('Title', 'शीर्षक'); $('csTitleIn').value = sp.title || ''; $('csTitleIn').placeholder = autoTitle(type, sp);
     $('csLabl').textContent = T('Show values', 'मान दिखाएँ'); $('csLab').checked = !!sp.labels; $('csSml').textContent = T('Smooth lines', 'चिकनी रेखाएँ'); $('csSm').checked = !!sp.smooth; $('csTrl').textContent = T('Trend line', 'प्रवृत्ति रेखा'); $('csTr').checked = !!sp.trend;
     document.querySelectorAll('#csFields [data-use]').forEach(function (e) { var f = e.dataset.use, show = f === 'palette' ? true : uses(f, type); if (f === 'time') show = show && sp.x >= 0 && p[sp.x] && p[sp.x].date; if (f === 'xy' && type === 'histogram') show = true;
       if (f === 'zero') show = show && (zp >= 0.005 || !!sp.noZero);
+      if (f === 'bands') show = uses('x', type) && type !== 'calendar' && sp.x >= 0 && p[sp.x] && p[sp.x].numeric && !p[sp.x].date;
       if (f === 'listx') show = show && sp.x >= 0 && p[sp.x] && !p[sp.x].numeric && !p[sp.x].date && (p[sp.x].commaPct >= 0.05 || !!sp.multi);
       if (f === 'minrows') show = show && ((sp.ys || []).some(function (y) { return y.col >= 0 && y.fn !== 'sum' && y.fn !== 'count'; }) || !!sp.minRows); e.style.display = show ? '' : 'none'; });
-    $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड'); $('csDash').textContent = '📋 ' + T('Dashboard', 'डैशबोर्ड'); $('csFair').textContent = '⚖ ' + T('Fair comparison', 'निष्पक्ष तुलना'); $('csFair').title = T('Is the difference between these groups real, or just a mix effect?', 'क्या इन समूहों का अंतर असली है, या केवल मिश्रण का असर?'); $('csDash').title = T('Arrange the pinned charts on a page and export to PowerPoint or PDF', 'पिन किए चार्ट एक पृष्ठ पर सजाएँ और PowerPoint या PDF में निर्यात करें');
+    $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड'); $('csDash').textContent = '📋 ' + T('Dashboard', 'डैशबोर्ड'); $('csFair').textContent = '⚖ ' + T('Fair comparison', 'निष्पक्ष तुलना'); $('csDrv').textContent = '🔍 ' + T('What explains this?', 'इसे क्या समझाता है?'); $('csDrv').title = T('Which columns go most with this number?', 'कौन-से कॉलम इस संख्या से सबसे अधिक जुड़े हैं?'); $('csFair').title = T('Is the difference between these groups real, or just a mix effect?', 'क्या इन समूहों का अंतर असली है, या केवल मिश्रण का असर?'); $('csDash').title = T('Arrange the pinned charts on a page and export to PowerPoint or PDF', 'पिन किए चार्ट एक पृष्ठ पर सजाएँ और PowerPoint या PDF में निर्यात करें');
     $('csHint').textContent = T('Click a bar, slice or cell to show only those rows in the table (Ctrl+click adds more). Drag on the chart with the select tool (top right) to pick a range. Scroll with Ctrl to zoom.', 'तालिका में केवल वे पंक्तियाँ देखने के लिए पट्टी, टुकड़े या खाने पर क्लिक करें (Ctrl+क्लिक से और जोड़ें)। दायरा चुनने के लिए ऊपर दाएँ के चयन औज़ार से चार्ट पर खींचें। ज़ूम के लिए Ctrl के साथ स्क्रॉल करें।');
     $('csExpand').title = T('Wider', 'चौड़ा');
   }
@@ -484,13 +493,14 @@
       var auto = CH.recommend(HD(), RD(), idx, 8).map(function (r) { return { type: r.type, spec: r.spec, why: r.why, auto: true }; });
       var pins = STL.board.pins.map(function (p, i) { return { type: p.type, spec: p.spec, palette: p.palette, why: { en: p.title, hi: p.title }, pinned: true, pi: i }; });
       var cards = pins.concat(auto);
-      var html = '<div class="prj-h"><b>' + T('Insights board', 'अंतर्दृष्टि बोर्ड') + '</b><button id="bdX" aria-label="close">×</button></div>' +
+      var html = '<div class="prj-h"><b>' + T('Insights board', 'अंतर्दृष्टि बोर्ड') + '</b><span class="cs-grow"></span><button class="tb-btn" id="bdDrv">🔍 ' + T('What explains the numbers?', 'संख्याओं को क्या समझाता है?') + '</button><button id="bdX" aria-label="close">×</button></div>' +
         '<div class="big-note">' + T('Charts chosen for your data, each with a plain-language reason. Click a chart to open it in the Studio. Pin your own charts from the Studio.', 'आपके डेटा के लिए चुने गए चार्ट, हर एक का सरल कारण सहित। स्टूडियो में खोलने के लिए चार्ट पर क्लिक करें। स्टूडियो से अपने चार्ट पिन करें।') + ' ' + Number(idx.length).toLocaleString('en-IN') + T(' rows', ' पंक्तियाँ') + '</div>' +
         (cards.length ? '<div class="cs-board">' + cards.map(function (c, i) {
           return '<div class="cs-card" data-i="' + i + '"><div class="cs-card-h"><span>' + (c.pinned ? '📌 ' : '') + esc(nm(c.why)) + '</span>' + (c.pinned ? '<button class="cs-ic sm" data-unpin="' + c.pi + '" title="Unpin">×</button>' : '<button class="cs-ic sm" data-pinit="' + i + '" title="Pin">📌</button>') + '</div><div class="cs-card-c" id="bdc' + i + '"></div><div class="cs-card-cap" id="bdk' + i + '"></div></div>';
         }).join('') + '</div>' : '<div class="big-err">' + T('Not enough variety in this data to suggest charts. Try the Chart Studio.', 'चार्ट सुझाने के लिए इस डेटा में पर्याप्त विविधता नहीं। चार्ट स्टूडियो आज़माएँ।') + '</div>');
       var o = U.overlay('boardDialog', html, true); o.querySelector('.stl-box').classList.add('xwide');
       $('bdX').onclick = function () { disposeBoard(); o.remove(); };
+      $('bdDrv').onclick = function () { disposeBoard(); o.remove(); STL.openDrivers(); };
       cards.forEach(function (c, i) {
         var ev = Object.assign(env(), { palette: c.palette || 'aurora' });
         Promise.resolve().then(function () { return isBig() ? STL.bigCharts.build(c.type, c.spec, ev) : CH.build(c.type, c.spec, HD(), RD(), idx, ev); }).then(function (out) {

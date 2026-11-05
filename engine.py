@@ -483,6 +483,38 @@ class Engine:
         """The column as a number; with `nozero`, 0 becomes empty (a rating of 0 usually means 'not rated')."""
         return f"NULLIF({_num(i)}, 0)" if nozero else _num(i)
 
+    PCT_OPS = {"<": "<", "<=": "<=", ">": ">", ">=": ">=", "=": "=", "!=": "<>"}
+
+    @staticmethod
+    def _band_sql(expr, edges):
+        """A number cut into bands by its edges [e0, e1, ... en]; the label is the band number b000, b001 ... (the browser names it)."""
+        try:
+            e = [float(x) for x in edges][:61]
+        except (TypeError, ValueError):
+            raise EngineError("Invalid bands.")
+        if len(e) < 2 or any(not math.isfinite(x) for x in e):
+            raise EngineError("Invalid bands.")
+        n = len(e) - 1
+        whens = " ".join(f"WHEN {expr} < {e[i + 1]!r} THEN 'b{i:03d}'" for i in range(n - 1))
+        return f"(CASE WHEN {expr} IS NULL THEN NULL {whens} ELSE 'b{n - 1:03d}' END)"
+
+    def _pct_sql(self, c, op, value, nozero=False):
+        """% of rows (with a value) where the cell meets a condition: numbers compared as numbers, text ignoring case."""
+        if op not in self.PCT_OPS:
+            raise EngineError("Unknown condition.")
+        sym = self.PCT_OPS[op]
+        try:
+            v = float(str(value).replace(",", "").strip())
+            if not math.isfinite(v):
+                raise ValueError
+            m = NUM.format(c=c)
+            if nozero:
+                m = f"NULLIF({m}, 0)"
+            return f"avg(CASE WHEN {m} IS NULL THEN NULL WHEN {m} {sym} {v!r} THEN 100.0 ELSE 0.0 END)"
+        except (TypeError, ValueError):
+            lit = "'" + str(value).strip().lower().replace("'", "''")[:200] + "'"
+            return f"avg(CASE WHEN {c} IS NULL OR trim({c}) = '' THEN NULL WHEN lower(trim({c})) {sym} {lit} THEN 100.0 ELSE 0.0 END)"
+
     def _opt_col(self, d, i):
         if i is None or i == "":
             return None
@@ -494,7 +526,7 @@ class Engine:
         return self._check_col(d, i)
 
     def chart_agg(self, ds_id, x=None, time=None, g=None, g2=None, measures=None, rank="value",
-                  max_cats=300, max_groups=9, search=None, filters=None, multi=False, nozero=False, min_rows=0):
+                  max_cats=300, max_groups=9, search=None, filters=None, multi=False, nozero=False, min_rows=0, xbands=None):
         """Group by up to three columns (x, g, g2) with up to six measures. Groups beyond the biggest `max_cats`
         (x) or `max_groups - 1` (g, g2) are folded into '(Others)' and calculated from the real rows, so even an
         average of the leftovers is exact. A date column is cut into day / month / quarter / fy / year / weekday."""
@@ -503,10 +535,13 @@ class Engine:
         xi, gi, g2i = self._opt_col(d, x), self._opt_col(d, g), self._opt_col(d, g2)
         time = time if time in self.TIME_MODES else None
         ms = []
+        pcts = {}
         for m in (measures or [{"col": -1, "fn": "count"}])[:6]:
             fn, ci = m.get("fn", "sum"), self._opt_col(d, m.get("col", -1))
-            if fn not in self._FN_SQL:
+            if fn != "pct" and fn not in self._FN_SQL:
                 raise EngineError(f"Unknown function '{fn}'.")
+            if fn == "pct" and ci is not None:
+                pcts[len(ms)] = self._pct_sql(f"p{len(ms)}", m.get("op", "="), m.get("value", ""), nozero)
             ms.append((ci, "count" if ci is None else fn))
         max_cats = max(1, min(int(max_cats), 5000)); max_groups = max(2, min(int(max_groups), 60)); min_rows = max(0, min(int(min_rows or 0), 100000))
         multi = bool(multi) and xi is not None and not time
@@ -521,13 +556,17 @@ class Engine:
             s_cols.append("'' AS xl")
         elif time:
             s_cols.append(f"{_col(xi)} AS xraw")
+        elif xbands:
+            s_cols.append(f"coalesce({self._band_sql(_num(xi), xbands)}, '(blank)') AS xl")
         else:
             s_cols.append(f"{text(xi)} AS xl")
         for n, i in (("g", gi), ("g2", g2i)):
             if i is not None:
                 s_cols.append(f"{text(i)} AS {n}l")
         for k, (ci, fn) in enumerate(ms):
-            if ci is not None:
+            if ci is not None and fn == "pct":
+                s_cols.append(f"{_col(ci)} AS p{k}")
+            elif ci is not None:
                 s_cols.append(f"{self._numz(ci, nozero and fn not in ('count', 'distinct'))} AS m{k}")
                 if fn == "distinct":
                     s_cols.append(f"trim({_col(ci)}) AS t{k}")
@@ -539,19 +578,19 @@ class Engine:
                 k_cols += [f"{n}l", f"lower({n}l) AS {n}k"]
         for k, (ci, fn) in enumerate(ms):
             if ci is not None:
-                k_cols.append(f"m{k}")
+                k_cols.append(f"p{k}" if fn == "pct" else f"m{k}")
                 if fn == "distinct":
                     k_cols.append(f"t{k}")
         dd = self._date_dim(d, xi) if (xi is not None and time) else None
         k_from = f"s JOIN {dd} ON s.xraw = {dd}.v WHERE xd IS NOT NULL" if dd else "s"
-        agg = [self._FN_SQL[fn].format(m=f"m{k}", t=f"t{k}") for k, (ci, fn) in enumerate(ms)]
+        agg = [pcts[k] if fn == "pct" else self._FN_SQL[fn].format(m=f"m{k}", t=f"t{k}") for k, (ci, fn) in enumerate(ms)]
         rank_expr = "xk DESC" if rank == "label" else f"abs(coalesce({agg[0]}, 0)) DESC, xk"
         src = (f"(SELECT *, unnest(string_split(coalesce({_col(xi)}, ''), ',')) AS xmv FROM {d['table']}{where})" if multi else f"{d['table']}{where}")
         cur = self.db.cursor()
         hidden = 0
         k_sel = f"SELECT {', '.join(k_cols)} FROM {k_from}"
         if min_rows > 0 and xi is not None:                                       # drop groups too small to average (rows that carry a value), but never leave fewer than two
-            sized = "count(m0)" if ms[0][0] is not None and ms[0][1] not in ("count",) else "count(*)"
+            sized = ("count(p0)" if ms[0][1] == "pct" else "count(m0)") if ms[0][0] is not None and ms[0][1] not in ("count",) else "count(*)"
             chk = (f"WITH s AS (SELECT {', '.join(s_cols)} FROM {src}), k0 AS ({k_sel}) "
                    f"SELECT count(*), count(*) FILTER (WHERE n >= {min_rows}) FROM (SELECT xk, {sized} AS n FROM k0 GROUP BY xk)")
             total_g, ok_g = cur.execute(chk, params).fetchone()
@@ -574,7 +613,7 @@ class Engine:
                 keys.append(f"f{n}"); labels.append(f"min({n}l) AS l{n}")
         sel_agg = ", ".join(f"{a} AS a{k}" for k, a in enumerate(agg))
         extra = ", ".join(c for c in ["xl"] + [f"{n}l" for n, i in (("g", gi), ("g2", g2i)) if i is not None] +
-                          [c2 for k, (ci, fn) in enumerate(ms) if ci is not None for c2 in ([f"m{k}"] + ([f"t{k}"] if fn == "distinct" else []))])
+                          [c2 for k, (ci, fn) in enumerate(ms) if ci is not None for c2 in ([f"p{k}" if fn == "pct" else f"m{k}"] + ([f"t{k}"] if fn == "distinct" else []))])
         sql = (f"WITH {', '.join(ctes)}, f AS (SELECT {', '.join(fold)}, {extra} FROM k) "
                f"SELECT {', '.join(keys)}, {', '.join(labels)}, {sel_agg} FROM f GROUP BY {', '.join(keys)} LIMIT 20000")
         try:
@@ -588,7 +627,7 @@ class Engine:
             rows.append(lab + list(r[2 * nd:]))
         matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}", params).fetchone()[0]
         zeros = 0
-        zm = [ci for ci, fn in ms if ci is not None and fn not in ("count", "distinct")]
+        zm = [ci for ci, fn in ms if ci is not None and fn not in ("count", "distinct", "pct")]
         if nozero and zm:
             zeros = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(zm[0])} = 0", params).fetchone()[0]
         return {"rows": rows, "matched": matched, "dims": nd, "measures": len(ms), "total": d["rows"], "hiddenSmall": hidden, "zeroSkipped": zeros,
@@ -683,7 +722,7 @@ class Engine:
         return {"n": n, "points": pts, "zeroSkipped": zs, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
                 "reg": {"slope": slope, "intercept": icpt, "r": r, "n": n, "xmin": xmin, "xmax": xmax} if n >= 3 else None}
 
-    def fair_cells(self, ds_id, y, factor, adjusters=None, nozero=False, search=None, filters=None, max_levels=40):
+    def fair_cells(self, ds_id, y, factor, adjusters=None, nozero=False, search=None, filters=None, max_levels=40, bands=None):
         """For a fair comparison: rows grouped by (group, adjuster levels ...) with the count, sum and sum of squares of the
         outcome. The browser fits the regression from these few cells, so the whole file is used, not a sample."""
         d = self._ds(ds_id)
@@ -696,7 +735,11 @@ class Engine:
         dims = [fi] + adj
         lim = [12] + [max(2, min(int(max_levels), 60))] * len(adj)
 
+        bands = {int(k): v for k, v in (bands or {}).items()}
+
         def text(i):
+            if i in bands:                                                        # a number column cut into bands (b000, b001 ...)
+                return f"coalesce({self._band_sql(_num(i), bands[i])}, '(blank)')"
             c = _col(i)
             return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
         sel = ", ".join(f"{text(i)} AS d{n}" for n, i in enumerate(dims))

@@ -91,3 +91,17 @@ test('captions never add averages together; histogram lines and bar labels show 
   const lab = CH.build('column', { x: 8, ys: [{ col: 9, fn: 'avg' }], noZero: true, labels: true, sort: 'natural' }, HEAD, rows, IDX, {}).option.series[0].label.formatter;
   assert.equal(lab({ value: 3.239 }), '3.24'); assert.equal(lab({ value: 250000 }), '2.5 L'); assert.equal(lab({ value: 42 }), '42');
 });
+
+test('number bands on the category axis and "% of rows where…" measures', () => {
+  const o = CH.build('column', { x: 11, bands: 5, ys: [{ col: 9, fn: 'avg' }], noZero: true }, HEAD, rows, IDX, {});
+  const b = o.data.bands; assert.ok(b && b.n >= 4 && b.n <= 7, 'about 5 round bands');
+  assert.deepEqual(plain(o.data.cats.map(c => c.label)), plain(b.labels.filter(l => o.data.cats.some(c => c.label === l))), 'bands in their natural order');
+  o.data.cats.forEach(c => c.rows.forEach(ri => { const v = +rows[ri][11], i = b.labels.indexOf(c.label); assert.ok(v >= b.edges[i] && (v < b.edges[i + 1] || i === b.n - 1)); }));
+  assert.equal(o.data.cats.reduce((a, c) => a + c.rows.length, 0), 600);
+  const p = CH.build('column', { x: 3, ys: [{ col: 9, fn: 'pct', op: '>=', value: 4 }], sort: 'label' }, HEAD, rows, IDX, {});
+  p.data.cats.forEach(c => { const v = rows.filter(r => r[3] === c.label).map(r => +r[9]); assert.ok(Math.abs(c.values[0] - v.filter(x => x >= 4).length / v.length * 100) < 1e-9, c.label); });
+  assert.equal(p.data.series[0].name, '% Aggregate rating ≥ 4'); assert.equal(p.option.yAxis.name, '% Aggregate rating ≥ 4');
+  const t = CH.build('column', { x: 3, ys: [{ col: 10, fn: 'pct', op: '=', value: 'not rated' }], sort: 'label' }, HEAD, rows, IDX, {});
+  t.data.cats.forEach(c => { const v = rows.filter(r => r[3] === c.label); assert.ok(Math.abs(c.values[0] - v.filter(r => r[10] === 'Not rated').length / v.length * 100) < 1e-9); });
+  assert.deepEqual(plain(CH.makeBands(30.2, 71.9, 6).edges), [30, 40, 50, 60, 70, 80]);
+});

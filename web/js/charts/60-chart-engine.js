@@ -47,7 +47,7 @@
     { id: 'gauge',   group: 'kpi',     name: B('Gauge (KPI)', 'गेज (केपीआई)'),  needs: 'num' }
   ];
   CH.GROUPS = { compare: B('Compare', 'तुलना'), trend: B('Over time', 'समय के साथ'), share: B('Share of total', 'हिस्सेदारी'), hier: B('Hierarchy', 'पदानुक्रम'), relate: B('Relationships', 'संबंध'), dist: B('Spread', 'फैलाव'), kpi: B('Single number', 'एक संख्या') };
-  CH.FUNCS = [['sum', B('Total', 'योग')], ['avg', B('Average', 'औसत')], ['count', B('Count of rows', 'पंक्तियों की गिनती')], ['min', B('Smallest', 'न्यूनतम')], ['max', B('Largest', 'अधिकतम')], ['median', B('Median', 'माध्यिका')], ['distinct', B('Different values', 'अलग मान')]];
+  CH.FUNCS = [['sum', B('Total', 'योग')], ['avg', B('Average', 'औसत')], ['count', B('Count of rows', 'पंक्तियों की गिनती')], ['min', B('Smallest', 'न्यूनतम')], ['max', B('Largest', 'अधिकतम')], ['median', B('Median', 'माध्यिका')], ['distinct', B('Different values', 'अलग मान')], ['pct', B('% of rows where…', '% पंक्तियाँ जहाँ…')]];
   CH.PALETTES = {
     aurora: ['#6d5bd0', '#14a38b', '#e8913a', '#d6456b', '#3b82c4', '#8f9aa8', '#9a6fd0', '#4aa3a2', '#c9a227', '#7a8cff'],
     saffron: ['#e8791a', '#138808', '#1b3a8c', '#c43d2f', '#7a4f9a', '#f2b134', '#3a8f8f', '#8c6a43', '#d65a8a', '#5a6b7b'],
@@ -111,7 +111,16 @@
     return { index: c, name: s(header), filled: nn, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
              zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)) };
   }
-  CH.profile = function (headers, rows, idx) { return headers.map(function (h, i) { return colFacts(rows, idx, i, h); }); };
+  CH.profile = function (headers, rows, idx) {
+    var prof = headers.map(function (h, i) { return colFacts(rows, idx, i, h); });
+    // how many other columns carry a word of this column's name ("plate_waste_percentage" -> "waste_adjusted_cost",
+    // "primary_food_waste_driver"): the number other columns are built from is usually the headline number
+    var W = prof.map(function (p) { return CH.nameWords(p.name); });
+    prof.forEach(function (p, i) { p.namedBy = 0; W.forEach(function (w, j) { if (j !== i && w.some(function (x) { return W[i].indexOf(x) >= 0; })) p.namedBy++; }); });
+    return prof;
+  };
+  var NAME_STOP = { the: 1, and: 1, per: 1, for: 1, rate: 1, score: 1, index: 1, total: 1, count: 1, type: 1, data: 1, value: 1, level: 1, pct: 1, percentage: 1, percent: 1, cost: 1, idr: 1, inr: 1, rupees: 1, amount: 1, ratio: 1, number: 1, name: 1, code: 1, date: 1 };
+  CH.nameWords = function (name) { return String(name == null ? '' : name).toLowerCase().split(/[^a-zऀ-ॿ]+/).filter(function (w) { return w.length >= 4 && !NAME_STOP[w]; }); };
 
   // ------------------------------------------------------------ aggregation
   function reduce(vals, fn) {
@@ -120,6 +129,7 @@
     var nums = []; vals.forEach(function (v) { var x = typeof v === 'number' ? v : num(v); if (x !== null) nums.push(x); });
     if (!nums.length) return null;
     switch (fn) {
+      case 'pct': return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;              // the values are already 100 / 0
       case 'sum': return nums.reduce(function (a, b) { return a + b; }, 0);
       case 'avg': return nums.reduce(function (a, b) { return a + b; }, 0) / nums.length;
       case 'min': return Math.min.apply(null, nums);
@@ -129,6 +139,36 @@
     return null;
   }
   function quantile(sorted, q) { if (!sorted.length) return null; var p = (sorted.length - 1) * q, lo = Math.floor(p), hi = Math.ceil(p); return sorted[lo] + (sorted[hi] - sorted[lo]) * (p - lo); }
+  // ---- conditions ("temperature < 60", "status = Pending") and number bands ("60–65")
+  var OPS = { '<': function (a, b) { return a < b; }, '<=': function (a, b) { return a <= b; }, '>': function (a, b) { return a > b; }, '>=': function (a, b) { return a >= b; }, '=': function (a, b) { return a === b; }, '!=': function (a, b) { return a !== b; } };
+  CH.OPS = ['<', '<=', '>', '>=', '=', '!='];
+  CH.cond = function (v, op, val) {                                               // null when the cell is empty
+    if (blank(v)) return null; var f = OPS[op] || OPS['='], a = num(v), b = num(val);
+    if (a !== null && b !== null) return f(a, b);
+    var x = s(v).trim().toLowerCase(), y = s(val).trim().toLowerCase(); return (op === '=' || op === '!=') ? f(x, y) : f(x, y);
+  };
+  CH.condText = function (y, headers) { return s(y.name || headers[y.col]) + ' ' + ({ '<=': '≤', '>=': '≥', '!=': '≠' }[y.op] || y.op || '=') + ' ' + s(y.value); };
+  function niceStep(span, k) { var raw = span / Math.max(k, 1), p = Math.pow(10, Math.floor(Math.log10(raw || 1))), m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; }
+  function fmtEdge(v) { return Math.abs(v) >= 1000 ? indian(v) : String(Math.round(v * 1000) / 1000); }
+  // equal-width bands with round edges between min and max (k is the wished number of bands)
+  CH.makeBands = function (min, max, k) {
+    if (!isFinite(min) || !isFinite(max)) return null; if (min === max) max = min + 1;
+    var step = niceStep(max - min, k || 6), start = Math.floor(min / step) * step, edges = [start];
+    while (edges[edges.length - 1] <= max - 1e-12 && edges.length < 60) edges.push(Math.round((edges[edges.length - 1] + step) * 1e9) / 1e9);
+    return CH.bandsFromEdges(edges);
+  };
+  // bands with given cut points, e.g. quintiles [lo, c1, c2, c3, c4, hi]
+  CH.bandsFromEdges = function (edges) {
+    var n = edges.length - 1, labels = []; for (var i = 0; i < n; i++) labels.push(fmtEdge(edges[i]) + '–' + fmtEdge(edges[i + 1]));
+    return { edges: edges, n: n, labels: labels };
+  };
+  CH.bandOf = function (b, v) { if (v === null || v === undefined || !isFinite(v)) return -1; for (var i = 0; i < b.n - 1; i++) if (v < b.edges[i + 1]) return i; return b.n - 1; };
+  CH.quantileBands = function (values, k) {
+    var v = values.filter(function (x) { return x !== null && isFinite(x); }).sort(function (a, b) { return a - b; }); if (!v.length) return null;
+    var e = [v[0]]; for (var i = 1; i < k; i++) { var q = quantile(v, i / k); if (q > e[e.length - 1]) e.push(q); } if (v[v.length - 1] > e[e.length - 1]) e.push(v[v.length - 1]); else if (e.length === 1) e.push(v[0] + 1);
+    return CH.bandsFromEdges(e);
+  };
+  CH.bandsForColumn = function (rows, idx, col, k) { var mn = Infinity, mx = -Infinity; idx.forEach(function (i) { var x = num(rows[i][col]); if (x !== null) { if (x < mn) mn = x; if (x > mx) mx = x; } }); return CH.makeBands(mn, mx, k); };
   function fnLabel(fn, hi) { var f = CH.FUNCS.filter(function (x) { return x[0] === fn; })[0]; return f ? f[1][hi ? 'hi' : 'en'] : fn; }
 
   // time bucketing for a date column
@@ -147,9 +187,10 @@
 
   // spec: {x, ys:[{col,fn}], g, fn, sort ('desc'|'asc'|'label'|'natural'), topN, others, time ('day'|'month'|'quarter'|'year'|'fy'|'weekday'), maxGroups}
   CH.prepare = function (spec, headers, rows, idx) {
-    var x = spec.x, ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col, fn: y.col < 0 ? 'count' : (y.fn || spec.fn || 'sum'), as: y.as, name: y.name }; });
+    var x = spec.x, ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col, fn: y.col < 0 ? 'count' : (y.fn || spec.fn || 'sum'), as: y.as, name: y.name, op: y.op, value: y.value }; });
     var g = spec.g >= 0 && spec.g !== undefined ? spec.g : -1, useG = g >= 0 && ys.length === 1;
     var isDate = x >= 0 && spec.time && spec.time !== 'none';
+    var bands = (spec.bands && x >= 0 && !isDate) ? (spec._bands || CH.bandsForColumn(rows, idx, x, spec.bands)) : null;
     var cats = {}, order = [], gNames = {}, gOrder = [], blanks = 0, multi = !!spec.multi && x >= 0 && !isDate, noZero = !!spec.noZero;
     var zeroSkipped = 0;
     for (var k = 0; k < idx.length; k++) {
@@ -157,6 +198,7 @@
       if (x >= 0 && blank(xv)) { blanks++; labels.push(['(blank)', '', '']); }
       else if (isDate) { var ms = dateMs(xv); if (ms === null) { blanks++; continue; } var bk = bucketKey(ms, spec.time); labels.push([bk, bk, '']); }
       else if (multi) { var seen = {}; s(xv).split(spec.sep || ',').forEach(function (it) { it = it.trim(); var key = it.toLowerCase(); if (it && !seen[key]) { seen[key] = 1; labels.push([it, key, it]); } }); if (!labels.length) { blanks++; labels.push(['(blank)', '', '']); } }
+      else if (bands) { var bv = num(xv), bi = CH.bandOf(bands, bv); if (bi < 0) { blanks++; labels.push(['(blank)', '', '']); } else labels.push([bands.labels[bi], 'b' + ('00' + bi).slice(-3), '']); }
       else { var lb = s(xv).trim(); labels.push([lb, lb.toLowerCase(), s(xv)]); }
       for (var li = 0; li < labels.length; li++) {
         var label = labels[li][0], rawKey = labels[li][1];
@@ -170,7 +212,7 @@
     }
     var zm = noZero ? ys.filter(function (y) { return y.col >= 0 && y.fn !== 'count' && y.fn !== 'distinct'; })[0] : null, zeroName = zm ? (zm.name || s(headers[zm.col])) : '';
     if (zm) idx.forEach(function (i) { if (num(rows[i][zm.col]) === 0) zeroSkipped++; });
-    function valueFor(row, y) { if (y.col < 0) return 1; var v = row[y.col]; if (noZero && y.fn !== 'count' && y.fn !== 'distinct' && num(v) === 0) return null; return v; }
+    function valueFor(row, y) { if (y.col < 0) return 1; var v = row[y.col]; if (y.fn === 'pct') { var c = CH.cond(v, y.op, y.value); return c === null ? null : (c ? 100 : 0); } if (noZero && y.fn !== 'count' && y.fn !== 'distinct' && num(v) === 0) return null; return v; }
     // group (series) selection: biggest groups, rest -> Other
     var maxG = spec.maxGroups || 8;
     if (useG && gOrder.length > maxG) {
@@ -180,15 +222,17 @@
       gOrder = keep.concat(['(other)']);
     }
     var seriesKeys = useG ? gOrder : ys.map(function (_, i) { return 'y' + i; });
-    var seriesDefs = useG ? gOrder.map(function (nm) { return { name: nm, fn: ys[0].fn, shown: ys[0].as || ys[0].fn, col: ys[0].col, mname: ys[0].name }; }) : ys.map(function (y, i) { return { name: y.name || (y.col < 0 ? 'Rows' : s(headers[y.col])), fn: y.fn, shown: y.as || y.fn, col: y.col, mname: y.name }; });
+    var seriesDefs = useG ? gOrder.map(function (nm) { return { name: nm, fn: ys[0].fn, shown: ys[0].as || ys[0].fn, col: ys[0].col, mname: ys[0].name }; }) : ys.map(function (y, i) { return { name: y.fn === 'pct' ? '% ' + CH.condText(y, headers) : (y.name || (y.col < 0 ? 'Rows' : s(headers[y.col]))), fn: y.fn, shown: y.as || y.fn, col: y.col, mname: y.fn === 'pct' ? '% ' + CH.condText(y, headers) : y.name }; });
     var list = order.map(function (key) {
       var c = cats[key]; c.values = seriesKeys.map(function (sk) { return c.vals[sk] ? reduce(c.vals[sk], seriesDefs[seriesKeys.indexOf(sk)].fn) : (seriesDefs[seriesKeys.indexOf(sk)].fn === 'count' || seriesDefs[seriesKeys.indexOf(sk)].fn === 'sum' || seriesDefs[seriesKeys.indexOf(sk)].fn === 'distinct' ? 0 : null); });
       c.total = c.values.reduce(function (a, b) { return a + (b || 0); }, 0); return c;
     });
     // order
-    var sort = spec.sort || (isDate ? 'label' : 'desc');
+    var sort = spec.sort || (isDate || bands ? 'label' : 'desc');
+    if (bands && (sort === 'label' || sort === 'natural')) sort = 'bandkey';
     if (sort === 'natural') { var numericLabels = list.every(function (c) { return !isNaN(parseFloat(c.label)); }); sort = numericLabels ? 'numlabel' : 'label'; }
-    if (sort === 'desc') list.sort(function (a, b) { return b.total - a.total; });
+    if (sort === 'bandkey') list.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+    else if (sort === 'desc') list.sort(function (a, b) { return b.total - a.total; });
     else if (sort === 'asc') list.sort(function (a, b) { return a.total - b.total; });
     else if (sort === 'numlabel') list.sort(function (a, b) { return parseFloat(a.label) - parseFloat(b.label); });
     else if (sort === 'label' && (spec.time === 'weekday' || spec.labelOrder === 'weekday')) { var WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; list.sort(function (a, b) { return WD.indexOf(a.label) - WD.indexOf(b.label); }); }
@@ -210,7 +254,7 @@
       if (spec.others !== false) list.push(oc);
     }
     if (spec.preOthers && list.some(function (c) { return c.isOthers; })) others = others || { count: null };
-    return { cats: list, series: seriesDefs, seriesKeys: seriesKeys, rowsUsed: idx.length, blanks: blanks, others: others, split: useG, isDate: !!isDate, multi: multi, zeroSkipped: zeroSkipped, zeroName: zeroName, hiddenSmall: hiddenSmall, minRows: spec.minRows || 0 };
+    return { cats: list, series: seriesDefs, seriesKeys: seriesKeys, rowsUsed: idx.length, blanks: blanks, others: others, split: useG, isDate: !!isDate, multi: multi, zeroSkipped: zeroSkipped, zeroName: zeroName, hiddenSmall: hiddenSmall, minRows: spec.minRows || 0, bands: bands };
   };
 
   // ------------------------------------------------------------ option helpers
@@ -243,7 +287,7 @@
   function zoom(n) { return n > 14 ? [{ type: 'inside', zoomOnMouseWheel: 'ctrl' }, { type: 'slider', height: 16, bottom: 30, borderColor: 'transparent', brushSelect: false }] : undefined; }
   function tipNumber(env) { return function (v) { return typeof v === 'number' ? indian(v, Math.abs(v) < 100 && v !== Math.round(v) ? 2 : 0) : v; }; }
   function yName(spec, headers, data, env) {
-    if (data.series.length === 1) { var d = data.series[0]; var sh = d.shown || d.fn; if (sh === 'count') return T(env, 'Rows', 'पंक्तियाँ'); return d.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(sh, env.hi) + ' — ' + (d.mname || d.name); }
+    if (data.series.length === 1) { var d = data.series[0]; var sh = d.shown || d.fn; if (sh === 'count') return T(env, 'Rows', 'पंक्तियाँ'); if (sh === 'pct') return d.mname || d.name; return d.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(sh, env.hi) + ' — ' + (d.mname || d.name); }
     return '';
   }
   function cartesianGrid(spec, env, nCats, horizontal) { return { left: 12, right: horizontal ? 30 : 18, top: spec.title ? 56 : 40, bottom: (nCats > 14 ? 74 : 44) + (spec.noLegend ? 0 : 6), containLabel: true }; }
@@ -721,9 +765,10 @@
   }
   // which columns are real measures (not IDs, codes, coordinates or short whole-number labels), best first, and how to combine them
   CH.isMeasure = function (p) { return p.numeric && !p.serial && !p.code && !p.unique && !p.coord && !p.idLike && !p.lowInt; };
-  function measScore(p) { return (p.score ? 3 : 0) + (NAME_AMOUNT.test(p.name) ? 2 : 0) + Math.min(p.distinct, 200) / 400 + p.fill; }
+  // engineered figures (a ratio of two columns, an "adjusted" copy of another number) are rarely the headline
+  function measScore(p) { return (p.score ? 3 : 0) + (NAME_AMOUNT.test(p.name) ? 2 : 0) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
-  CH.avgy = function (p) { return p.score || /average|avg|mean|per\b|price|cost/i.test(p.name); };
+  CH.avgy = function (p) { return p.score || /average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
   // columns that make sense to group or compare by, best first (no IDs, no columns that only restate a number, no duplicates)
   CH.groupColumns = function (prof, nums, rows, idx) {
@@ -750,6 +795,17 @@
     var avgy = CH.avgy, fnFor = CH.fnFor;
     var nz = function (p) { return p.score && p.zeroPct >= 0.01; };                   // 0 in a rating column means "not rated"
     var FN = { avg: ['Average ', 'औसत '], sum: ['Total ', 'योग '] };
+    // lead with the grouping that really goes with the main number (largest ω²), not just the best-named one
+    if (nums[0] && cats.length > 1 && STL.drivers) {
+      try {
+        var sub = idx.length > 4000 ? idx.slice(0, 4000) : idx, om = {};
+        var others = nums.slice(1).filter(function (p) { return !STL.drivers.sharesName(p.name, nums[0].name).length; });
+        STL.drivers.rank(rows, sub, headers, nums[0].index, { prof: prof, candidates: cats.map(function (c) { return { col: c.index, name: c.name, kind: 'cat' }; }).concat(others.map(function (p) { return { col: p.index, name: p.name, kind: 'num' }; })), noZero: nz(nums[0]) }).forEach(function (r) { if (!r.derived && !r.walls) om[r.col] = r.omega2; });
+        var pos = {}; cats.forEach(function (c, i) { pos[c.index] = i; }); nums.forEach(function (c, i) { pos[c.index] = i; });
+        var w = function (p) { return om[p.index] >= 0.01 ? om[p.index] : 0; }, byOm = function (a, b) { return (w(b) - w(a)) || (pos[a.index] - pos[b.index]); };
+        cats = cats.slice().sort(byOm); nums = [nums[0]].concat(nums.slice(1).sort(byOm));   // the second number: the one that goes most with the first
+      } catch (e) { /* suggestions still work by name */ }
+    }
     var c1 = cats[0], c2 = cats[1], n1 = nums[0], n2 = nums[1], L = lists[0], yesNo = cats.filter(function (p) { return p.distinct === 2 && !p.numeric; }).slice(0, 2);
     function add(type, spec, whyEn, whyHi, score) { out.push({ type: type, spec: spec, why: B(whyEn, whyHi), score: score }); }
     var pre = function (p) { return /^(average|avg|mean|total)\b/i.test(p.name) ? '' : FN[fnFor(p)][0]; };
