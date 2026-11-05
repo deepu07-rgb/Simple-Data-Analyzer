@@ -141,7 +141,7 @@
       '<div class="cs-chartwrap"><div id="csChart"></div><div class="cs-msg" id="csMsg" style="display:none"></div></div>' +
       '<div class="cs-selbar" id="csSelBar" style="display:none"></div>' +
       '<div class="cs-cap" id="csCap"></div>' +
-      '<div class="cs-tools"><button class="tb-btn" id="csPng"></button><button class="tb-btn" id="csCopy"></button><button class="tb-btn" id="csCsv"></button><button class="tb-btn" id="csPin"></button><button class="tb-btn" id="csBoard"></button><button class="tb-btn" id="csDash"></button></div>' +
+      '<div class="cs-tools"><button class="tb-btn" id="csPng"></button><button class="tb-btn" id="csCopy"></button><button class="tb-btn" id="csCsv"></button><button class="tb-btn" id="csPin"></button><button class="tb-btn" id="csBoard"></button><button class="tb-btn" id="csDash"></button><button class="tb-btn" id="csFair"></button></div>' +
       '<div class="cs-sec" id="csTypeLbl"></div><div class="cs-gallery" id="csGallery">' + gal + '</div>' +
       '<details class="cs-fields" id="csFieldsBox" open><summary id="csFieldsLbl"></summary><div class="cs-grid" id="csFields">' +
         '<label class="cs-f" data-use="x"><span id="csXl"></span><select id="csX" class="big-select"></select></label>' +
@@ -182,6 +182,7 @@
     on('csLab', 'change', function () { CS.spec.labels = this.checked; redraw(); }); on('csSm', 'change', function () { CS.spec.smooth = this.checked; redraw(); }); on('csTr', 'change', function () { CS.spec.trend = this.checked; redraw(); });
     on('csAddM', 'click', function () { var p = profile(), n = p.filter(good).filter(function (c) { return !CS.spec.ys.some(function (y) { return y.col === c.index; }); })[0]; if (CS.spec.ys.length >= 6) return; CS.spec.ys.push({ col: n ? n.index : -1, fn: n ? 'sum' : 'count' }); CS.spec.g = -1; CS.spec._userMeasure = true; sync(); redraw(); });
     on('csPng', 'click', savePng); on('csCopy', 'click', copyPng); on('csCsv', 'click', saveCsv); on('csPin', 'click', pin); on('csBoard', 'click', function () { STL.openBoard(); }); on('csDash', 'click', function () { STL.openDashboard(); });
+    on('csFair', 'click', function () { var sp = CS.spec || {}, y = (sp.ys || []).filter(function (q) { return q.col >= 0; })[0], pr = profile(), f = sp.x >= 0 && pr[sp.x] && !pr[sp.x].numeric && !pr[sp.x].date ? sp.x : (sp.g >= 0 ? sp.g : -1); STL.openFair({ y: y ? y.col : -1, f: f, noZero: sp.noZero }); });
     if (window.ResizeObserver) new ResizeObserver(function () { resize(); }).observe($('csChart'));
   }
   function resize() { if (CS.inst) try { CS.inst.resize(); } catch (e) {} }
@@ -229,7 +230,7 @@
       if (f === 'zero') show = show && (zp >= 0.005 || !!sp.noZero);
       if (f === 'listx') show = show && sp.x >= 0 && p[sp.x] && !p[sp.x].numeric && !p[sp.x].date && (p[sp.x].commaPct >= 0.05 || !!sp.multi);
       if (f === 'minrows') show = show && ((sp.ys || []).some(function (y) { return y.col >= 0 && y.fn !== 'sum' && y.fn !== 'count'; }) || !!sp.minRows); e.style.display = show ? '' : 'none'; });
-    $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड'); $('csDash').textContent = '📋 ' + T('Dashboard', 'डैशबोर्ड'); $('csDash').title = T('Arrange the pinned charts on a page and export to PowerPoint or PDF', 'पिन किए चार्ट एक पृष्ठ पर सजाएँ और PowerPoint या PDF में निर्यात करें');
+    $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड'); $('csDash').textContent = '📋 ' + T('Dashboard', 'डैशबोर्ड'); $('csFair').textContent = '⚖ ' + T('Fair comparison', 'निष्पक्ष तुलना'); $('csFair').title = T('Is the difference between these groups real, or just a mix effect?', 'क्या इन समूहों का अंतर असली है, या केवल मिश्रण का असर?'); $('csDash').title = T('Arrange the pinned charts on a page and export to PowerPoint or PDF', 'पिन किए चार्ट एक पृष्ठ पर सजाएँ और PowerPoint या PDF में निर्यात करें');
     $('csHint').textContent = T('Click a bar, slice or cell to show only those rows in the table (Ctrl+click adds more). Drag on the chart with the select tool (top right) to pick a range. Scroll with Ctrl to zoom.', 'तालिका में केवल वे पंक्तियाँ देखने के लिए पट्टी, टुकड़े या खाने पर क्लिक करें (Ctrl+क्लिक से और जोड़ें)। दायरा चुनने के लिए ऊपर दाएँ के चयन औज़ार से चार्ट पर खींचें। ज़ूम के लिए Ctrl के साथ स्क्रॉल करें।');
     $('csExpand').title = T('Wider', 'चौड़ा');
   }

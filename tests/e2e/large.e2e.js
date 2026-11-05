@@ -36,7 +36,7 @@ console.log(`test file: ${N.toLocaleString()} rows, ${(fs.statSync(file).size / 
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   let allowed400 = 1;                                  // the refused DROP TABLE below is expected to return one 400
   page.on('console', m => { if (m.type() === 'error' && !/503|ERR_FAILED/.test(m.text()) && !(/\b400\b/.test(m.text()) && allowed400-- > 0)) errors.push(m.text()); });
-  await page.addInitScript(() => { try { localStorage.setItem('stellura_tour_done', '1'); } catch (e) {} });
+  await page.addInitScript(() => { try { localStorage.setItem('stellura_tour_done', '1'); localStorage.setItem('sda_first_run', 'done'); } catch (e) {} });
   await page.goto(BASE + '/', { waitUntil: 'load' });
   await page.waitForTimeout(1200);
   await page.evaluate(() => { try { _ddSkipTour(); } catch (e) {} });

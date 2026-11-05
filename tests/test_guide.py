@@ -48,10 +48,10 @@ def test_guide_names_buttons_that_really_exist():
     for label in ["Open a file", "Clean a messy file", "Combine files", "Ask a question", "Open a large file", "Open a project", "Make this month", "What changed since last month?",
                   "Pending cases by age", "Write letters from data", "Find the same person", "Charts for my data", "Pin to board", "Auto charts", "Work on a copy",
                   "Group &amp; chart", "Save these cleaning steps as a recipe", "Fill the report", "Download the filled report (Excel)", "Show all rows",
-                  "Save this week", "Mark them in a new column", "Add suggested charts", "Print / Save as PDF"]:
+                  "Save this week", "Mark them in a new column", "Add suggested charts", "Print / Save as PDF", "Fair comparison", "Ignore zeros"]:
         assert label in page or label.replace("&amp;", "&") in page, "the guide mentions “%s” but the app has no such label" % label
     for hi in ["फ़ाइल खोलें", "बिगड़ी फ़ाइल साफ़ करें", "फ़ाइलें जोड़ें", "प्रश्न पूछें", "बड़ी फ़ाइल खोलें", "प्रोजेक्ट खोलें", "पिछले माह से क्या बदला?", "आयु के अनुसार लंबित प्रकरण",
-               "डेटा से पत्र बनाएँ", "एक ही व्यक्ति खोजें", "सभी पंक्तियाँ दिखाएँ", "बोर्ड पर लगाएँ", "सुझाए चार्ट जोड़ें"]:
+               "डेटा से पत्र बनाएँ", "एक ही व्यक्ति खोजें", "सभी पंक्तियाँ दिखाएँ", "बोर्ड पर लगाएँ", "सुझाए चार्ट जोड़ें", "निष्पक्ष तुलना", "शून्य छोड़ें"]:
         assert hi in page, "Hindi label missing in the app: " + hi
 
 

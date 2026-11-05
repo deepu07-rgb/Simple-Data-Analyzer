@@ -137,6 +137,8 @@ def chart(ds):
     if kind == "points":
         return jsonify(json_safe(eng.chart_points(ds, b.get("xnum"), b.get("ynum"), b.get("size"), b.get("g"),
                                                   b.get("limit", 5000), s, f, b.get("maxGroups", 8), bool(b.get("nozero")))))
+    if kind == "fair":
+        return jsonify(json_safe(eng.fair_cells(ds, b.get("y"), b.get("factor"), b.get("adjusters"), bool(b.get("nozero")), s, f)))
     return _err("Unknown chart kind.")
 
 

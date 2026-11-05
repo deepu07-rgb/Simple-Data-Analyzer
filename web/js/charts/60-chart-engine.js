@@ -725,21 +725,27 @@
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
   CH.avgy = function (p) { return p.score || /average|avg|mean|per\b|price|cost/i.test(p.name); };
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
-  CH.recommend = function (headers, rows, idx, max) {
-    max = max || 8;
-    var prof = CH.profile(headers, rows, idx), M = STL.merge, out = [];
-    var isMeasure = CH.isMeasure;
-    var nums = prof.filter(isMeasure), dates = prof.filter(function (p) { return p.date && !p.numeric; });
+  // columns that make sense to group or compare by, best first (no IDs, no columns that only restate a number, no duplicates)
+  CH.groupColumns = function (prof, nums, rows, idx) {
+    var M = STL.merge;
     var cats = prof.filter(function (p) {
       var named = NAME_GROUP.test(p.name), lim = named ? 300 : 40;
       return ((!p.numeric && !p.date && !p.list) || p.lowInt) && !p.unique && !(p.code && !p.lowInt) && p.distinct >= 2 && p.distinct <= lim && p.fill >= 0.6;
     });
-    var lists = prof.filter(function (p) { return p.list && p.fill >= 0.6; });
     // derived columns: drop a category that only restates a number, then one of two that mean the same thing
     cats = cats.filter(function (c) { return !(c.distinct <= 12 && nums.some(function (m) { return derivedFrom(c, m, rows, idx); })); });
     cats = cats.filter(function (c, i) { return !cats.some(function (o, j) { return j < i && o.distinct <= 40 && c.distinct <= 40 && !c.numeric && !o.numeric && sameInfo(o, c, rows, idx); }); });
     function catScore(p) { var sc = -Math.abs(Math.min(p.distinct, 25) - 8) * 0.05 + (p.distinct > 40 ? -0.5 : 0); if (NAME_GROUP.test(p.name)) sc += 1.2; if (/city|district|state|region|शहर|जिला|राज्य/i.test(p.name)) sc += 0.4; if (p.lowInt && p.code) sc -= 1.0; if (M && M.score) { ['district', 'police station', 'department', 'category', 'status', 'designation'].forEach(function (g) { if (M.score(p.name, g).score >= 0.9) sc += 1; }); } if (p.lowInt) sc -= 0.3; return sc; }
     cats.sort(function (a, b) { return catScore(b) - catScore(a); });
+    return cats;
+  };
+  CH.recommend = function (headers, rows, idx, max) {
+    max = max || 8;
+    var prof = CH.profile(headers, rows, idx), M = STL.merge, out = [];
+    var isMeasure = CH.isMeasure;
+    var nums = prof.filter(isMeasure), dates = prof.filter(function (p) { return p.date && !p.numeric; });
+    var cats = CH.groupColumns(prof, nums, rows, idx);
+    var lists = prof.filter(function (p) { return p.list && p.fill >= 0.6; });
     nums = CH.rankMeasures(nums);
     var avgy = CH.avgy, fnFor = CH.fnFor;
     var nz = function (p) { return p.score && p.zeroPct >= 0.01; };                   // 0 in a rating column means "not rated"

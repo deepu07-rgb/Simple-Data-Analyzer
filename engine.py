@@ -683,6 +683,43 @@ class Engine:
         return {"n": n, "points": pts, "zeroSkipped": zs, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
                 "reg": {"slope": slope, "intercept": icpt, "r": r, "n": n, "xmin": xmin, "xmax": xmax} if n >= 3 else None}
 
+    def fair_cells(self, ds_id, y, factor, adjusters=None, nozero=False, search=None, filters=None, max_levels=40):
+        """For a fair comparison: rows grouped by (group, adjuster levels ...) with the count, sum and sum of squares of the
+        outcome. The browser fits the regression from these few cells, so the whole file is used, not a sample."""
+        d = self._ds(ds_id)
+        yi, fi = self._check_col(d, y), self._check_col(d, factor)
+        adj = [self._check_col(d, a) for a in (adjusters or [])][:4]
+        if fi in adj or yi in adj or yi == fi:
+            raise EngineError("Choose different columns for the outcome, the groups and the adjustments.")
+        where, params = self._where(d, search, filters)
+        nozero = bool(nozero)
+        dims = [fi] + adj
+        lim = [12] + [max(2, min(int(max_levels), 60))] * len(adj)
+
+        def text(i):
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+        sel = ", ".join(f"{text(i)} AS d{n}" for n, i in enumerate(dims))
+        cte = [f"s AS (SELECT {sel}, {self._numz(yi, nozero)} AS y FROM {d['table']}{where})", "k AS (SELECT * FROM s WHERE y IS NOT NULL)"]
+        fold = []
+        for n in range(len(dims)):
+            cte.append(f"t{n} AS (SELECT d{n} FROM k GROUP BY d{n} ORDER BY count(*) DESC, d{n} LIMIT {lim[n]})")
+            fold.append(f"CASE WHEN d{n} IN (SELECT d{n} FROM t{n}) THEN d{n} ELSE '(Others)' END AS f{n}")
+        keys = ", ".join(f"f{n}" for n in range(len(dims)))
+        sql = (f"WITH {', '.join(cte)}, g AS (SELECT {', '.join(fold)}, y FROM k) "
+               f"SELECT {keys}, count(*), sum(y), sum(y * y) FROM g GROUP BY {keys} LIMIT 20000")
+        cur = self.db.cursor()
+        try:
+            data = cur.execute(sql, params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not calculate this comparison: {exc}")
+        zeros = 0
+        if nozero:
+            zeros = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(yi)} = 0", params).fetchone()[0]
+        matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(yi)} IS NOT NULL", params).fetchone()[0]
+        return {"cells": [{"k": list(r[:len(dims)]), "n": r[len(dims)], "sy": r[len(dims) + 1], "syy": r[len(dims) + 2]} for r in data],
+                "matched": matched, "zeroSkipped": zeros}
+
     def sample(self, ds_id, n=4000):
         """An evenly random handful of rows (always the same ones) so the browser can tell which columns are
         numbers, dates or categories without loading the file."""

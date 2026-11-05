@@ -304,3 +304,27 @@ def test_small_groups_are_hidden_but_never_all_of_them(zm):
     assert {r[0] for r in res["rows"]} == {"Delhi", "Pune", "Goa"} and res["hiddenSmall"] == 1
     res2 = eng.chart_agg(i, x=1, min_rows=10_000_000, measures=[{"col": 2, "fn": "avg"}])
     assert len(res2["rows"]) == 4 and res2["hiddenSmall"] == 0, "if nothing would be left, nothing is hidden"
+
+
+def test_fair_cells_equal_plain_python(zm):
+    eng, i, truth = zm
+    res = eng.fair_cells(i, 2, 1, [0], nozero=True)
+    cells = {tuple(c["k"]): c for c in res["cells"]}
+    # whole-table totals and per-group totals
+    assert sum(c["n"] for c in res["cells"]) == sum(1 for t in truth if t["rating"] > 0) == res["matched"] - res["zeroSkipped"]
+    assert res["zeroSkipped"] == sum(1 for t in truth if t["rating"] == 0)
+    for city in ["Delhi", "Pune", "Goa"]:
+        vals = [t["rating"] for t in truth if t["city"] == city and t["rating"] > 0]
+        n = sum(c["n"] for k, c in cells.items() if k[0] == city)
+        assert n == len(vals) and sum(c["sy"] for k, c in cells.items() if k[0] == city) == pytest.approx(sum(vals))
+        assert sum(c["syy"] for k, c in cells.items() if k[0] == city) == pytest.approx(sum(v * v for v in vals))
+
+
+def test_fair_cells_fold_rare_levels_and_refuse_bad_columns(zm):
+    eng, i, _ = zm
+    res = eng.fair_cells(i, 2, 1, [0], max_levels=3)
+    assert "(Others)" in {c["k"][1] for c in res["cells"]}
+    with pytest.raises(eng_mod.EngineError):
+        eng.fair_cells(i, 2, 1, [1])
+    with pytest.raises(eng_mod.EngineError):
+        eng.fair_cells(i, 99, 1, [])

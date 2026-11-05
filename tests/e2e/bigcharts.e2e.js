@@ -33,7 +33,7 @@ const csv = Buffer.from(rows.join('\n') + '\n', 'utf8');
   await page.route('**/*', rt => /^(https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/|data:|blob:|about:)/.test(rt.request().url()) ? rt.continue() : (external.push(rt.request().url()), rt.abort()));
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/503|ERR_FAILED/.test(m.text())) errors.push(m.text()); });
-  await page.addInitScript(() => { try { localStorage.setItem('stellura_tour_done', '1'); } catch (e) {} });
+  await page.addInitScript(() => { try { localStorage.setItem('stellura_tour_done', '1'); localStorage.setItem('sda_first_run', 'done'); } catch (e) {} });
   await page.goto(BASE + '/', { waitUntil: 'load' }); await page.waitForTimeout(1200);
   await page.evaluate(() => { try { _ddSkipTour(); } catch (e) {} });
   const ev = (fn, arg) => page.evaluate(fn, arg), wait = ms => page.waitForTimeout(ms);
