@@ -488,3 +488,18 @@ def test_fair_linear_curve_and_aic_equal_statsmodels(eng):
         k = "C(mode, Treatment('Bike'))[T.Boat]"
         assert abs(res["levels"]["Boat"][0] - m.params[k]) < 1e-8 and abs(res["levels"]["Boat"][1] - m.bse[k]) < 1e-8
         assert res["p"] == len(m.params) and abs(res["aic"] - (len(df) * np.log(m.ssr / len(df)) + 2 * len(m.params))) < 1e-6
+
+
+def test_column_checks_rate_per_thousand_and_divide_by_b_plus_one(eng):
+    r = random.Random(8)
+    rows = []
+    for _ in range(2000):
+        net, dwell, dens = r.randint(9000, 30000), r.randint(5, 60), r.randint(0, 12)
+        rev = net * r.randint(65, 1200)
+        rows.append([str(net), str(dwell), str(dens), str(rev), f"{dwell * 1000 / net:.2f}", f"{rev / (dens + 1):.1f}"])
+    i = eng.load_rows(["Net", "Dwell", "Dens", "Rev", "Spend", "PerComp"], rows, "k")["id"]
+    res = eng.column_checks(i, formulas=[{"t": 4, "a": 1, "b": 0, "op": "kdiv", "c": 1000, "d": 2}, {"t": 5, "a": 3, "b": 2, "op": "divp1", "d": 1},
+                                         {"t": 5, "a": 3, "b": 2, "op": "div", "d": 1}])
+    assert res["formulas"][0] == {"n": 2000, "ok": 2000}
+    assert res["formulas"][1] == {"n": 2000, "ok": 2000}
+    assert res["formulas"][2]["ok"] < 600, "dividing by the count itself is not the formula (and a count of 0 is skipped)"

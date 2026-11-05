@@ -65,6 +65,11 @@ const pct = x => Math.round(x * 1000) / 10;
   const adj = await ev(() => Array.from(document.querySelectorAll('#frOut, .fr-form')).map(e => e.innerText).join(' '));
   ok(!/alike in [^.]*Tier/.test(adj) && /alike in [^.]*Price range/.test(adj), 'Fair comparison adjusts for Price range, not for the Tier label', adj.slice(0, 400));
   await ev(() => document.getElementById('frX').click());
+  // a number as the compared column (4 equal-count bands, the lowest is the reference)
+  await ev(() => STL.openFair({ y: 0, f: 4, adj: [2] })); await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict'), null, { timeout: 15000 }); await wait(400);
+  const nfc = await ev(() => ({ opt: document.getElementById('frF').selectedOptions[0].text, rows: Array.from(document.querySelectorAll('.fr-tbl tr')).slice(1).map(t => t.cells[0].innerText.replace(/\s+/g, ' ').trim()), head: document.querySelector('.fr-tbl tr').cells[0].innerText }));
+  ok(/Temperature \(a number, in 4 bands\)/.test(nfc.opt) && nfc.rows.length === 4 && /reference/.test(nfc.rows[0]) && /^3\d–4\d/.test(nfc.rows[0]) && /^6\d–7\d/.test(nfc.rows[3]) && nfc.rows[1] < nfc.rows[2], 'A number can be the compared column: 4 bands, the lowest as reference (' + nfc.rows.join(' | ') + ')', nfc);
+  await ev(() => document.getElementById('frX').click());
   // number adjusters as a straight line: the gap equals the row-level regression
   await ev(() => STL.openFair({ y: 0, f: 1, adj: [2, 4] })); await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict'), null, { timeout: 15000 }); await wait(400);
   ok(await ev(() => document.getElementById('frLinW').style.display !== 'none' && document.getElementById('frLin').value === 'auto'), 'With a number column to adjust for, the shape is chosen automatically by default');

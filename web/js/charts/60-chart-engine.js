@@ -82,7 +82,7 @@
 
   // ------------------------------------------------------------ column facts
   var NAME_ID = /(^|[\s._\-/])(id|uid|guid|sr|sl|no|number|क्रम|क्रमांक|नंबर|आईडी)([\s._\-/]|$)/i, NAME_CODE = /(^|[\s._\-/])(code|pin|pincode|zip|phone|mobile|contact|aadhaar|aadhar|कोड|फोन|मोबाइल)([\s._\-/]|$)/i,
-      NAME_COORD = /^(lat|latitude|lon|long|lng|longitude|अक्षांश|देशांतर)$/i, NAME_SCORE = /(^|[^a-z])(rating|ratings|score|scores|grade|marks|percent|percentage|rate|ratio|index|age)([^a-z]|$)|%|आयु|अंक|प्रतिशत/i;
+      NAME_COORD = /^(lat|latitude|lon|long|lng|longitude|अक्षांश|देशांतर)$/i, NAME_SCORE = /(^|[^a-z])(rating|ratings|score|scores|grade|marks|percent|percentage|pct|rate|ratio|index|age)([^a-z]|$)|%|आयु|अंक|प्रतिशत/i;
   function colFacts(rows, idx, c, header) {
     var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, zeros = 0, sample = Math.min(idx.length, 4000), listy = 0, items = {}, itemTotal = 0, itemDistinct = 0;
     for (var k = 0; k < sample; k++) {
@@ -115,12 +115,17 @@
     var prof = headers.map(function (h, i) { return colFacts(rows, idx, i, h); });
     // how many other columns carry a word of this column's name ("plate_waste_percentage" -> "waste_adjusted_cost",
     // "primary_food_waste_driver"): the number other columns are built from is usually the headline number
+    // a word that many columns carry ("customer_review_rating", "customer_brand_loyalty_tier", ...) says nothing about
+    // one being made from another: 4 or more columns (and 10%) make it a common word, ignored here and in the drivers
+    var df = {}; headers.forEach(function (h) { var seen = {}; CH.nameWords(h, true).forEach(function (w) { if (!seen[w]) { seen[w] = 1; df[w] = (df[w] || 0) + 1; } }); });
+    CH.commonWords = {}; Object.keys(df).forEach(function (w) { if (df[w] >= 4 && df[w] >= 0.1 * headers.length) CH.commonWords[w] = 1; });
     var W = prof.map(function (p) { return CH.nameWords(p.name); });
     prof.forEach(function (p, i) { p.namedBy = 0; W.forEach(function (w, j) { if (j !== i && w.some(function (x) { return W[i].indexOf(x) >= 0; })) p.namedBy++; }); });
     return prof;
   };
-  var NAME_STOP = { the: 1, and: 1, per: 1, for: 1, rate: 1, score: 1, index: 1, total: 1, count: 1, type: 1, data: 1, value: 1, level: 1, pct: 1, percentage: 1, percent: 1, cost: 1, idr: 1, inr: 1, rupees: 1, amount: 1, ratio: 1, number: 1, name: 1, code: 1, date: 1 };
-  CH.nameWords = function (name) { return String(name == null ? '' : name).toLowerCase().split(/[^a-zऀ-ॿ]+/).filter(function (w) { return w.length >= 4 && !NAME_STOP[w]; }); };
+  var NAME_STOP = { the: 1, and: 1, per: 1, for: 1, rate: 1, score: 1, index: 1, total: 1, count: 1, type: 1, data: 1, value: 1, level: 1, pct: 1, percentage: 1, percent: 1, cost: 1, idr: 1, inr: 1, rupees: 1, amount: 1, estimate: 1, estimated: 1, daily: 1, weekly: 1, monthly: 1, yearly: 1, annual: 1, average: 1, avg: 1, mean: 1, primary: 1, net: 1, gross: 1, ratio: 1, number: 1, name: 1, code: 1, date: 1 };
+  CH.commonWords = {};
+  CH.nameWords = function (name, keepCommon) { return String(name == null ? '' : name).toLowerCase().split(/[^a-zऀ-ॿ]+/).filter(function (w) { return w.length >= 4 && !NAME_STOP[w] && (keepCommon || !CH.commonWords[w]); }); };
 
   // ------------------------------------------------------------ aggregation
   function reduce(vals, fn) {
@@ -748,7 +753,7 @@
 
   // ------------------------------------------------------------ recommendations
   var NAME_GROUP = /city|country|state|district|region|zone|type|categor|status|station|department|designation|gender|segment|class|brand|group|cuisine|ward|block|mode|source|channel|जिला|थाना|श्रेणी|स्थिति|विभाग|पद|शहर|राज्य|प्रकार/i;
-  var NAME_AMOUNT = /amount|cost|price|sales|revenue|salary|votes|total|qty|quantity|fee|value|income|expense|balance|राशि|कीमत|वेतन|मूल्य|वोट/i;
+  var NAME_AMOUNT = /amount|cost|price|sales|revenue|salary|votes|total|qty|quantity|cups|volume|profit|margin|fee|value|income|expense|balance|राशि|कीमत|वेतन|मूल्य|वोट/i;
   // one column is just another way of writing a different one (Rating text / Rating colour from the rating)
   function derivedFrom(a, b, rows, idx) {                                            // does column a (few values) split the numbers of b into separate, non-overlapping ranges?
     var by = {}, n = Math.min(idx.length, 4000);
@@ -766,7 +771,9 @@
   // which columns are real measures (not IDs, codes, coordinates or short whole-number labels), best first, and how to combine them
   CH.isMeasure = function (p) { return p.numeric && !p.serial && !p.code && !p.unique && !p.coord && !p.idLike && !p.lowInt; };
   // engineered figures (a ratio of two columns, an "adjusted" copy of another number) are rarely the headline
-  function measScore(p) { return (p.score ? 3 : 0) + (NAME_AMOUNT.test(p.name) ? 2 : 0) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
+  // what a business wants to know (revenue, profit, cups sold) comes before a price or a cost, and a rating-like index never gets the amount bonus
+  var NAME_OUTCOME = /revenue|sales|profit|margin|income|cups|volume|turnover|कमाई|बिक्री|मुनाफ़ा/i;
+  function measScore(p) { return (p.score ? 3 : (NAME_OUTCOME.test(p.name) ? 5.5 : (NAME_AMOUNT.test(p.name) ? 3.5 : 0))) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b|(^|[_ ])per[_ ]/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
   CH.avgy = function (p) { return p.score || /average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };

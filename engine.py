@@ -948,6 +948,7 @@ class Engine:
         "pctof": "({a} * {b} / 100)", "less": "({a} * (1 - {b} / 100))", "more": "({a} * (1 + {b} / 100))",
         "divless": "({a} / NULLIF(1 - {b} / 100, 0))", "share": "({a} / NULLIF({b}, 0) * 100)",
         "cdiv": "((? - {a}) / NULLIF({b}, 0))", "divc": "(({a} - ?) / NULLIF({b}, 0))", "lin": "(? * {a} + ?)",
+        "kdiv": "(? * {a} / NULLIF({b}, 0))", "divp1": "({a} / ({b} + 1))",
     }
 
     def column_checks(self, ds_id, formulas=None, caps=None, search=None, filters=None):
@@ -965,7 +966,7 @@ class Engine:
             a = _num(self._check_col(d, f.get("a")))
             b = _num(self._check_col(d, f.get("b"))) if op != "lin" else "NULL"
             expr = self.FORMULA_SQL[op].format(a=a, b=b)
-            ep = [float(f.get("c") or 0)] if op in ("cdiv", "divc") else ([float(f.get("k", 1)), float(f.get("c") or 0)] if op == "lin" else [])
+            ep = [float(f.get("c") or 0)] if op in ("cdiv", "divc", "kdiv") else ([float(f.get("k", 1)), float(f.get("c") or 0)] if op == "lin" else [])
             dec = max(0, min(int(f.get("d", 6)), 6))
             tol = f"(0.5 * {10.0 ** -dec!r} * 1.01 + 0.002 * abs(t) + 1e-9)"
             sql = (f"SELECT count(*), count(*) FILTER (WHERE abs(p - t) <= {tol}) FROM "

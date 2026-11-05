@@ -28,6 +28,8 @@
     divless: { f: function (a, b) { return b === 100 ? NaN : a / (1 - b / 100); }, txt: function (A, B) { return A + ' ÷ (1 − ' + B + ' ÷ 100)'; } },
     share: { f: function (a, b) { return b === 0 ? NaN : a / b * 100; }, txt: function (A, B) { return A + ' ÷ ' + B + ' × 100'; } },
     cdiv: { f: function (a, b, c) { return b === 0 ? NaN : (c - a) / b; }, fitC: function (a, b, t) { return a + t * b; }, txt: function (A, B, c) { return '(' + c + ' − ' + A + ') ÷ ' + B; } },
+    kdiv: { f: function (a, b, c) { return b === 0 ? NaN : c * a / b; }, fitC: function (a, b, t) { return a === 0 ? NaN : t * b / a; }, txt: function (A, B, c) { return A + ' × ' + c + ' ÷ ' + B; } },          // a rate per thousand: dwell ÷ (price ÷ 1,000)
+    divp1: { f: function (a, b) { return a / (b + 1); }, txt: function (A, B) { return A + ' ÷ (' + B + ' + 1)'; } },                                                                       // revenue ÷ (competitors + 1): no division by zero
     divc: { f: function (a, b, c) { return b === 0 ? NaN : (a - c) / b; }, fitC: function (a, b, t) { return a - t * b; }, txt: function (A, B, c) { return '(' + A + ' − ' + c + ') ÷ ' + B; } },
     lin: { one: true, txt: function (A, B, c, k) { return (k === 1 ? A : A + ' × ' + num(k)) + (c ? (c > 0 ? ' + ' : ' − ') + num(Math.abs(c)) : ''); } }
   };
@@ -80,8 +82,10 @@
       });
     });
     // one relation per set of columns, said with the column that looks calculated on the left
-    var DER = /adjusted|effective|ratio|per[_ ]|rate|index|share|pct|percent|score|multiplier|total|net|gross|net/i;
-    function sideScore(f) { return (DER.test(s(headers[f.t])) ? 2 : 0) + f.t / 1000 - (f.op === 'lin' ? 0.5 : 0) + f.share; }
+    // which column of a relation is the calculated one: its name says so (estimate, ratio, adjusted ...); on a tie the
+    // relation written as a product or a sum (revenue = price × cups) rather than as a quotient
+    var DER = /adjusted|effective|ratio|per[_ ]|rate|index|share|pct|percent|score|multiplier|total|estimate|revenue|sales|margin/i, FORWARD = { add: 1, mul: 1, pctof: 1, less: 1, more: 1 };
+    function sideScore(f) { return (DER.test(s(headers[f.t])) ? 2 : 0) + (FORWARD[f.op] ? 0.5 : 0) + f.t / 1000 - (f.op === 'lin' ? 0.5 : 0) - (f.op === 'kdiv' && f.c === 1 ? 0.3 : 0) + f.share; }
     var bySet = {};
     found.forEach(function (f) { var key = [f.t, f.a, f.b].filter(function (x) { return x >= 0; }).sort(function (x, y) { return x - y; }).join(','); if (!bySet[key] || sideScore(f) > sideScore(bySet[key])) bySet[key] = f; });
     var out = Object.keys(bySet).map(function (k) { return bySet[k]; });
@@ -105,7 +109,7 @@
         var at = sd[1], v = vals[at], c = cnt[v], near5 = 0, m = 0;
         for (var q = 1; q <= 5; q++) { var w = vals[at + sd[2] * q]; if (w === undefined) break; near5 += cnt[w]; m++; }
         var avg = m ? near5 / m : 0;
-        if (c >= Math.max(10, 0.01 * n) && c >= 5 * Math.max(avg, 1)) {
+        if (c >= Math.max(10, 0.005 * n) && c >= 5 * Math.max(avg, 1)) {
           var pctName = /percent|pct|%|rate|प्रतिशत/i.test(s(p.name));
           out.push({ col: p.index, name: s(headers[p.index]), side: sd[0], value: v, count: c, n: n, share: c / n, natural: (pctName && (v === 100 || v === 0)) || (v === 0 && sd[0] === 'min') });
         }

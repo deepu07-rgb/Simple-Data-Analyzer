@@ -154,7 +154,7 @@
     R.levels.forEach(function (l) { var r = lin.levels[l.level]; l.adj = r ? { diff: r[0], se: r[1], lo: r[0] - 1.96 * r[1], hi: r[0] + 1.96 * r[1], p: r[1] > 0 ? pTwoSided(r[0] / r[1]) : 1 } : null; });
     R.drivers.forEach(function (d) { var a = lin.alone[d.dim - 1], r = a && a[R.main.level]; if (r) { d.effect = r[0]; d.move = Math.abs(r[0] - R.main.raw.diff); } });
     R.r2 = lin.r2; R.linear = lin.curve ? 'curve' : 'line'; R.nLinear = lin.n;
-    if (names) R.adjusters = names.slice(1);
+    if (names) { R.adjusters = names.slice(1); R.drivers.forEach(function (d) { if (names[d.dim]) d.name = names[d.dim]; }); }
     return R;
   };
 
@@ -167,6 +167,7 @@
     for (d = 0; d < nd; d++) { dimLevels.push(Object.keys(tot[d]).sort(function (a, b) { return tot[d][b] - tot[d][a] || (a < b ? -1 : 1); })); refs.push(dimLevels[d][0]); }
     // for a Yes/No factor the natural reference is "No"
     var NO = /^(no|n|false|0|none|नहीं|ना)$/i; dimLevels[0].forEach(function (lv) { if (NO.test(lv)) refs[0] = lv; });
+    if (opts.ref && dimLevels[0].indexOf(opts.ref) >= 0) refs[0] = opts.ref;                       // a number cut into bands: the lowest band
     var factorLevels = dimLevels[0];
     if (factorLevels.length < 2) return { error: 'factor' };
     // raw: per group mean and variance
@@ -183,6 +184,7 @@
       return { level: lv, n: a.n, mean: a.mean, raw: { diff: diff, se: se, p: se > 0 ? pTwoSided(diff / se) : 1 },
                adj: beta === undefined ? null : { diff: beta, se: seA, lo: beta - 1.96 * seA, hi: beta + 1.96 * seA, p: seA > 0 ? pTwoSided(beta / seA) : 1 } };
     });
+    if (opts.order) levels.sort(function (a, b) { return opts.order.indexOf(a.level) - opts.order.indexOf(b.level); });          // a number in bands: lowest to highest
     var big = levels.filter(function (l) { return l.n >= 30 && l.adj; }), main = (big.length ? big : levels).slice().sort(function (a, b) { return Math.abs(b.raw.diff) - Math.abs(a.raw.diff); })[0];          // the gap people notice
     // which factor causes the gap to change? adjust for each one alone
     var drivers = [];
@@ -214,6 +216,10 @@
     var m = R.main, A = m.adj, raw = m.raw, d = R.driver, drv = d ? d.name : '', who = m.level + (hi ? ' बनाम ' : ' vs ') + R.ref;
     if (!A || !R.nAdjust) return { kind: 'raw', title: hi ? 'केवल सीधा अंतर' : 'Plain difference only', text: (hi ? who + ': अंतर ' : who + ': difference ') + sg(raw.diff) + (hi ? ' (कोई समायोजन नहीं चुना गया)।' : ' (nothing was adjusted for).') };
     var sigRaw = raw.p < 0.01, sigAdj = A.p < 0.01, notAdj = A.p > 0.05, flip = raw.diff * A.diff < 0;
+    var tiny = sigRaw && Math.abs(A.diff) < 0.05 * Math.abs(raw.diff);                            // 13,000 rows make even +0.02 "significant": judge the size too
+    var pctLeft = Math.max(0.1, Math.round(Math.abs(A.diff) / Math.abs(raw.diff) * 1000) / 10);
+    var tinyTxt = tiny ? (hi ? 'जो बचा (' + sg(A.diff) + ') वह सीधे अंतर का केवल ' + pctLeft + '% है। ' : 'What is left (' + sg(A.diff) + ') is only ' + pctLeft + '% of the plain gap. ') : '';
+    if (tiny) { sigAdj = false; notAdj = true; flip = false; }
     var ci = '(95% ' + (hi ? 'सीमा ' : 'range ') + sg(A.lo) + ' … ' + sg(A.hi) + ')';
     var head = hi ? 'सीधा अंतर ' + sg(raw.diff) + '; बराबर के समूहों में तुलना करने पर ' + sg(A.diff) + ' ' + ci + '। ' : 'The plain gap is ' + sg(raw.diff) + '; between groups that are alike in ' + R.adjusters.join(', ') + ' it is ' + sg(A.diff) + ' ' + ci + '. ';
     var mixTxt = '';
@@ -224,12 +230,12 @@
     var tail = hi ? 'यह संबंध दिखाता है, कारण नहीं।' : 'This shows an association, not a cause.';
     if (flip && sigAdj && (sigRaw || raw.p < 0.1)) return { kind: 'reversal', title: hi ? 'उलटा परिणाम — मिश्रण का असर (सिम्पसन का विरोधाभास)' : 'The gap REVERSES — a mix effect (Simpson’s paradox)',
       text: head + (hi ? 'दोनों समूहों की बनावट अलग है' + (drv ? ' (' + drv + ')' : '') + ', इसलिए सीधा अंतर भ्रामक है। ' : 'The two groups are made up differently' + (drv ? ' (mainly by ' + drv + ')' : '') + ', so the plain gap is misleading. ') + mixTxt + tail };
-    if (sigRaw && notAdj) return { kind: 'explained', title: hi ? 'अंतर मिश्रण से है — स्वतंत्र असर नहीं' : 'The gap is a mix effect — no independent difference',
-      text: head + (hi ? 'यानी अंतर ' + (drv || 'अन्य कारकों') + ' के मिश्रण से आता है, ' + m.level + ' होने से नहीं। ' : 'So the gap comes from the mix of ' + (drv || 'the other factors') + ', not from being ' + m.level + '. ') + mixTxt + tail };
+    if (sigRaw && notAdj) return { kind: 'explained', tiny: tiny, title: hi ? 'अंतर मिश्रण से है — स्वतंत्र असर नहीं' : 'The gap is a mix effect — no independent difference',
+      text: head + (hi ? 'यानी अंतर ' + (drv || 'अन्य कारकों') + ' के मिश्रण से आता है, ' + m.level + ' होने से नहीं। ' : 'So the gap comes from the mix of ' + (drv || 'the other factors') + ', not from being ' + m.level + '. ') + tinyTxt + mixTxt + tail };
     if (!sigRaw && sigAdj) return { kind: 'masked', title: hi ? 'छिपा हुआ अंतर' : 'A hidden difference appears',
       text: head + (hi ? 'सीधी तुलना में अंतर नहीं दिखता था, पर बराबर के समूहों में स्पष्ट है। ' : 'The plain comparison showed no clear gap, but it is clear between like-for-like groups. ') + mixTxt + tail };
     if (sigAdj && Math.abs(A.diff) < 0.6 * Math.abs(raw.diff)) return { kind: 'shrinks', title: hi ? 'अंतर आंशिक रूप से मिश्रण से है' : 'Part of the gap is a mix effect',
-      text: head + (hi ? 'अंतर का बड़ा हिस्सा ' + (drv || 'अन्य कारकों') + ' से समझाया जाता है, पर कुछ अंतर बचा रहता है। ' : 'Most of the gap is explained by ' + (drv || 'the other factors') + ', but some difference remains. ') + mixTxt + tail };
+      text: head + (hi ? 'अंतर का बड़ा हिस्सा (लगभग ' + Math.round((1 - Math.abs(A.diff) / Math.abs(raw.diff)) * 100) + '%) ' + (drv || 'अन्य कारकों') + ' से समझाया जाता है, पर कुछ अंतर बचा रहता है। ' : 'Most of the gap (about ' + Math.round((1 - Math.abs(A.diff) / Math.abs(raw.diff)) * 100) + '%) is explained by ' + (drv || 'the other factors') + ', but some difference remains. ') + mixTxt + tail };
     if (sigAdj) return { kind: 'holds', title: hi ? 'अंतर बराबर के समूहों में भी बना रहता है' : 'The gap holds between like-for-like groups',
       text: head + (hi ? 'समायोजन के बाद भी अंतर लगभग वैसा ही है। ' : 'Adjusting barely changes it. ') + tail };
     if (A.p <= 0.05) {                                                             // 0.01 < p <= 0.05: some evidence, not much
@@ -283,10 +289,13 @@
     try { FS.ranked = D.rank(RD(), viewIdx(), HD(), FS.y, { prof: FS.prof, candidates: cands, noZero: autoZero() }); } catch (e) { FS.ranked = []; }
     FS.adj = FS.ranked.filter(function (r) { return !r.derived && !r.walls && !r.standIn && r.omega2 >= 0.01; }).slice(0, 3).map(function (r) { return r.col; });
   }
+  function numFactor() { var p = FS.prof[FS.f]; return !!(p && p.numeric && !p.lowInt); }
+  function factorBands() { return numFactor() ? CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][FS.f]); }), 4) : null; }
+  function allBands(fb) { var b = bandsFor(FS.adj); if (fb) b[FS.f] = fb; return b; }
   function bandsFor(cols) { var b = {}; cols.forEach(function (c) { var p = FS.prof[c]; if (p && p.numeric && !p.lowInt) b[c] = CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][c]); }), 5); }); return b; }
 
   function render() {
-    var H = HD(), numCols = FS.prof.filter(function (p) { return p.numeric; }), groupCols = FS.prof.filter(function (p) { return !p.numeric || p.lowInt; }).filter(function (p) { return p.distinct >= 2 && p.distinct <= 200 && !p.unique; });
+    var H = HD(), numCols = FS.prof.filter(function (p) { return p.numeric; }), groupCols = FS.prof.filter(function (p) { return !p.numeric || p.lowInt || (!p.idLike && !p.coord && p.distinct >= 8); }).filter(function (p) { return p.distinct >= 2 && !p.unique && (p.numeric && !p.lowInt ? true : p.distinct <= 200); }).map(function (p) { return p.numeric && !p.lowInt ? Object.assign({}, p, { name: p.name + T('  (a number, in 4 bands)', '  (संख्या, 4 समूहों में)') }) : p; });
     var omega = {}, wall = {}; (FS.ranked || []).forEach(function (r) { omega[r.col] = r.omega2; if (r.walls) wall[r.col] = 1; });
     var cand = adjCandidates().map(function (c) { return { index: c.col, name: c.name + (c.kind === 'num' ? T(' (5 bands)', ' (5 समूह)') : '') + (wall[c.col] ? T(' ⚠ may be set by the number', ' ⚠ शायद संख्या से तय') : ''), w: omega[c.col] || 0 }; }).sort(function (a, b) { return b.w - a.w; }).slice(0, 12);
     FS.adj = FS.adj.filter(function (c) { return c !== FS.f && c !== FS.y; });
@@ -313,15 +322,15 @@
   function compute() {
     var out = $('frOut'); if (!out) return;
     if (FS.y < 0 || FS.f < 0) { out.innerHTML = '<div class="big-err">' + T('This file needs a number column and a column of groups.', 'इस फ़ाइल में एक संख्या वाला कॉलम और समूहों का कॉलम चाहिए।') + '</div>'; return; }
-    var H = HD(), names = [H[FS.f]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? T(' (bands)', ' (समूह)') : ''); })),
-        shapeNames = function (shape) { return [H[FS.f]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? (shape === 'curve' ? T(' (curve)', ' (वक्र)') : T(' (straight line)', ' (सीधी रेखा)')) : ''); })); }, seq = ++FS.seq || (FS.seq = 1);
+    var fBands = factorBands(), H = HD(), names = [H[FS.f] + (fBands ? T(' (bands)', ' (समूह)') : '')].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? T(' (bands)', ' (समूह)') : ''); })),
+        shapeNames = function (shape) { return [names[0]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? (shape === 'curve' ? T(' (curve)', ' (वक्र)') : T(' (straight line)', ' (सीधी रेखा)')) : ''); })); }, seq = ++FS.seq || (FS.seq = 1);
     out.innerHTML = '<div class="big-note">' + T('Calculating…', 'गणना हो रही है…') + '</div>';
     var done = function (cellsRes) {
       if (seq !== FS.seq || !$('frOut')) return;
-      var R = F.analyse(cellsRes.cells, names); FS.meta = cellsRes;
-      var lins = linCols(), wLin = $('frLinW'); if (wLin) wLin.style.display = lins.length ? '' : 'none';
+      var R = F.analyse(cellsRes.cells, names, { ref: fBands ? fBands.labels[0] : undefined, order: fBands ? fBands.labels : undefined }); FS.meta = cellsRes;
+      var lins = linCols(), wLin = $('frLinW'); if (wLin) wLin.style.display = lins.length && !fBands ? '' : 'none';
       var shape = FS.shape || 'auto';
-      if (shape === 'bands' || !lins.length || !R || R.error) { if (R && !R.error && lins.length) R.shapeNote = null; FS.result = R; show(R); return; }
+      if (shape === 'bands' || fBands || !lins.length || !R || R.error) { if (R && !R.error && lins.length) R.shapeNote = null; FS.result = R; show(R); return; }
       // number adjusters as a straight line or a curve: the like-for-like gaps from a row-level regression
       var cats = FS.adj.filter(function (c) { return lins.indexOf(c) < 0; }), order = cats.concat(lins);
       var fitOne = function (curve) {
@@ -346,11 +355,11 @@
 
     if (isBig()) {
       var sc = STL.bigCharts.scope();
-      var bb = bandsFor(FS.adj), edges = {}; Object.keys(bb).forEach(function (c) { if (bb[c]) edges[c] = bb[c].edges; });
+      var bb = allBands(fBands), edges = {}; Object.keys(bb).forEach(function (c) { if (bb[c]) edges[c] = bb[c].edges; });
       var dimCols = [FS.f].concat(FS.adj);
       STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair', y: FS.y, factor: FS.f, adjusters: FS.adj, nozero: FS.noZero, bands: edges }, sc)).then(function (r) { r.cells.forEach(function (c) { c.k = c.k.map(function (k, di) { var b = bb[dimCols[di]], m = /^b(\d+)$/.exec(k); return b && m ? b.labels[+m[1]] : k; }); }); done(r); }).catch(function (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; });
     } else {
-      setTimeout(function () { try { done(F.cellsFromRows(RD(), viewIdx(), { y: FS.y, factor: FS.f, adjusters: FS.adj, noZero: FS.noZero, bands: bandsFor(FS.adj) })); } catch (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; } }, 20);
+      setTimeout(function () { try { done(F.cellsFromRows(RD(), viewIdx(), { y: FS.y, factor: FS.f, adjusters: FS.adj, noZero: FS.noZero, bands: allBands(fBands) })); } catch (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; } }, 20);
     }
   }
   var KIND = { reversal: ['#d6456b', '⚠'], explained: ['#e8913a', 'ℹ'], masked: ['#3b82c4', '🔍'], shrinks: ['#e8913a', 'ℹ'], holds: ['#14a38b', '✔'], weak: ['#e8913a', '≈'], weak_explained: ['#e8913a', 'ℹ'], none: ['#8f9aa8', '≈'], raw: ['#8f9aa8', 'ℹ'], error: ['#d6456b', '⚠'] };
