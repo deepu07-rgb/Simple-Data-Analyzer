@@ -143,6 +143,20 @@ const csv = Buffer.from(rows.join('\n') + '\n', 'utf8');
   await ev(() => document.querySelector('#bigPane .big-chart[data-chart="2"]').click()); await wait(2200);
   ok(await ev(() => document.getElementById('chartStudio').classList.contains('open') && echarts.getInstanceByDom(document.getElementById('csChart')).getOption().series[0].type === 'bar'), 'The chart button on a column card opens a histogram of that column');
 
+  // ---- the dashboard works on a large file: charts and headline numbers come from all rows; PowerPoint downloads
+  await ev(() => { STL.board.pins = []; localStorage.removeItem('stellura_board'); STL.openDashboard(); });
+  await page.waitForSelector('#dbAdd2', { timeout: 15000 }); await ev(() => document.getElementById('dbAdd2').click());
+  await page.waitForFunction(() => document.querySelectorAll('#dashGrid .dash-chart canvas').length >= 3, null, { timeout: 30000 });
+  await wait(600);
+  const dk = await ev(() => Array.from(document.querySelectorAll('.dash-kpi')).map(k => k.textContent));
+  ok(dk.length >= 2 && /3,00,000/.test(dk[0]) && dk.some(x => /Total of/.test(x)), 'The dashboard of a large file shows headline numbers computed from all 300,000 rows', dk);
+  ok(await ev(() => Array.from(document.querySelectorAll('.dash-cap')).every(c => c.textContent.length > 10)), 'Every dashboard chart of the large file has its reading');
+  await shot('34-big-dashboard');
+  const [dlb] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), ev(() => document.getElementById('dbPpt').click())]);
+  const tmpf = path.join(require('os').tmpdir(), 'stl-big-dash.pptx'); await dlb.saveAs(tmpf);
+  ok(fs.statSync(tmpf).size > 20000, 'PowerPoint of the large-file dashboard downloads (' + fs.statSync(tmpf).size + ' bytes)');
+  await ev(() => document.getElementById('dbX').click());
+
   // ---- leaving large-file mode closes the Studio cleanly
   await ev(() => BIG.exit()); await wait(400);
   ok(await ev(() => !document.getElementById('chartStudio').classList.contains('open')), 'Closing the large file closes the Studio');
