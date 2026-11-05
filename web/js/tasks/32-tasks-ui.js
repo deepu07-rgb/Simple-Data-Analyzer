@@ -137,6 +137,9 @@
       inner += '<div class="prj-row" style="justify-content:flex-end;margin-top:12px"><button class="tb-btn" id="fxCancel">' + T('Cancel', 'रद्द करें') + '</button><button class="tb-btn primary" id="fxApply"></button></div>';
     }
     var o = overlay('fixDialog', inner, true);
+    var vgBtn = document.createElement('div'); vgBtn.className = 'prj-row'; vgBtn.style.cssText = 'margin-top:10px;justify-content:flex-start';
+    vgBtn.innerHTML = '<button class="cs-link" id="fxVals">🔤 ' + T('Same thing, spelled differently (Kishangarh / Kishangrah)…', 'एक ही चीज़, अलग वर्तनी (Kishangarh / Kishangrah)…') + '</button>'; o.querySelector('.stl-box').appendChild(vgBtn);
+    $('fxVals').onclick = function () { o.remove(); STL.openValueGroups(); };
     $('fxX').onclick = function () { o.remove(); };
     if (!res.steps.length) return;
     $('fxCancel').onclick = function () { o.remove(); };
@@ -195,7 +198,7 @@
 
   // ================================================================= Combine files
   var MG = { files: [], plan: null, over: {}, opts: { source: true, dedupe: false } };
-  var AUTO_CLEAN = ['headerRow', 'twoRowHeader', 'blanks', 'repeatedHeaders', 'totalRows', 'whitespace'];
+  var AUTO_CLEAN = ['sectionTitles', 'headerRow', 'twoRowHeader', 'blanks', 'repeatedHeaders', 'totalRows', 'footerRows', 'whitespace'];
 
   STL.openMerge = function () {
     MG.files = []; MG.plan = null; MG.over = {};

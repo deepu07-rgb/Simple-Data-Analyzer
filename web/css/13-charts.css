@@ -169,3 +169,9 @@ body.cs-open .document-meta,body.cs-open .product-subtitle{display:none}
 .dr-rule td:nth-child(2){font-size:13px}
 .fr-how{font-size:12px;color:var(--text-secondary);margin-top:10px;line-height:1.5}
 .cs-m .cs-op{width:64px;flex:none}.cs-m .cs-val{width:90px;flex:none;padding:4px 8px}
+
+.vg-tbl td{vertical-align:top;font-size:13px}
+.vg-sel{min-width:190px;max-width:260px}
+.vg-chip{display:inline-block;background:var(--bg-secondary,#f1f1f6);border-radius:10px;padding:1px 8px;margin:1px 2px;white-space:nowrap}
+.vg-chip em{opacity:.7;font-style:normal;margin-left:4px}
+.vg-kind{display:inline-block;color:#fff;border-radius:8px;padding:0 7px;font-size:11px;margin-right:4px}

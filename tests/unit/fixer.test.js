@@ -183,3 +183,37 @@ test('turning text into numbers never rounds real digits (GPS coordinates, rates
   assert.deepEqual(out.map(x => x[2]), g.map(x => x[2]), 'rates keep every digit');
   assert.equal(out[2][3], '110000', '1.1 lakh is 110000, without float noise');
 });
+
+// ---- found by a messy district workbook: block-wise sheet, footer lines, "NIL" amounts
+function blockSheet() {
+  const H = ['Sr. No.', 'Reg. No.', 'Date', 'Applicant', 'Village', 'Amount'];
+  const g = [['GRIEVANCE REGISTER 2023-24 (BLOCK-WISE)', '', '', '', '', ''], ['District Ajmer | Period: 01/04/2023 to 31/03/2024', '', '', '', '', ''], ['', '', '', '', '', '']];
+  [['Kishangarh', 4], ['Beawar (Tehsil Beawar)', 5], ['Pushkar', 3]].forEach(([b, n]) => {
+    g.push([`Block: ${b}`, '', '', '', '', '']); g.push(H.slice());
+    for (let i = 1; i <= n; i++) g.push([String(i), `GRV/2023/00${i}`, '01/04/2023', `Name ${i}`, 'Gegal', i % 2 ? '₹ 1,500' : 'NIL']);
+    if (n === 5) g.push(H.slice());                                                           // a page header repeated
+    g.push([`Total (${b.split(' ')[0]}): ${n} cases   Disposed: ${n}   Pending: 0`, '', '', '', '', '']); g.push(['', '', '', '', '', '']);
+  });
+  g.push(['Entered by: Block operators   Verified by: ______   Date: ___/___/2026', '', '', '', '', '']); g.push(['District Informatics Officer / Signature', '', '', '', '', '']);
+  return g;
+}
+test('block-wise sheet: "Block: X" titles become a Block column; subtotals, repeated headers and footers go', () => {
+  const grid = F.prepare(blockSheet()[0], blockSheet().slice(1)), a = F.analyze(grid), ids = a.steps.map(s => s.id);
+  assert.ok(ids.includes('sectionTitles') && ids.includes('totalRows') && ids.includes('footerRows') && ids.includes('repeatedHeaders'), ids.join());
+  const res = F.apply(grid, a.steps.filter(s => s.auto).map(s => s.id)).grid, H = res[0], rows = res.slice(1);
+  assert.deepEqual(plain(H.slice(0, 7)), ['Sr. No.', 'Reg. No.', 'Date', 'Applicant', 'Village', 'Amount', 'Block']);
+  assert.equal(rows.length, 12, 'only the 12 records are left: ' + JSON.stringify(rows.map(r => r[0] + r[6])));
+  assert.deepEqual(plain([...new Set(rows.map(r => r[6]))]), ['Kishangarh', 'Beawar', 'Pushkar'], 'the "(Tehsil …)" suffix is dropped');
+  assert.equal(rows.filter(r => r[6] === 'Beawar').length, 5);
+  assert.deepEqual(plain(rows.map(r => r[5]).slice(0, 4)), ['1500', '', '1500', ''], '₹ amounts become numbers, NIL becomes empty');
+});
+test('section titles need to repeat: a single "Report as on: 31/01/2026" line is not a section', () => {
+  const g = [['Title', '', '', ''], ['Report as on: 31/01/2026', '', '', ''], ['A', 'B', 'C', 'D']]; for (let i = 0; i < 12; i++) g.push([String(i), 'x', 'y', 'z']);
+  assert.ok(!F.analyze(F.prepare(g[0], g.slice(1))).steps.some(s => s.id === 'sectionTitles'));
+});
+test('footer lines are only removed from the bottom and only when they look like signatures', () => {
+  const g = [['Name', 'Dept', 'Amount', 'Date']]; for (let i = 0; i < 10; i++) g.push([`N${i}`, 'Health', '10', '01/04/2025']);
+  g.push(['Total number of staff', '', '', '']);                                                        // a note without signature words stays
+  const a = F.analyze(F.prepare(g[0], g.slice(1))); assert.ok(!a.steps.some(s => s.id === 'footerRows'));
+  g.push(['Verified by: ____ Signature', '', '', '']); assert.equal(F.analyze(F.prepare(g[0], g.slice(1))).steps.filter(s => s.id === 'footerRows')[0].count, 1);
+});

@@ -163,3 +163,23 @@ def test_every_manifest_part_exists_and_none_is_orphaned():
     listed = {l.split(" ", 1)[1].strip() for l in manifest.splitlines() if l.startswith("@file ")}
     on_disk = {p.relative_to(ROOT / "web").as_posix() for p in (ROOT / "web").rglob("*") if p.is_file()} - {"manifest.txt"}
     assert listed == on_disk
+
+
+def test_xlsx_sheets_are_read_once_and_served_from_the_cache(client):
+    import io, openpyxl
+    import app as app_mod
+    wb = openpyxl.Workbook(); a = wb.active; a.title = "Cover"; a.append(["Title"]); b = wb.create_sheet("Data")
+    b.append(["Reg", "Date", "Amount"]); [b.append([f"R{i}", f"0{i % 9 + 1}/04/2025", i * 10]) for i in range(30)]
+    b.append([None, None, None]); b.append([None, None, None])                        # formatted but empty rows at the end
+    buf = io.BytesIO(); wb.save(buf); raw = buf.getvalue()
+    app_mod._XLSX_CACHE.clear(); app_mod._XLSX_CACHE_ORDER.clear()
+    first = app_mod._parse_excel(raw, "x.xlsx")
+    assert first["sheets"] == ["Cover", "Data"] and first["activeSheet"] == "Cover" and len(app_mod._XLSX_CACHE) == 1
+    info = {s["name"]: s for s in first["sheetInfo"]}
+    assert info["Data"]["rows"] == 30 and info["Data"]["cols"] == 3, "trailing empty rows are not counted"
+    second = app_mod._parse_excel(raw, "x.xlsx", "Data")
+    assert second["activeSheet"] == "Data" and second["headers"] == ["Reg", "Date", "Amount"] and len(second["data"]) == 30
+    assert len(app_mod._XLSX_CACHE) == 1, "the same workbook is not read again"
+    for i in range(3):                                                                # only the newest two workbooks are kept
+        wb2 = openpyxl.Workbook(); wb2.active.append(["h"]); wb2.active.append([i]); bb = io.BytesIO(); wb2.save(bb); app_mod._parse_excel(bb.getvalue(), "y.xlsx")
+    assert len(app_mod._XLSX_CACHE) == 2

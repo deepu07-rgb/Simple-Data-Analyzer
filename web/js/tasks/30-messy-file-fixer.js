@@ -124,6 +124,31 @@
     STEPS.push({ id: id, title: title, detail: detail, auto: !!opts.auto, banner: !!opts.banner, transform: transform });
   }
 
+  // 0. section titles ("Block: Beawar", "Department: Health" ...) that repeat down a block-wise sheet
+  //    The label becomes a column and every row below the title gets its value; the title rows themselves are removed.
+  var SECTION_RE = /^\s*([A-Za-z][A-Za-z .\/&'-]{1,30}?)\s*[:：]\s*(\S.{0,80}?)\s*$/;
+  function sectionValue(v) { var t = s(v).replace(/\s+/g, ' ').trim(), k = t.indexOf('('); var u = k > 0 ? t.slice(0, k).trim() : t; return u || t; }
+  step('sectionTitles',
+    { en: 'Turn section titles into a column', hi: 'खंड के शीर्षक को कॉलम बनाएँ' },
+    { en: 'The sheet is written block by block ("Block: Beawar", then its rows, then the next block). The block name exists only in those title rows. It becomes a column, so every row knows its block.', hi: 'शीट खंड-दर-खंड लिखी है (“Block: Beawar”, फिर उसकी पंक्तियाँ)। खंड का नाम केवल शीर्षक पंक्तियों में है। उसे कॉलम बना दिया जाता है ताकि हर पंक्ति अपना खंड जाने।' },
+    { auto: true, banner: true },
+    function (grid) {
+      var g = pad(grid), w = g.length ? g[0].length : 0; if (g.length < 12 || w < 3) return { grid: grid, count: 0, examples: [] };
+      var hits = {}, order = [];
+      g.forEach(function (r, i) { if (filled(r) !== 1) return; var cell = r.filter(function (v) { return !isBlank(v); })[0], m = SECTION_RE.exec(s(cell)); if (!m || /^(total|grand|sub|note|prepared|report|period|updated|date|verified|entered)/i.test(m[1].trim())) return; var key = m[1].trim().toLowerCase(); if (!hits[key]) { hits[key] = { label: m[1].trim(), rows: [] }; order.push(key); } hits[key].rows.push({ i: i, value: sectionValue(m[2]) }); });
+      var best = null; order.forEach(function (k) { var h = hits[k]; if (h.rows.length >= 3 && (!best || h.rows.length > best.rows.length)) best = h; });
+      if (!best) return { grid: grid, count: 0, examples: [] };
+      var vals = {}, drop = {}; best.rows.forEach(function (x) { drop[x.i] = true; });
+      var cur = '', out = [], ex = [];
+      g.forEach(function (r, i) {
+        if (drop[i]) { cur = best.rows.filter(function (x) { return x.i === i; })[0].value; if (ex.length < 3) ex.push({ before: clip(s(r.filter(function (v) { return !isBlank(v); })[0]), 40), after: best.label + ' = ' + cur }); return; }
+        out.push(r.concat([filled(r) < 2 ? '' : cur]));                           // spacer rows and one-cell lines (subtotal, note) stay as they were
+      });
+      var h = findHeaderRow(out); out[h][w] = best.label.charAt(0).toUpperCase() + best.label.slice(1);
+      for (var i = 0; i < h; i++) out[i][w] = '';
+      return { grid: out, count: best.rows.length, examples: ex, note: best.label };
+    });
+
   // 1. title rows above the real header
   function findHeaderRow(grid) {
     var g = grid;
@@ -235,12 +260,27 @@
         var hit = firsts.some(function (v) { return TOTAL_RE.test(s(v).trim()); });
         if (hit) {                                                                    // "Total Food Court" is a restaurant: a total row is a label (and maybe a name) followed by numbers
           var cells = r.filter(function (v) { return !isBlank(v); }), words = cells.filter(function (v) { return !looksNumeric(v); }).length;
-          if (words > 2 || !cells.some(looksNumeric)) hit = false;
+          if (cells.length === 1 && /\d/.test(s(cells[0]))) { /* one merged cell: "Total (Beawar): 2393 cases ..." */ }
+          else if (words > 2 || !cells.some(looksNumeric)) hit = false;
         }
         if (hit) { n++; if (ex.length < 3) ex.push({ before: clip(r.filter(function (v) { return !isBlank(v); }).slice(0, 4).join(' | '), 70), after: '' }); }
         return !hit;
       });
       return n ? { grid: out, count: n, examples: ex } : { grid: grid, count: 0, examples: [] };
+    });
+
+  // 5b. signature / "entered by" lines under the table
+  var FOOTER_RE = /signature|verified|prepared by|entered by|checked by|approved|sd\/-|\bdio\b|informatics officer|officer in charge|^note\s*:|^\*|_{4,}|हस्ताक्षर|सत्यापित|तैयार|प्रमाणित/i;
+  step('footerRows',
+    { en: 'Remove signature and note lines under the table', hi: 'तालिका के नीचे की हस्ताक्षर / टिप्पणी पंक्तियाँ हटाएँ' },
+    { en: 'Lines such as "Entered by… Verified by… Signature" below the last record are not data.', hi: '“Entered by… Verified by… Signature” जैसी अंतिम प्रविष्टि के नीचे की पंक्तियाँ डेटा नहीं हैं।' },
+    { auto: true, banner: false },
+    function (grid) {
+      var g = pad(grid), w = g.length ? g[0].length : 0; if (g.length < 8 || w < 4) return { grid: grid, count: 0, examples: [] };
+      var end = g.length, ex = [];
+      while (end > 2) { var r = g[end - 1], f = filled(r); if (f === 0) { end--; continue; } var t = r.filter(function (v) { return !isBlank(v); }).join(' '); if (f <= 2 && FOOTER_RE.test(t)) { if (ex.length < 3) ex.push({ before: clip(t, 60), after: '' }); end--; continue; } break; }
+      var removed = 0; for (var i = end; i < g.length; i++) if (filled(g[i]) > 0) removed++;
+      return removed ? { grid: g.slice(0, end), count: removed, examples: ex } : { grid: grid, count: 0, examples: [] };
     });
 
   // 6. values written once for a merged block (fill down)
@@ -350,17 +390,20 @@
     { en: 'Values like "2.5 लाख", "₹1,00,000/-" or "(500)" are converted to plain numbers so they can be added and charted. Phone numbers and codes with leading zeros are left alone.', hi: '"2.5 लाख", "₹1,00,000/-" या "(500)" जैसे मान सादी संख्या में बदले जाते हैं। फ़ोन नंबर और शून्य से शुरू होने वाले कोड नहीं छुए जाते।' },
     { auto: true, banner: true },
     function (grid) {
-      var w = width(grid), n = 0, ex = [], out = copy(grid), skippedCols = 0;
+      var w = width(grid), n = 0, ex = [], out = copy(grid), skippedCols = 0, NILS = /^(nil|n\/?a|na|none|null|[-–—.?]+|निल|शून्य)$/i, BLANKS = /^(nil|[-–—]+|निल)$/i;
       for (var c = 0; c < w; c++) {
-        var cells = [], parsed = 0, plain = 0, codeLike = 0;
+        var cells = [], parsed = 0, plain = 0, codeLike = 0, nils = [];
         for (var r = 1; r < out.length; r++) {
           var v = s(out[r][c]); if (isBlank(v)) continue;
+          if (NILS.test(v.trim())) { nils.push(r); continue; }                          // "NIL" / "-" mean no value
           cells.push(r);
           var t = v.trim();
           if (/^0\d+$/.test(t) || /^\d{10,}$/.test(t)) codeLike++;
           var p = parseNumber(v); if (p !== null) { parsed++; if (fmtNum(p) === t || /^-?\d+(\.\d+)?$/.test(t)) plain++; }          // an ordinary decimal is already a number
         }
-        if (cells.length < 2 || parsed / cells.length < 0.6 || codeLike / cells.length > 0.3 || plain === parsed) continue;
+        if (cells.length < 2 || parsed / cells.length < 0.6 || codeLike / cells.length > 0.3 || (plain === parsed && !nils.length)) continue;
+        nils.forEach(function (r) { if (BLANKS.test(s(out[r][c]).trim())) { out[r][c] = ''; n++; } });   // N/A stays as written
+        if (plain === parsed) continue;
         cells.forEach(function (r) {
           var v = s(out[r][c]), t = v.trim(), p = parseNumber(v);
           if (p === null || /^0\d+$/.test(t) || /^-?\d+(\.\d+)?$/.test(t)) return;

@@ -86,3 +86,19 @@ test('a curve (slope + bend) and the AIC used to choose the shape equal statsmod
   const R2 = F.useLinear(F.analyse(F.cellsFromRows(LX.rows, idx, { y: 3, factor: 0, adjusters: [1, 2] }).cells, ['Mode', 'Group', 'Temp (bands)']), line, ['Mode', 'Group', 'Temp (straight line)']);
   assert.equal(R2.linear, 'line'); assert.deepEqual([...R2.adjusters], ['Group', 'Temp (straight line)']);
 });
+
+test('a group that works where nobody in the comparison group works cannot be compared like-for-like', () => {
+  // officers A (reference, largest), B (shares Revenue with A), C (only Water, nobody else there), D, E (only Pension with nobody from the A-B world... but each other)
+  const cell = (o, d, n, mean) => ({ k: [o, d], n, sy: n * mean, syy: n * (mean * mean + 4) });
+  const cells = [cell('A', 'Revenue', 400, 40), cell('A', 'Pension', 200, 20), cell('B', 'Revenue', 300, 50), cell('B', 'Pension', 100, 26), cell('C', 'Water', 500, 6), cell('D', 'Water', 300, 7)];
+  const R = F.analyse(cells, ['Officer', 'Department']), by = Object.fromEntries(R.levels.map(l => [l.level, l]));
+  assert.equal(R.ref, 'A');
+  assert.ok(by.B.adj && !by.B.notComparable, 'B shares both departments with A'); assert.ok(Math.abs(by.B.adj.diff - 8) < 1.5, 'about +8 in the same department: ' + by.B.adj.diff);
+  assert.ok(by.C.notComparable && by.C.adj === null && by.C.only[0] === 'Water', 'C and D only work in Water: no gap against A'); assert.ok(by.D.notComparable);
+  assert.notEqual(R.main.level, 'C'); assert.notEqual(R.main.level, 'D'); assert.equal(R.main.level, 'B', 'the headline uses a gap that can be compared');
+  const v = F.verdict(R, false); assert.ok(!/Water/.test(v.text) || !/\bC\b/.test(v.text), 'the sentence is about B, not about the uncomparable groups');
+});
+test('with no adjuster everything is comparable (plain gap only)', () => {
+  const R = F.analyse([{ k: ['A'], n: 100, sy: 1000, syy: 10400 }, { k: ['B'], n: 100, sy: 2000, syy: 20400 }], ['Group']);
+  assert.ok(R.levels.every(l => !l.notComparable));
+});

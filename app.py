@@ -113,23 +113,53 @@ def _safe_value(val):
     return str(val)
 
 
+_XLSX_CACHE = {}                    # sha1 of the file -> {"sheets": [names], "rows": {name: [tuple, ...]}}; the newest two workbooks
+_XLSX_CACHE_ORDER = []
+_XLSX_CACHE_MAX_CELLS = 8_000_000
+
+
+def _read_workbook(file_bytes):
+    """Read every sheet once (read-only mode: several times faster than the full mode, and light on memory) and keep the
+    values for a while, so choosing a sheet, switching sheets or adding the same workbook again does not read it again."""
+    import hashlib
+    key = hashlib.sha1(file_bytes).hexdigest()
+    if key in _XLSX_CACHE:
+        return _XLSX_CACHE[key]
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    try:
+        names = list(wb.sheetnames)
+        rows = {}
+        for n in names:
+            data = [tuple(r) for r in wb[n].iter_rows(values_only=True)]
+            while data and all(v is None for v in data[-1]):                   # blank rows at the end (formatted but empty)
+                data.pop()
+            rows[n] = data
+        active = wb.active.title if wb.active is not None else names[0]
+    finally:
+        wb.close()
+    entry = {"sheets": names, "rows": rows, "active": active if active in names else names[0]}
+    cells = sum(len(r) * (len(r[0]) if r else 0) for r in rows.values())
+    if cells <= _XLSX_CACHE_MAX_CELLS:
+        _XLSX_CACHE[key] = entry
+        _XLSX_CACHE_ORDER.append(key)
+        while len(_XLSX_CACHE_ORDER) > 2:
+            _XLSX_CACHE.pop(_XLSX_CACHE_ORDER.pop(0), None)
+    return entry
+
+
 def _parse_excel(file_bytes, filename, sheet_name=None):
     """Parse an .xlsx workbook: return headers, rows, sheet names and per-sheet size."""
-    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-    sheet_names = wb.sheetnames
+    book = _read_workbook(file_bytes)
+    sheet_names = book["sheets"]
     sheet_info = [
-        {"name": n, "rows": max((wb[n].max_row or 1) - 1, 0), "cols": wb[n].max_column or 0}
+        {"name": n, "rows": max(len(book["rows"][n]) - 1, 0), "cols": max((len(r) for r in book["rows"][n][:50]), default=0)}
         for n in sheet_names
     ]
 
-    # Select the requested sheet (default: first)
-    if sheet_name and sheet_name in sheet_names:
-        ws = wb[sheet_name]
-    else:
-        ws = wb.active
-        sheet_name = ws.title
-
-    rows = list(ws.iter_rows(values_only=True))
+    # Select the requested sheet (default: the one the workbook opens on)
+    if not (sheet_name and sheet_name in sheet_names):
+        sheet_name = book["active"]
+    rows = book["rows"][sheet_name]
     if not rows:
         return {"headers": [], "data": [], "sheets": sheet_names,
                 "sheetInfo": sheet_info, "activeSheet": sheet_name}

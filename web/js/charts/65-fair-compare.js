@@ -151,7 +151,7 @@
   // put the straight-line results into an analysis made from cells (raw gaps, strata and make-up stay from the cells)
   F.useLinear = function (R, lin, names) {
     if (!R || R.error || !lin) return R;
-    R.levels.forEach(function (l) { var r = lin.levels[l.level]; l.adj = r ? { diff: r[0], se: r[1], lo: r[0] - 1.96 * r[1], hi: r[0] + 1.96 * r[1], p: r[1] > 0 ? pTwoSided(r[0] / r[1]) : 1 } : null; });
+    R.levels.forEach(function (l) { var r = l.notComparable ? null : lin.levels[l.level]; l.adj = r ? { diff: r[0], se: r[1], lo: r[0] - 1.96 * r[1], hi: r[0] + 1.96 * r[1], p: r[1] > 0 ? pTwoSided(r[0] / r[1]) : 1 } : null; });
     R.drivers.forEach(function (d) { var a = lin.alone[d.dim - 1], r = a && a[R.main.level]; if (r) { d.effect = r[0]; d.move = Math.abs(r[0] - R.main.raw.diff); } });
     R.r2 = lin.r2; R.linear = lin.curve ? 'curve' : 'line'; R.nLinear = lin.n;
     if (names) { R.adjusters = names.slice(1); R.drivers.forEach(function (d) { if (names[d.dim]) d.name = names[d.dim]; }); }
@@ -179,10 +179,19 @@
     var all = []; for (i = 0; i < nd; i++) all.push(i);
     var full = fit(cells, dimLevels, refs, all);
     if (!full) return { error: 'fit' };
+    // A group can only be compared like-for-like with the reference if they share strata somewhere (an officer who is the
+    // only one in a department cannot be told apart from that department). Groups and adjuster levels that appear together
+    // are joined; a group outside the reference's connected set has no like-for-like gap.
+    var par = {}; function fnd(x) { if (par[x] === undefined) par[x] = x; while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; }
+    function uni(a, b) { a = fnd(a); b = fnd(b); if (a !== b) par[a] = b; }
+    cells.forEach(function (c) { for (var q = 1; q < nd; q++) uni('0|' + c.k[0], q + '|' + c.k[q]); });
+    var refSet = fnd('0|' + refs[0]), touches = {};
+    cells.forEach(function (c) { for (var q = 1; q < nd; q++) { var root = fnd('0|' + c.k[0]); if (root !== refSet) { var t = touches[c.k[0]] || (touches[c.k[0]] = {}); t[c.k[q]] = (t[c.k[q]] || 0) + c.n; } } });
     var levels = factorLevels.filter(function (lv) { return lv !== refs[0]; }).map(function (lv) {
-      var a = g[lv], b = g[refs[0]], diff = a.mean - b.mean, se = Math.sqrt(a.var / a.n + b.var / b.n), key = '0|' + lv, beta = full.beta[key], seA = full.se[key];
-      return { level: lv, n: a.n, mean: a.mean, raw: { diff: diff, se: se, p: se > 0 ? pTwoSided(diff / se) : 1 },
-               adj: beta === undefined ? null : { diff: beta, se: seA, lo: beta - 1.96 * seA, hi: beta + 1.96 * seA, p: seA > 0 ? pTwoSided(beta / seA) : 1 } };
+      var a = g[lv], b = g[refs[0]], diff = a.mean - b.mean, se = Math.sqrt(a.var / a.n + b.var / b.n), key = '0|' + lv, beta = full.beta[key], seA = full.se[key], comparable = nd < 2 || fnd('0|' + lv) === refSet;
+      var only = comparable ? null : Object.keys(touches[lv] || {}).sort(function (x, y) { return touches[lv][y] - touches[lv][x]; }).slice(0, 3);
+      return { level: lv, n: a.n, mean: a.mean, raw: { diff: diff, se: se, p: se > 0 ? pTwoSided(diff / se) : 1 }, notComparable: !comparable, only: only,
+               adj: (beta === undefined || !comparable) ? null : { diff: beta, se: seA, lo: beta - 1.96 * seA, hi: beta + 1.96 * seA, p: seA > 0 ? pTwoSided(beta / seA) : 1 } };
     });
     if (opts.order) levels.sort(function (a, b) { return opts.order.indexOf(a.level) - opts.order.indexOf(b.level); });          // a number in bands: lowest to highest
     var big = levels.filter(function (l) { return l.n >= 30 && l.adj; }), main = (big.length ? big : levels).slice().sort(function (a, b) { return Math.abs(b.raw.diff) - Math.abs(a.raw.diff); })[0];          // the gap people notice
@@ -373,7 +382,7 @@
       var meta = FS.meta || {}, z = meta.zeroSkipped;
       html += '<table class="big-tbl fr-tbl"><tr><th>' + esc(fName) + '</th><th>' + T('Rows', 'पंक्तियाँ') + '</th><th>' + T('Average ', 'औसत ') + esc(yName) + '</th><th>' + T('Plain gap vs ', 'सीधा अंतर, बनाम ') + esc(R.ref) + '</th><th>' + T('Like-for-like gap (95% range)', 'बराबर समूहों में अंतर (95% सीमा)') + '</th></tr>' +
         '<tr><td><b>' + esc(R.ref) + '</b> <em>(' + T('reference', 'संदर्भ') + ')</em></td><td class="num">' + CH.indian(R.groups.filter(function (g) { return g.level === R.ref; })[0].n) + '</td><td class="num">' + f2(R.groups.filter(function (g) { return g.level === R.ref; })[0].mean).replace(/^\+/, '') + '</td><td>–</td><td>–</td></tr>' +
-        R.levels.map(function (l) { return '<tr' + (l === R.main ? ' class="fr-main"' : '') + '><td><b>' + esc(l.level) + '</b></td><td class="num">' + CH.indian(l.n) + '</td><td class="num">' + f2(l.mean).replace(/^\+/, '') + '</td><td class="num">' + f2(l.raw.diff) + ' <em>(' + pTxt(l.raw.p) + ')</em></td><td class="num">' + (l.adj ? '<b>' + f2(l.adj.diff) + '</b> <em>(' + f2(l.adj.lo) + ' … ' + f2(l.adj.hi) + '; ' + pTxt(l.adj.p) + ')</em>' : '–') + '</td></tr>'; }).join('') + '</table>';
+        R.levels.map(function (l) { return '<tr' + (l === R.main ? ' class="fr-main"' : '') + '><td><b>' + esc(l.level) + '</b></td><td class="num">' + CH.indian(l.n) + '</td><td class="num">' + f2(l.mean).replace(/^\+/, '') + '</td><td class="num">' + f2(l.raw.diff) + ' <em>(' + pTxt(l.raw.p) + ')</em></td><td class="num">' + (l.adj ? '<b>' + f2(l.adj.diff) + '</b> <em>(' + f2(l.adj.lo) + ' … ' + f2(l.adj.hi) + '; ' + pTxt(l.adj.p) + ')</em>' : (l.notComparable ? '<em title="' + esc(T('No case of the comparison group is in the same ' + (R.adjusters[0] || 'group') + ' as these cases, so the difference cannot be separated from it.', 'तुलना समूह का कोई प्रकरण इनके जैसे ही समूह में नहीं है, इसलिए अंतर को उससे अलग नहीं किया जा सकता।')) + '">' + T('cannot be compared', 'तुलना संभव नहीं') + (l.only && l.only.length ? ' — ' + T('only in ', 'केवल ') + esc(l.only.join(', ')) : '') + '</em>' : '–')) + '</td></tr>'; }).join('') + '</table>';
       if (z) html += '<div class="rp-warn"><div>ℹ ' + CH.indian(z) + T(' rows have 0 in “' + yName + '” and are left out.', ' पंक्तियों में “' + yName + '” में 0 है और छोड़ी गई हैं।') + '</div></div>';
       if (R.strata && R.strata.length > 1 && R.driver) {
         html += '<div class="prj-sub">' + T('Between like-for-like groups: within each ', 'बराबर समूहों में: हर ') + esc(R.driver.name) + '</div><div id="frChart" class="fr-chart"></div>';

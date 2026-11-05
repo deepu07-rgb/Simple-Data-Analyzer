@@ -22,8 +22,9 @@
     t = t.replace(/[०-९]/g, function (c) { return String(c.charCodeAt(0) - 0x0966); });
     t = t.replace(/['\u2019\u2018`\u00B4]/g, '');                       // father's -> fathers
     t = t.replace(/[._\-\/\\()\[\]:;,|*#]+/g, ' ').replace(/\s+/g, ' ').trim();
-    return t;
+    return t.split(' ').map(function (w) { return ABBR[w] || w; }).join(' ');          // "Reg. No" and "Registration Number" are the same
   }
+  var ABBR = { reg: 'registration', regn: 'registration', dt: 'date', amt: 'amount', dept: 'department', no: 'number', nos: 'number', ref: 'reference', mob: 'mobile', addr: 'address', desig: 'designation', qty: 'quantity', nm: 'name' };
 
   // Groups of names that mean the same thing in an Indian government office.
   var GLOSSARY = [
@@ -32,10 +33,10 @@
     ['police station', 'ps', 'p s', 'ps name', 'thana', 'थाना', 'थाने का नाम', 'थाना नाम', 'पुलिस थाना', 'police station name'],
     ['date', 'dt', 'दिनांक', 'तारीख', 'तिथि', 'दिनाँक'],
     ['name', 'नाम', 'नाम का विवरण', 'full name', 'पूरा नाम'],
-    ['father name', 'father s name', 'fathers name', 'पिता का नाम', 'पिता नाम', 'पिता', 's o', 'father'],
+    ['father name', 'father s name', 'fathers name', 'पिता का नाम', 'पिता नाम', 'पिता', 's o', 'father', 'fathers husbands name', 'father husband name', 'father husband', 'father or husband name', 'पिता पति का नाम'],
     ['age', 'आयु', 'उम्र', 'उमर'],
     ['gender', 'sex', 'लिंग'],
-    ['amount', 'amt', 'राशि', 'रकम', 'धनराशि', 'रुपये', 'rs', 'rupees'],
+    ['amount', 'amt', 'राशि', 'रकम', 'धनराशि', 'रुपये', 'rs', 'rupees', 'amount involved', 'amount involved rs', 'amount claimed', 'claim amount', 'विवादित राशि'],
     ['total', 'कुल', 'योग', 'जोड़', 'grand total', 'कुल योग'],
     ['case no', 'case number', 'प्रकरण संख्या', 'प्रकरण क्रमांक', 'मुकदमा संख्या', 'fir no', 'fir number', 'एफआईआर संख्या', 'एफआईआर नंबर', 'एफ आई आर संख्या'],
     ['status', 'स्थिति', 'वर्तमान स्थिति', 'current status'],
@@ -67,7 +68,13 @@
     ['expenditure', 'व्यय', 'खर्च', 'expense', 'व्यय राशि'],
     ['balance', 'शेष', 'शेष राशि'],
     ['aadhaar', 'aadhar', 'आधार', 'आधार संख्या', 'आधार नंबर'],
-    ['pan', 'pan no', 'पैन']
+    ['pan', 'pan no', 'पैन'],
+    ['registration number', 'registration', 'पंजीयन संख्या', 'पंजीकरण क्रमांक', 'पंजीयन क्रमांक', 'reg number', 'complaint number', 'application number'],
+    ['date of registration', 'registration date', 'पंजीयन दिनांक', 'पंजीकरण दिनांक', 'date of filing', 'filing date'],
+    ['date of disposal', 'disposal date', 'निस्तारण दिनांक', 'निस्तारण की तिथि', 'date of closure', 'closure date'],
+    ['name of applicant', 'applicant name', 'applicant', 'आवेदक का नाम', 'आवेदक', 'name of complainant', 'complainant name'],
+    ['officer', 'officer assigned', 'assigned officer', 'concerned officer', 'अधिकारी', 'संबंधित अधिकारी'],
+    ['rating', 'satisfaction', 'feedback rating', 'संतुष्टि', 'रेटिंग']
   ];
   var ALIAS = {};
   GLOSSARY.forEach(function (g, i) { g.forEach(function (a) { var n = normalize(a); if (n && ALIAS[n] === undefined) ALIAS[n] = i; }); });
@@ -119,7 +126,10 @@
     else {
       var ga = groupOf(a), gb = groupOf(b);
       if (ga !== null && ga === gb) out = { score: 0.95, reason: 'glossary' };
-      else if (ga !== null && gb !== null && ga !== gb) out = { score: 0, reason: 'different' };     // known, different meanings
+      else if (ga !== null && gb !== null && ga !== gb) {                                            // known, different meanings
+        var wa = a.split(' '), wb = b.split(' '), sh = wa.length <= wb.length ? wa : wb, lo = wa.length <= wb.length ? wb : wa;
+        out = (sh.length === 1 && sh.length < lo.length && lo.indexOf(sh[0]) >= 0 && sh[0].length >= 4) ? { score: 0.72, reason: 'part' } : { score: 0, reason: 'different' };   // "Date" may be "Date of Registration"
+      }
       else {
         var sim = Math.max(jaccardTri(a, b), 1 - lev(a, b) / Math.max(a.length, b.length), 0.9 * tokenOverlap(a, b));
         if (a.indexOf(b) >= 0 || b.indexOf(a) >= 0) sim = Math.max(sim, 0.72);
@@ -137,17 +147,25 @@
 
   // ---------------------------------------------------------------- planning
   var AUTO = 0.9, REVIEW = 0.7;
+  // "Location / Department / Block": the group words are not part of the name. Use the last part when it is unique in its file.
+  function scoringNames(headers) {
+    var grouped = headers.filter(function (h) { return /\s[\/▸>|]\s/.test(s(h)); }).length;
+    if (grouped < 0.5 * headers.length) return headers.map(s);                         // "Father's / Husband's Name" is not a group; a two-row header makes most names grouped
+    var leaves = headers.map(function (h) { var p = s(h).split(/\s+[\/▸>|]\s+/); return p.length > 1 ? p[p.length - 1].trim() : s(h); }), cnt = {};
+    leaves.forEach(function (l) { var k = normalize(l); cnt[k] = (cnt[k] || 0) + 1; });
+    return headers.map(function (h, i) { return cnt[normalize(leaves[i])] === 1 && leaves[i] ? leaves[i] : s(h); });
+  }
   function column(file, i) { var v = []; for (var r = 0; r < Math.min(file.rows.length, 200); r++) v.push(file.rows[r][i]); return v; }
 
   // files: [{name, headers, rows}] (already cleaned: header row first). Returns the combined header list and,
   // for every file, which of its columns goes where.
   M.plan = function (files) {
-    var headers = [], samples = [], maps = [];
+    var headers = [], tnames = [], samples = [], maps = [];
     files.forEach(function (f, fi) {
-      var pairs = [];
+      var pairs = [], sn = scoringNames(f.headers);
       f.headers.forEach(function (h, i) {
         headers.forEach(function (t, j) {
-          var sc = score(h, t, column(f, i), samples[j]);
+          var sc = score(sn[i], tnames[j], column(f, i), samples[j]);
           if (sc.score >= REVIEW) pairs.push({ src: i, tgt: j, score: sc.score, reason: sc.reason });
         });
       });
@@ -164,7 +182,8 @@
         if (p) {
           map.push({ src: i, tgt: p.tgt, score: p.score, level: p.score >= AUTO ? 'auto' : 'review', reason: p.reason });
         } else {
-          headers.push(isBlankHeader(h) ? 'Column ' + (headers.length + 1) : s(h).trim());
+          headers.push(isBlankHeader(h) ? 'Column ' + (headers.length + 1) : s(sn[i]).trim());
+          tnames.push(isBlankHeader(h) ? 'Column ' + (headers.length) : sn[i]);
           samples.push(column(f, i));
           map.push({ src: i, tgt: headers.length - 1, score: fi === 0 ? 1 : 0, level: fi === 0 ? 'first' : 'new', reason: fi === 0 ? 'first' : 'new' });
         }
