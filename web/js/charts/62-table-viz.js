@@ -149,6 +149,17 @@
       var x = numOf(v); if (x !== null) nums.push(x);
     }
     var isNum = nonblank > 0 && nums.length / nonblank >= 0.8 && counts.size > 1;
+    var zeros = isNum ? nums.filter(function (x) { return x === 0; }).length : 0;
+    // a list column ("North Indian, Chinese"): count the ITEMS, not the whole texts
+    var itemCounts = null, itemRaw = null;
+    if (!isNum) {
+      var withComma = 0; counts.forEach(function (c, key) { if (key.indexOf(',') > 0) withComma += c; });
+      if (nonblank && withComma / nonblank >= 0.25) {
+        var ic = new Map(), ir = new Map(), tot = 0;
+        counts.forEach(function (c, key) { var seen = {}; key.split(',').forEach(function (it) { it = it.trim(); var lk = it.toLowerCase(); if (!it || seen[lk]) return; seen[lk] = 1; tot += c; ic.set(it, (ic.get(it) || 0) + c); if (!ir.has(it)) ir.set(it, []); ir.get(it).push(key); }); });
+        if (ic.size / Math.max(tot, 1) < 0.25 && ic.size <= 400) { itemCounts = ic; itemRaw = ir; }
+      }
+    }
     var P = STL.pend, dates = [];
     if (!isNum && P && P.parseDate) { for (var q = 0; q < vals.length && q < 20000; q++) { var ms = P.parseDate(rawData[vals[q]][ci], false); if (ms !== null) dates.push([ms, vals[q]]); } }
     var isDate = !isNum && dates.length > 0 && dates.length / Math.min(vals.length, 20000) >= 0.8;
@@ -161,6 +172,7 @@
       var q1 = q(0.25), q3 = q(0.75), iqr = q3 - q1, odd = sorted.filter(function (x) { return x < q1 - 1.5 * iqr || x > q3 + 1.5 * iqr; }).length;
       facts.push([T('Total', 'योग'), ind(Math.round(sum * 100) / 100)], [T('Average', 'औसत'), ind(Math.round(sum / nums.length * 100) / 100)], [T('Middle (median)', 'मध्य (माध्यिका)'), ind(Math.round(q(0.5) * 100) / 100)],
         [T('Smallest', 'न्यूनतम'), ind(sorted[0])], [T('Largest', 'अधिकतम'), ind(sorted[sorted.length - 1])], [T('Unusual values', 'असामान्य मान'), ind(odd)]);
+      if (zeros) facts.push([T('Zeros', 'शून्य'), ind(zeros) + ' (' + Math.round(zeros / nums.length * 100) + '%)']);
       var h = CH.histogram(nums, 12), mx = Math.max.apply(null, h.counts) || 1;
       bars = '<div class="tv-sec">' + T('How the values are spread — click a bar to show those rows', 'मान कैसे फैले हैं — उन पंक्तियों के लिए पट्टी पर क्लिक करें') + '</div><div class="tv-hist">' + h.counts.map(function (c, i) {
         return '<button class="tv-hb" data-b="' + i + '" style="height:' + Math.max(4, Math.round(c / mx * 100)) + '%" title="' + esc(CH.compact(h.edges[i]) + ' – ' + CH.compact(h.edges[i + 1]) + ': ' + ind(c)) + '"></button>';
@@ -176,19 +188,20 @@
       var monthRows = keys.map(function (k3) { return by[k3]; });
     }
     if (!isNum && !isDate || counts.size <= 12) {
-      var top = Array.from(counts.entries()).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8), tm = top.length ? top[0][1] : 1;
-      if (top.length && counts.size > 1 && (!isNum)) bars += '<div class="tv-sec">' + T('Most common — click one to show only those rows', 'सबसे आम — केवल वही पंक्तियाँ देखने के लिए क्लिक करें') + '</div><div class="tv-top">' + top.map(function (t2, i) {
+      var top = Array.from((itemCounts || counts).entries()).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8), tm = top.length ? top[0][1] : 1;
+      if (top.length && (itemCounts || counts.size > 1) && (!isNum)) bars += '<div class="tv-sec">' + (itemCounts ? T('Most common items (each item of the list counted separately) — click one', 'सबसे आम वस्तुएँ (सूची की हर वस्तु अलग गिनी) — क्लिक करें') : T('Most common — click one to show only those rows', 'सबसे आम — केवल वही पंक्तियाँ देखने के लिए क्लिक करें')) + '</div><div class="tv-top">' + top.map(function (t2, i) {
         return '<button class="tv-tv" data-t="' + i + '"><span class="tv-tl">' + esc(t2[0].length > 30 ? t2[0].slice(0, 29) + '…' : t2[0]) + '</span><span class="tv-tb"><i style="width:' + Math.round(t2[1] / tm * 100) + '%"></i></span><span class="tv-tn">' + ind(t2[1]) + '</span></button>';
       }).join('') + '</div>';
     }
     html += '<div class="tv-grid">' + facts.map(function (f) { return '<div><span>' + f[0] + '</span><b>' + esc(f[1]) + '</b></div>'; }).join('') + '</div>' + bars;
-    html += '<div class="tv-acts"><button class="tb-btn" id="tvChart">📊 ' + T('Chart this column', 'इस कॉलम का चार्ट') + '</button>' + (isNum ? '<button class="tb-btn" id="tvBars">' + T('Data bars', 'डेटा बार') + '</button><button class="tb-btn" id="tvScale">' + T('Colour scale', 'रंग-पैमाना') + '</button><button class="tb-btn" id="tvDots">' + T('Traffic lights', 'ट्रैफ़िक लाइट') + '</button>' : '') + (TV.mode[name] ? '<button class="tb-btn" id="tvOff">' + T('Remove visual', 'दृश्य हटाएँ') + '</button>' : '') + '</div>';
+    html += '<div class="tv-acts"><button class="tb-btn" id="tvChart">📊 ' + T('Chart this column', 'इस कॉलम का चार्ट') + '</button>' + (zeros ? '<button class="tb-btn" id="tvNoZero">' + T('Hide the zeros', 'शून्य छिपाएँ') + '</button>' : '') + (isNum ? '<button class="tb-btn" id="tvBars">' + T('Data bars', 'डेटा बार') + '</button><button class="tb-btn" id="tvScale">' + T('Colour scale', 'रंग-पैमाना') + '</button><button class="tb-btn" id="tvDots">' + T('Traffic lights', 'ट्रैफ़िक लाइट') + '</button>' : '') + (TV.mode[name] ? '<button class="tb-btn" id="tvOff">' + T('Remove visual', 'दृश्य हटाएँ') + '</button>' : '') + '</div>';
     html += '<div class="tv-foot">' + T('Based on ', 'आधार: ') + ind(n) + T(' rows in view', ' पंक्तियाँ') + '</div>';
 
     var pop = document.createElement('div'); pop.id = 'tvPop'; pop.className = 'tv-pop'; pop.innerHTML = html; document.body.appendChild(pop);
     var r = anchor.getBoundingClientRect(), w = pop.offsetWidth, hgt = pop.offsetHeight;
     pop.style.left = Math.max(8, Math.min(r.left - 20, window.innerWidth - w - 12)) + 'px'; pop.style.top = Math.max(8, Math.min(r.bottom + 6, window.innerHeight - hgt - 12)) + 'px';
     var on = function (id, fn) { var e = $(id); if (e) e.onclick = fn; };
+    on('tvNoZero', function () { closePop(); setFilter({ col: ci, type: 'gt', numVal: 0 }); toast(name + T(': zeros hidden (', ': शून्य छिपे (') + ind(getDisplayData().length) + T(' rows left)', ' पंक्तियाँ शेष)'), 'success'); });
     on('tvPopX', closePop); on('tvChart', function () { closePop(); STL.chartColumn(ci); });
     on('tvBars', function () { closePop(); TV.set(ci, 'bars'); }); on('tvScale', function () { closePop(); TV.set(ci, 'scale'); }); on('tvDots', function () { closePop(); TV.set(ci, 'dots'); }); on('tvOff', function () { closePop(); TV.set(ci, null); });
     pop.querySelectorAll('[data-b]').forEach(function (b) {
@@ -203,8 +216,10 @@
     });
     pop.querySelectorAll('[data-t]').forEach(function (b) {
       b.onclick = function () {
-        var key = top[+b.dataset.t][0], set = {}; set[key] = 1;
-        vals.forEach(function (ri) { var raw = String(rawData[ri][ci]); if (raw.trim() === key) set[raw] = 1; });         // keeps spacing variants of the same text
+        var key = top[+b.dataset.t][0], set = {};
+        if (itemRaw) { itemRaw.get(key).forEach(function (rk) { set[rk] = 1; }); }                       // every whole text whose list contains the item
+        else { set[key] = 1; }
+        vals.forEach(function (ri) { var raw = String(rawData[ri][ci]); if (itemRaw ? set[raw.trim()] : raw.trim() === key) set[raw] = 1; });         // keeps spacing variants of the same text
         closePop(); setFilter({ col: ci, type: 'values', values: Object.keys(set) });
       };
     });

@@ -48,6 +48,7 @@
 @text "</script>\n<script>\n"
 @file js/engine/25-large-file-mode.js
 @file js/engine/26-projects-ui.js
+@file js/tasks/29-csv-parse.js
 @file js/tasks/30-messy-file-fixer.js
 @file js/tasks/31-merge-anything.js
 @file js/tasks/32-tasks-ui.js

@@ -259,6 +259,12 @@ class Engine:
                 parts.append(f"contains(lower({c}), lower(?))"); params.append(str(v))
             elif op == "ieq":                 # same text ignoring capitals and spaces around it (what charts group by)
                 parts.append(f"lower(trim({c})) = lower(trim(?))"); params.append(str(v))
+            elif op == "item":                # one item of a comma-separated list column ("North Indian, Chinese")
+                items = [str(x).strip().lower() for x in (v if isinstance(v, list) else [v])][:500]
+                if not items:
+                    parts.append("FALSE")
+                else:
+                    parts.append(f"list_has_any(string_split(regexp_replace(lower(trim(coalesce({c}, ''))), '\\s*,\\s*', ',', 'g'), ','), [{','.join('?' * len(items))}])"); params += items
             elif op == "iin":                 # any of several texts, ignoring capitals (several bars of one chart)
                 vals = [str(x).strip().lower() for x in (v or [])][:5000]
                 if not vals:
@@ -472,6 +478,11 @@ class Engine:
     _FN_SQL = {"sum": "sum({m})", "avg": "avg({m})", "min": "min({m})", "max": "max({m})",
                "median": "median({m})", "count": "count(*)", "distinct": "count(DISTINCT lower({t}))"}
 
+    @staticmethod
+    def _numz(i, nozero):
+        """The column as a number; with `nozero`, 0 becomes empty (a rating of 0 usually means 'not rated')."""
+        return f"NULLIF({_num(i)}, 0)" if nozero else _num(i)
+
     def _opt_col(self, d, i):
         if i is None or i == "":
             return None
@@ -483,7 +494,7 @@ class Engine:
         return self._check_col(d, i)
 
     def chart_agg(self, ds_id, x=None, time=None, g=None, g2=None, measures=None, rank="value",
-                  max_cats=300, max_groups=9, search=None, filters=None):
+                  max_cats=300, max_groups=9, search=None, filters=None, multi=False, nozero=False, min_rows=0):
         """Group by up to three columns (x, g, g2) with up to six measures. Groups beyond the biggest `max_cats`
         (x) or `max_groups - 1` (g, g2) are folded into '(Others)' and calculated from the real rows, so even an
         average of the leftovers is exact. A date column is cut into day / month / quarter / fy / year / weekday."""
@@ -497,10 +508,12 @@ class Engine:
             if fn not in self._FN_SQL:
                 raise EngineError(f"Unknown function '{fn}'.")
             ms.append((ci, "count" if ci is None else fn))
-        max_cats = max(1, min(int(max_cats), 5000)); max_groups = max(2, min(int(max_groups), 60))
+        max_cats = max(1, min(int(max_cats), 5000)); max_groups = max(2, min(int(max_groups), 60)); min_rows = max(0, min(int(min_rows or 0), 100000))
+        multi = bool(multi) and xi is not None and not time
+        nozero = bool(nozero)
 
         def text(i):
-            c = _col(i)
+            c = "xmv" if (multi and i == xi) else _col(i)
             return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
 
         s_cols, k_cols, dims = [], [], []                 # k_cols: key + label of every dimension
@@ -515,7 +528,7 @@ class Engine:
                 s_cols.append(f"{text(i)} AS {n}l")
         for k, (ci, fn) in enumerate(ms):
             if ci is not None:
-                s_cols.append(f"{_num(ci)} AS m{k}")
+                s_cols.append(f"{self._numz(ci, nozero and fn not in ('count', 'distinct'))} AS m{k}")
                 if fn == "distinct":
                     s_cols.append(f"trim({_col(ci)}) AS t{k}")
         x_label = self._bucket_label("xd", time) if (xi is not None and time) else "xl"
@@ -533,8 +546,24 @@ class Engine:
         k_from = f"s JOIN {dd} ON s.xraw = {dd}.v WHERE xd IS NOT NULL" if dd else "s"
         agg = [self._FN_SQL[fn].format(m=f"m{k}", t=f"t{k}") for k, (ci, fn) in enumerate(ms)]
         rank_expr = "xk DESC" if rank == "label" else f"abs(coalesce({agg[0]}, 0)) DESC, xk"
-        ctes = [f"s AS (SELECT {', '.join(s_cols)} FROM {d['table']}{where})",
-                f"k AS (SELECT {', '.join(k_cols)} FROM {k_from})",
+        src = (f"(SELECT *, unnest(string_split(coalesce({_col(xi)}, ''), ',')) AS xmv FROM {d['table']}{where})" if multi else f"{d['table']}{where}")
+        cur = self.db.cursor()
+        hidden = 0
+        k_sel = f"SELECT {', '.join(k_cols)} FROM {k_from}"
+        if min_rows > 0 and xi is not None:                                       # drop groups too small to average (rows that carry a value), but never leave fewer than two
+            sized = "count(m0)" if ms[0][0] is not None and ms[0][1] not in ("count",) else "count(*)"
+            chk = (f"WITH s AS (SELECT {', '.join(s_cols)} FROM {src}), k0 AS ({k_sel}) "
+                   f"SELECT count(*), count(*) FILTER (WHERE n >= {min_rows}) FROM (SELECT xk, {sized} AS n FROM k0 GROUP BY xk)")
+            total_g, ok_g = cur.execute(chk, params).fetchone()
+            if 2 <= ok_g < total_g:
+                hidden = total_g - ok_g
+                k_cte = (f"k0 AS ({k_sel}), k AS (SELECT * FROM k0 WHERE xk IN (SELECT xk FROM k0 GROUP BY xk HAVING {sized} >= {min_rows}))")
+            else:
+                k_cte = f"k AS ({k_sel})"
+        else:
+            k_cte = f"k AS ({k_sel})"
+        ctes = [f"s AS (SELECT {', '.join(s_cols)} FROM {src})",
+                k_cte,
                 f"tx AS (SELECT xk FROM k GROUP BY xk ORDER BY {rank_expr} LIMIT {max_cats})"]
         fold = [f"CASE WHEN xk IN (SELECT xk FROM tx) THEN xk ELSE '{self.OTHERS}' END AS fx"]
         keys, labels = ["fx"], ["min(xl) AS lx"]
@@ -548,7 +577,6 @@ class Engine:
                           [c2 for k, (ci, fn) in enumerate(ms) if ci is not None for c2 in ([f"m{k}"] + ([f"t{k}"] if fn == "distinct" else []))])
         sql = (f"WITH {', '.join(ctes)}, f AS (SELECT {', '.join(fold)}, {extra} FROM k) "
                f"SELECT {', '.join(keys)}, {', '.join(labels)}, {sel_agg} FROM f GROUP BY {', '.join(keys)} LIMIT 20000")
-        cur = self.db.cursor()
         try:
             data = cur.execute(sql, params).fetchall()
         except Exception as exc:
@@ -559,19 +587,26 @@ class Engine:
             lab = [self.OTHERS_LABEL if r[j] == self.OTHERS else r[nd + j] for j in range(nd)]
             rows.append(lab + list(r[2 * nd:]))
         matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}", params).fetchone()[0]
-        return {"rows": rows, "matched": matched, "dims": nd, "measures": len(ms), "total": d["rows"]}
+        zeros = 0
+        zm = [ci for ci, fn in ms if ci is not None and fn not in ("count", "distinct")]
+        if nozero and zm:
+            zeros = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(zm[0])} = 0", params).fetchone()[0]
+        return {"rows": rows, "matched": matched, "dims": nd, "measures": len(ms), "total": d["rows"], "hiddenSmall": hidden, "zeroSkipped": zeros,
+                "zeroName": d["headers"][zm[0]] if zm else ""}
 
     OTHERS_LABEL = "(Others)"
 
-    def chart_hist(self, ds_id, col, bins=0, search=None, filters=None):
+    def chart_hist(self, ds_id, col, bins=0, search=None, filters=None, nozero=False):
         d = self._ds(ds_id)
         i = self._check_col(d, col)
         where, params = self._where(d, search, filters)
         cur = self.db.cursor()
-        base = f"SELECT {_num(i)} AS v FROM {d['table']}{where}"
+        base = f"SELECT {self._numz(i, nozero)} AS v FROM {d['table']}{where}"
         n, mn, mx, mean, med, sd = cur.execute(
             f"SELECT count(v), min(v), max(v), avg(v), median(v), stddev_pop(v) FROM ({base}) WHERE v IS NOT NULL", params).fetchone()
-        out = {"n": n, "min": mn, "max": mx, "mean": mean, "median": med, "sd": sd, "edges": [], "counts": []}
+        out = {"n": n, "min": mn, "max": mx, "mean": mean, "median": med, "sd": sd, "edges": [], "counts": [], "zeroSkipped": 0}
+        if nozero:
+            out["zeroSkipped"] = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(i)} = 0", params).fetchone()[0]
         if not n:
             return out
         k = int(bins) if int(bins or 0) > 1 else max(5, min(40, math.ceil(math.log2(n) + 1)))
@@ -588,13 +623,13 @@ class Engine:
         out["counts"] = counts
         return out
 
-    def chart_box(self, ds_id, x, col, top=20, search=None, filters=None):
+    def chart_box(self, ds_id, x, col, top=20, search=None, filters=None, nozero=False):
         d = self._ds(ds_id)
         xi, ci = self._check_col(d, x), self._check_col(d, col)
         where, params = self._where(d, search, filters)
         xc = _col(xi)
         top = max(1, min(int(top), 40))
-        sql = (f"WITH v AS (SELECT lower(trim({xc})) AS xk, trim({xc}) AS xl, {_num(ci)} AS v FROM {d['table']}{where}), "
+        sql = (f"WITH v AS (SELECT lower(trim({xc})) AS xk, trim({xc}) AS xl, {self._numz(ci, nozero)} AS v FROM {d['table']}{where}), "
                f"v2 AS (SELECT * FROM v WHERE xk <> '' AND v IS NOT NULL), "
                f"tp AS (SELECT xk FROM v2 GROUP BY xk HAVING count(*) >= 3 ORDER BY count(*) DESC, xk LIMIT {top}), "
                f"q AS (SELECT xk, min(xl) AS xl, count(*) AS n, quantile_cont(v, 0.25) AS q1, quantile_cont(v, 0.5) AS q2, quantile_cont(v, 0.75) AS q3 "
@@ -609,7 +644,7 @@ class Engine:
         outliers = []
         if rows:
             odd = cur.execute(
-                f"WITH v AS (SELECT lower(trim({xc})) AS xk, {_num(ci)} AS v FROM {d['table']}{where}), "
+                f"WITH v AS (SELECT lower(trim({xc})) AS xk, {self._numz(ci, nozero)} AS v FROM {d['table']}{where}), "
                 f"v2 AS (SELECT * FROM v WHERE xk <> '' AND v IS NOT NULL), "
                 f"q AS (SELECT xk, quantile_cont(v, 0.25) AS q1, quantile_cont(v, 0.75) AS q3 FROM v2 GROUP BY xk HAVING count(*) >= 3) "
                 f"SELECT v2.xk, v FROM v2 JOIN q USING (xk) WHERE v < q1 - 1.5 * (q3 - q1) OR v > q3 + 1.5 * (q3 - q1) "
@@ -618,14 +653,14 @@ class Engine:
             outliers = [[pos[k], v] for k, v in odd if k in pos][:600]
         return {"labels": labels, "stats": stats, "outliers": outliers, "counts": [r[1] for r in rows]}
 
-    def chart_points(self, ds_id, xnum, ynum, size=None, g=None, limit=5000, search=None, filters=None, max_groups=8):
+    def chart_points(self, ds_id, xnum, ynum, size=None, g=None, limit=5000, search=None, filters=None, max_groups=8, nozero=False):
         d = self._ds(ds_id)
         xi, yi = self._check_col(d, xnum), self._check_col(d, ynum)
         zi, gi = self._opt_col(d, size), self._opt_col(d, g)
         where, params = self._where(d, search, filters)
         limit = max(100, min(int(limit), 20000))
         max_groups = max(2, min(int(max_groups), 60))
-        cols = [f"__rid", f"{_num(xi)} AS x", f"{_num(yi)} AS y"]
+        cols = [f"__rid", f"{self._numz(xi, nozero)} AS x", f"{self._numz(yi, nozero)} AS y"]
         if zi is not None:
             cols.append(f"{_num(zi)} AS z")
         if gi is not None:
@@ -644,7 +679,8 @@ class Engine:
             order = f"SELECT __rid, x, y{', z' if zi is not None else ''}{gsel} FROM b WHERE {need} ORDER BY hash(__rid) LIMIT {limit}"
             for row in cur.execute(f"WITH b AS ({base}) {order}", params).fetchall():
                 pts.append(list(row))
-        return {"n": n, "points": pts, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
+        zs = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} ({_num(xi)} = 0 OR {_num(yi)} = 0)", params).fetchone()[0] if nozero else 0
+        return {"n": n, "points": pts, "zeroSkipped": zs, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
                 "reg": {"slope": slope, "intercept": icpt, "r": r, "n": n, "xmin": xmin, "xmax": xmax} if n >= 3 else None}
 
     def sample(self, ds_id, n=4000):

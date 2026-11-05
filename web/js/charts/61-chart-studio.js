@@ -86,7 +86,7 @@
     if (CS.sig !== sig || !CS.prof) { CS.prof = CH.profile(HD(), RD(), viewIdx()); CS.sig = sig; }
     return CS.prof;
   }
-  function good(p) { return p.numeric && !p.serial && !p.code && !p.unique; }
+  function good(p) { return CH.isMeasure(p); }
 
   // which spec fields each chart uses
   var USES = {
@@ -97,7 +97,9 @@
     xy: 'scatter bubble histogram', y: 'scatter bubble', size: 'bubble', bins: 'histogram',
     sort: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot sankey', top: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst boxplot',
     labels: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea pie donut rose funnel', smooth: 'line area stackedArea combo', trend: 'scatter',
-    time: 'column bar stackedColumn percentColumn combo line area stackedArea pie donut rose funnel calendar'
+    time: 'column bar stackedColumn percentColumn combo line area stackedArea pie donut rose funnel calendar',
+    zero: 'column bar stackedColumn percentColumn combo pareto waterfall line area stackedArea pie donut rose funnel treemap sunburst heatmap radar boxplot gauge histogram scatter bubble',
+    listx: 'column bar stackedColumn percentColumn combo pareto waterfall pie donut rose funnel treemap sunburst', minrows: 'column bar stackedColumn percentColumn combo pareto pie donut rose funnel treemap sunburst boxplot'
   };
   function uses(field, type) { return (' ' + USES[field] + ' ').indexOf(' ' + type + ' ') >= 0; }
 
@@ -153,9 +155,10 @@
         '<label class="cs-f" data-use="bins"><span id="csBl"></span><select id="csBins" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="sort"><span id="csSl"></span><select id="csSort" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="top"><span id="csTopl"></span><select id="csTop" class="big-select"></select></label>' +
+        '<label class="cs-f" data-use="minrows"><span id="csMinl"></span><select id="csMin" class="big-select"></select></label>' +
         '<label class="cs-f" data-use="palette"><span id="csPl"></span><select id="csPal" class="big-select"></select></label>' +
         '<label class="cs-f wide"><span id="csTil"></span><input id="csTitleIn" class="big-input"></label>' +
-        '<div class="cs-f wide cs-tg"><label data-use="labels"><input type="checkbox" id="csLab"> <span id="csLabl"></span></label><label data-use="smooth"><input type="checkbox" id="csSm"> <span id="csSml"></span></label><label data-use="trend"><input type="checkbox" id="csTr"> <span id="csTrl"></span></label></div>' +
+        '<div class="cs-f wide cs-tg"><label data-use="labels"><input type="checkbox" id="csLab"> <span id="csLabl"></span></label><label data-use="smooth"><input type="checkbox" id="csSm"> <span id="csSml"></span></label><label data-use="trend"><input type="checkbox" id="csTr"> <span id="csTrl"></span></label><label data-use="zero"><input type="checkbox" id="csZero"> <span id="csZerol"></span></label><label data-use="listx"><input type="checkbox" id="csMulti"> <span id="csMultil"></span></label></div>' +
       '</div></details>' +
       '<div class="cs-hint" id="csHint"></div>';
   }
@@ -170,6 +173,7 @@
     on('csX', 'change', function () { CS.spec.x = +this.value; adapt(CS.type, true); sync(); redraw(); });
     on('csTime', 'change', function () { CS.spec.time = this.value; redraw(); });
     on('csG', 'change', function () { CS.spec.g = +this.value; if (CS.spec.g >= 0 && CS.spec.ys.length > 1) CS.spec.ys = CS.spec.ys.slice(0, 1); sync(); redraw(); });
+    on('csZero', 'change', function () { CS.spec.noZero = this.checked; redraw(); }); on('csMulti', 'change', function () { CS.spec.multi = this.checked; redraw(); }); on('csMin', 'change', function () { CS.spec.minRows = +this.value; redraw(); });
     on('csG2', 'change', function () { CS.spec.g2 = +this.value; sync(); redraw(); });
     on('csXn', 'change', function () { CS.spec.xnum = +this.value; redraw(); }); on('csYn', 'change', function () { CS.spec.ynum = +this.value; redraw(); }); on('csSz', 'change', function () { CS.spec.size = +this.value; redraw(); });
     on('csBins', 'change', function () { CS.spec.bins = +this.value; redraw(); }); on('csSort', 'change', function () { CS.spec.sort = this.value; redraw(); });
@@ -182,6 +186,12 @@
   }
   function resize() { if (CS.inst) try { CS.inst.resize(); } catch (e) {} }
 
+  // share of rows with 0 in the number column(s) this chart reads (a rating of 0 usually means "not rated")
+  function zeroShare(sp, type, p) {
+    var cols = (type === 'histogram') ? [sp.xnum] : (type === 'scatter' || type === 'bubble') ? [sp.xnum, sp.ynum] : (sp.ys || []).filter(function (y) { return y.col >= 0 && y.fn !== 'count' && y.fn !== 'distinct'; }).map(function (y) { return y.col; });
+    var idx = viewIdx(), rows = RD();                                               // exact share over the rows in view (not just the profile sample)
+    return cols.reduce(function (m, c) { if (!(c >= 0 && p[c])) return m; var z = 0, n = 0; for (var k = 0; k < idx.length; k++) { var v = CH.num(rows[idx[k]][c]); if (v === null) continue; n++; if (v === 0) z++; } return Math.max(m, n ? z / n : 0); }, 0);
+  }
   function opts(list, val, none) { return (none ? '<option value="-1"' + (val < 0 || val === undefined ? ' selected' : '') + '>' + none + '</option>' : '') + list.map(function (o) { return '<option value="' + o[0] + '"' + (String(o[0]) === String(val) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join(''); }
   function sync() {
     var sp = CS.spec, type = CS.type, p = profile(), all = HD().map(function (h, i) { return [i, h]; }), numeric = all.filter(function (a) { return p[a[0]].numeric; });
@@ -209,9 +219,16 @@
     $('csSl').textContent = T('Order', 'क्रम'); $('csSort').innerHTML = [['desc', T('Largest first', 'बड़ा पहले')], ['asc', T('Smallest first', 'छोटा पहले')], ['label', T('A to Z / by date', 'A-Z / तारीख')], ['natural', T('As numbers', 'संख्या क्रम')]].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.sort || 'desc') ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
     $('csTopl').textContent = T('Show only the top', 'केवल शीर्ष दिखाएँ'); $('csTop').innerHTML = [[0, T('All', 'सभी')], [5, '5'], [8, '8'], [10, '10'], [15, '15'], [20, '20'], [30, '30']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.topN || 0) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
     $('csPl').textContent = T('Colours', 'रंग'); $('csPal').innerHTML = [['aurora', 'Aurora'], ['saffron', T('Saffron & green', 'केसरिया-हरा')], ['ocean', T('Ocean', 'सागर')], ['safe', T('Colour-blind safe', 'रंग-अंध सुरक्षित')], ['mono', T('One colour', 'एक रंग')]].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === CS.palette ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
+    var zp = zeroShare(sp, type, p);
+    $('csZerol').textContent = T('Ignore zeros (0 usually means “no value”)', 'शून्य छोड़ें (0 का अर्थ प्रायः “कोई मान नहीं”)') + (zp >= 0.005 ? ' — ' + Math.round(zp * 100) + T('% of rows have 0', '% पंक्तियों में 0') : ''); $('csZero').checked = !!sp.noZero;
+    $('csMultil').textContent = T('Each item of a list counts separately (e.g. cuisines)', 'सूची की हर वस्तु अलग गिनें (जैसे व्यंजन)'); $('csMulti').checked = !!sp.multi;
+    $('csMinl').textContent = T('Hide groups with fewer rows than', 'इससे कम पंक्तियों वाले समूह छिपाएँ'); $('csMin').innerHTML = [[0, T('(show all)', '(सभी दिखाएँ)')], [5, '5'], [10, '10'], [20, '20'], [30, '30'], [50, '50'], [100, '100']].map(function (o) { return '<option value="' + o[0] + '"' + (o[0] === (sp.minRows || 0) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('');
     $('csTil').textContent = T('Title', 'शीर्षक'); $('csTitleIn').value = sp.title || ''; $('csTitleIn').placeholder = autoTitle(type, sp);
     $('csLabl').textContent = T('Show values', 'मान दिखाएँ'); $('csLab').checked = !!sp.labels; $('csSml').textContent = T('Smooth lines', 'चिकनी रेखाएँ'); $('csSm').checked = !!sp.smooth; $('csTrl').textContent = T('Trend line', 'प्रवृत्ति रेखा'); $('csTr').checked = !!sp.trend;
-    document.querySelectorAll('#csFields [data-use]').forEach(function (e) { var f = e.dataset.use, show = f === 'palette' ? true : uses(f, type); if (f === 'time') show = show && sp.x >= 0 && p[sp.x] && p[sp.x].date; if (f === 'xy' && type === 'histogram') show = true; e.style.display = show ? '' : 'none'; });
+    document.querySelectorAll('#csFields [data-use]').forEach(function (e) { var f = e.dataset.use, show = f === 'palette' ? true : uses(f, type); if (f === 'time') show = show && sp.x >= 0 && p[sp.x] && p[sp.x].date; if (f === 'xy' && type === 'histogram') show = true;
+      if (f === 'zero') show = show && (zp >= 0.005 || !!sp.noZero);
+      if (f === 'listx') show = show && sp.x >= 0 && p[sp.x] && !p[sp.x].numeric && !p[sp.x].date && (p[sp.x].commaPct >= 0.05 || !!sp.multi);
+      if (f === 'minrows') show = show && ((sp.ys || []).some(function (y) { return y.col >= 0 && y.fn !== 'sum' && y.fn !== 'count'; }) || !!sp.minRows); e.style.display = show ? '' : 'none'; });
     $('csPng').textContent = '⬇ ' + T('Picture', 'चित्र'); $('csCopy').textContent = T('Copy', 'कॉपी'); $('csCsv').textContent = '⬇ ' + T('Data (CSV)', 'डेटा (CSV)'); $('csPin').textContent = '📌 ' + T('Pin to board', 'बोर्ड पर लगाएँ'); $('csBoard').textContent = T('Board', 'बोर्ड'); $('csDash').textContent = '📋 ' + T('Dashboard', 'डैशबोर्ड'); $('csDash').title = T('Arrange the pinned charts on a page and export to PowerPoint or PDF', 'पिन किए चार्ट एक पृष्ठ पर सजाएँ और PowerPoint या PDF में निर्यात करें');
     $('csHint').textContent = T('Click a bar, slice or cell to show only those rows in the table (Ctrl+click adds more). Drag on the chart with the select tool (top right) to pick a range. Scroll with Ctrl to zoom.', 'तालिका में केवल वे पंक्तियाँ देखने के लिए पट्टी, टुकड़े या खाने पर क्लिक करें (Ctrl+क्लिक से और जोड़ें)। दायरा चुनने के लिए ऊपर दाएँ के चयन औज़ार से चार्ट पर खींचें। ज़ूम के लिए Ctrl के साथ स्क्रॉल करें।');
     $('csExpand').title = T('Wider', 'चौड़ा');

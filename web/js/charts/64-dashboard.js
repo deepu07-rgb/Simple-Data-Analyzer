@@ -45,23 +45,23 @@
   // ---------------------------------------------------------------- headline numbers
   function kpis() {
     return Promise.resolve().then(function () {
-      var good = function (p) { return p.numeric && !p.serial && !p.code && !p.unique; };
+      // headline numbers: the rows, then the real measures - an average for rating-like columns (zeros = not rated), a total for amounts
+      var pick = function (prof) { return CH.rankMeasures(prof.filter(CH.isMeasure)).slice(0, 3).map(function (n) { var fn = CH.fnFor(n); return { n: n, fn: fn, nz: !!(n.score && n.zeroPct >= 0.01), label: (/^(average|avg|mean|total)\b/i.test(n.name) ? '' : (fn === 'avg' ? T('Average ', 'औसत ') : T('Total of ', 'योग: '))) + n.name + (n.score && n.zeroPct >= 0.01 ? T(' (rated only)', ' (अंकित)') : '') }; }); };
+      var fmtv = function (v, fn) { return v === null || v === undefined || isNaN(v) ? '–' : (fn === 'avg' && Math.abs(v) < 1000 ? String(Math.round(v * 100) / 100) : (CH.compact(v, hi()) || '0')); };
       if (isBig()) {
         return STL.bigCharts.loadSample().then(function (s) {
-          var nums = CH.profile(BIG.headers, s.rows, s.idx).filter(good).slice(0, 3);
-          var req = Object.assign({ kind: 'agg', x: -1, g: -1, g2: -1, maxCats: 1, maxGroups: 2, measures: nums.map(function (n) { return { col: n.index, fn: 'sum' }; }).concat([{ col: -1, fn: 'count' }]) }, STL.bigCharts.scope());
-          return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', req).then(function (res) {
-            var r0 = res.rows[0] || [], list = [{ label: T('Rows', 'पंक्तियाँ'), value: CH.indian(res.matched) }];
-            nums.forEach(function (n, i) { list.push({ label: T('Total of ', 'योग: ') + n.name, value: CH.compact(r0[1 + i], hi()) || '0' }); });
-            return list;
+          var picks = pick(CH.profile(BIG.headers, s.rows, s.idx)), api = STL.bigCharts.api, sc = STL.bigCharts.scope();
+          var base = { kind: 'agg', x: -1, g: -1, g2: -1, maxCats: 1, maxGroups: 2 };
+          return Promise.all(picks.map(function (k) { return api('/api/engine/' + BIG.ds + '/chart', Object.assign({}, base, { measures: [{ col: k.n.index, fn: k.fn }], nozero: k.nz }, sc)).then(function (res) { return { label: k.label, value: fmtv(res.rows[0] ? res.rows[0][1] : null, k.fn), matched: res.matched }; }); })).then(function (list) {
+            return api('/api/engine/' + BIG.ds + '/chart', Object.assign({}, base, { measures: [{ col: -1, fn: 'count' }] }, sc)).then(function (res) { return [{ label: T('Rows', 'पंक्तियाँ'), value: CH.indian(res.matched) }].concat(list); });
           });
         });
       }
       var idx = typeof getDisplayData === 'function' ? getDisplayData() : rawData.map(function (_, i) { return i; });
       var list = [{ label: T('Rows', 'पंक्तियाँ'), value: CH.indian(idx.length) }];
-      CH.profile(headers, rawData, idx).filter(good).slice(0, 3).forEach(function (n) {
-        var sum = 0; idx.forEach(function (i) { var x = CH.num(rawData[i][n.index]); if (x !== null) sum += x; });
-        list.push({ label: T('Total of ', 'योग: ') + n.name, value: CH.compact(sum, hi()) || '0' });
+      pick(CH.profile(headers, rawData, idx)).forEach(function (k) {
+        var sum = 0, cnt = 0; idx.forEach(function (i) { var x = CH.num(rawData[i][k.n.index]); if (x === null || (k.nz && x === 0)) return; sum += x; cnt++; });
+        list.push({ label: k.label, value: fmtv(k.fn === 'avg' ? (cnt ? sum / cnt : null) : sum, k.fn) });
       });
       return list;
     }).catch(function () { return []; });

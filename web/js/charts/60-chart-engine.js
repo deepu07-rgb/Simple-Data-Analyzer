@@ -81,23 +81,35 @@
   function dateMs(v) { var P = STL.pend; return P && P.parseDate ? P.parseDate(v, false) : null; }
 
   // ------------------------------------------------------------ column facts
+  var NAME_ID = /(^|[\s._\-/])(id|uid|guid|sr|sl|no|number|क्रम|क्रमांक|नंबर|आईडी)([\s._\-/]|$)/i, NAME_CODE = /(^|[\s._\-/])(code|pin|pincode|zip|phone|mobile|contact|aadhaar|aadhar|कोड|फोन|मोबाइल)([\s._\-/]|$)/i,
+      NAME_COORD = /^(lat|latitude|lon|long|lng|longitude|अक्षांश|देशांतर)$/i, NAME_SCORE = /(^|[^a-z])(rating|ratings|score|scores|grade|marks|percent|percentage|rate|ratio|index|age)([^a-z]|$)|%|आयु|अंक|प्रतिशत/i;
   function colFacts(rows, idx, c, header) {
-    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, sample = Math.min(idx.length, 4000);
+    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, zeros = 0, sample = Math.min(idx.length, 4000), listy = 0, items = {}, itemTotal = 0, itemDistinct = 0;
     for (var k = 0; k < sample; k++) {
       var v = rows[idx[k]][c]; n++;
       if (blank(v)) continue; nn++;
       var t = s(v).trim(); if (/^0\d+$/.test(t) || /^\d{10,}$/.test(t)) code++;
-      var x = num(v); if (x !== null) { np++; if (x < min) min = x; if (x > max) max = x; if (x % 1 !== 0) allInt = false; }
-      else if (isDateVal(v)) nd++;
-      if (nd2 <= 2000) { var key = t.toLowerCase(); if (!distinct[key]) { distinct[key] = 1; nd2++; } }
+      var x = num(v); if (x !== null) { np++; if (x < min) min = x; if (x > max) max = x; if (x % 1 !== 0) allInt = false; if (x === 0) zeros++; }
+      else {
+        if (isDateVal(v)) nd++;
+        if (t.indexOf(',') > 0) { listy++; t.split(',').forEach(function (it) { it = it.trim().toLowerCase(); if (!it) return; itemTotal++; if (!items[it]) { items[it] = 1; itemDistinct++; } }); }
+      }
+      var key = t.toLowerCase(); if (!distinct[key]) { distinct[key] = 1; nd2++; }
     }
     var serial = false;
     if (np >= 3 && np === nn && nd2 === nn && max - min + 1 === nn && min <= 1) serial = true;
     // all-different text is an identifier (names, case numbers). All-different NUMBERS are usually amounts, not identifiers:
     // only whole numbers that run in sequence, or that sit under an "ID / No." heading, count as identifiers.
-    var numLike = nn > 0 && np / nn >= 0.8, idName = /(^|[\s._\-/])(id|no|sr|sl|क्रम|क्रमांक|नंबर|आईडी)([\s._\-/]|$)/i.test(s(header));
+    var numLike = nn > 0 && np / nn >= 0.8, idName = NAME_ID.test(s(header));
     var unique = nn > 12 && nd2 === nn && (!numLike || (allInt && (idName || max - min + 1 <= nn * 1.2)));
-    return { index: c, name: s(header), filled: nn, fill: n ? nn / n : 0, numeric: nn > 0 && np / nn >= 0.8 && code / nn < 0.3 && !serial, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3, serial: serial, unique: unique };
+    var numeric = nn > 0 && np / nn >= 0.8 && code / nn < 0.3 && !serial;
+    var coord = numeric && NAME_COORD.test(s(header).trim()), idLike = numeric && allInt && idName && nd2 > nn * 0.5;
+    // a short list of whole numbers (price range 1-4, a country code, a 1-5 grade) is a label, not an amount
+    var lowInt = numeric && allInt && nd2 <= 12 && nn >= 20 && !coord;
+    // "North Indian, Chinese": a text column whose comma-separated items repeat a lot is a LIST of tags, not one value
+    var list = !numeric && nn > 0 && listy / nn >= 0.25 && itemTotal > 0 && itemDistinct / itemTotal < 0.25 && itemDistinct <= 400;
+    return { index: c, name: s(header), filled: nn, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
+             zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)) };
   }
   CH.profile = function (headers, rows, idx) { return headers.map(function (h, i) { return colFacts(rows, idx, i, h); }); };
 
@@ -138,20 +150,27 @@
     var x = spec.x, ys = (spec.ys && spec.ys.length ? spec.ys : [{ col: -1, fn: 'count' }]).map(function (y) { return { col: y.col, fn: y.col < 0 ? 'count' : (y.fn || spec.fn || 'sum'), as: y.as, name: y.name }; });
     var g = spec.g >= 0 && spec.g !== undefined ? spec.g : -1, useG = g >= 0 && ys.length === 1;
     var isDate = x >= 0 && spec.time && spec.time !== 'none';
-    var cats = {}, order = [], gNames = {}, gOrder = [], blanks = 0;
+    var cats = {}, order = [], gNames = {}, gOrder = [], blanks = 0, multi = !!spec.multi && x >= 0 && !isDate, noZero = !!spec.noZero;
+    var zeroSkipped = 0;
     for (var k = 0; k < idx.length; k++) {
-      var row = rows[idx[k]], xv = x >= 0 ? row[x] : '', label, rawKey;
-      if (x >= 0 && blank(xv)) { blanks++; label = '(blank)'; rawKey = ''; }
-      else if (isDate) { var ms = dateMs(xv); if (ms === null) { blanks++; continue; } label = bucketKey(ms, spec.time); rawKey = label; }
-      else { label = s(xv).trim(); rawKey = label.toLowerCase(); }
-      var c = cats[rawKey]; if (!c) { c = cats[rawKey] = { label: label, raw: {}, rows: [], vals: {}, rb: {}, key: rawKey }; order.push(rawKey); }
-      if (x >= 0 && !blank(xv)) c.raw[s(xv)] = 1;
-      c.rows.push(idx[k]);
-      var sk;
-      if (useG) { sk = blank(row[g]) ? '(blank)' : s(row[g]).trim(); if (!gNames[sk]) { gNames[sk] = 0; gOrder.push(sk); } gNames[sk]++; (c.vals[sk] = c.vals[sk] || []).push(valueFor(row, ys[0])); (c.rb[sk] = c.rb[sk] || []).push(idx[k]); }
-      else ys.forEach(function (y, yi) { (c.vals['y' + yi] = c.vals['y' + yi] || []).push(valueFor(row, y)); (c.rb['y' + yi] = c.rb['y' + yi] || []).push(idx[k]); });
+      var row = rows[idx[k]], xv = x >= 0 ? row[x] : '', labels = [];
+      if (x >= 0 && blank(xv)) { blanks++; labels.push(['(blank)', '', '']); }
+      else if (isDate) { var ms = dateMs(xv); if (ms === null) { blanks++; continue; } var bk = bucketKey(ms, spec.time); labels.push([bk, bk, '']); }
+      else if (multi) { var seen = {}; s(xv).split(spec.sep || ',').forEach(function (it) { it = it.trim(); var key = it.toLowerCase(); if (it && !seen[key]) { seen[key] = 1; labels.push([it, key, it]); } }); if (!labels.length) { blanks++; labels.push(['(blank)', '', '']); } }
+      else { var lb = s(xv).trim(); labels.push([lb, lb.toLowerCase(), s(xv)]); }
+      for (var li = 0; li < labels.length; li++) {
+        var label = labels[li][0], rawKey = labels[li][1];
+        var c = cats[rawKey]; if (!c) { c = cats[rawKey] = { label: label, raw: {}, rows: [], vals: {}, rb: {}, key: rawKey }; order.push(rawKey); }
+        if (x >= 0 && !blank(xv) && labels[li][2]) c.raw[labels[li][2]] = 1;
+        c.rows.push(idx[k]);
+        var sk;
+        if (useG) { sk = blank(row[g]) ? '(blank)' : s(row[g]).trim(); if (!gNames[sk]) { gNames[sk] = 0; gOrder.push(sk); } gNames[sk]++; (c.vals[sk] = c.vals[sk] || []).push(valueFor(row, ys[0])); (c.rb[sk] = c.rb[sk] || []).push(idx[k]); }
+        else ys.forEach(function (y, yi) { (c.vals['y' + yi] = c.vals['y' + yi] || []).push(valueFor(row, y)); (c.rb['y' + yi] = c.rb['y' + yi] || []).push(idx[k]); });
+      }
     }
-    function valueFor(row, y) { return y.col < 0 ? 1 : row[y.col]; }
+    var zm = noZero ? ys.filter(function (y) { return y.col >= 0 && y.fn !== 'count' && y.fn !== 'distinct'; })[0] : null, zeroName = zm ? (zm.name || s(headers[zm.col])) : '';
+    if (zm) idx.forEach(function (i) { if (num(rows[i][zm.col]) === 0) zeroSkipped++; });
+    function valueFor(row, y) { if (y.col < 0) return 1; var v = row[y.col]; if (noZero && y.fn !== 'count' && y.fn !== 'distinct' && num(v) === 0) return null; return v; }
     // group (series) selection: biggest groups, rest -> Other
     var maxG = spec.maxGroups || 8;
     if (useG && gOrder.length > maxG) {
@@ -174,6 +193,10 @@
     else if (sort === 'numlabel') list.sort(function (a, b) { return parseFloat(a.label) - parseFloat(b.label); });
     else if (sort === 'label' && (spec.time === 'weekday' || spec.labelOrder === 'weekday')) { var WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; list.sort(function (a, b) { return WD.indexOf(a.label) - WD.indexOf(b.label); }); }
     else if (sort === 'label') list.sort(function (a, b) { return a.label < b.label ? -1 : (a.label > b.label ? 1 : 0); });
+    // very small groups give unreliable averages: hide them and say so
+    var hiddenSmall = 0;
+    var sizeOf = function (c) { var n = 0, any = false; Object.keys(c.vals).forEach(function (k2) { any = true; c.vals[k2].forEach(function (v) { if (v !== null && v !== undefined && !(typeof v === 'number' ? false : blank(v))) n++; }); }); return ys[0].col < 0 || ys[0].fn === 'count' ? c.rows.length : (useG ? Math.max.apply(null, [0].concat(Object.keys(c.vals).map(function (k2) { return c.vals[k2].filter(function (v) { return v !== null && !blank(v); }).length; }))) : (c.vals.y0 || []).filter(function (v) { return v !== null && !blank(v); }).length); };
+    if (spec.minRows > 0) { var keep = list.filter(function (c) { return sizeOf(c) >= spec.minRows; }); hiddenSmall = list.length - keep.length; if (keep.length >= 2) list = keep; else hiddenSmall = 0; }
     // data prepared by the engine for a large file arrives with its own "(Others)" group: keep it last and mark it
     if (spec.preOthers) { var oi = -1; list.forEach(function (c, i) { if (c.label === '(Others)') oi = i; }); if (oi >= 0) { var og = list.splice(oi, 1)[0]; og.isOthers = true; list.push(og); } }
     // top N + others (the rest are merged by re-reducing their raw values, so averages stay right)
@@ -187,7 +210,7 @@
       if (spec.others !== false) list.push(oc);
     }
     if (spec.preOthers && list.some(function (c) { return c.isOthers; })) others = others || { count: null };
-    return { cats: list, series: seriesDefs, seriesKeys: seriesKeys, rowsUsed: idx.length, blanks: blanks, others: others, split: useG, isDate: !!isDate };
+    return { cats: list, series: seriesDefs, seriesKeys: seriesKeys, rowsUsed: idx.length, blanks: blanks, others: others, split: useG, isDate: !!isDate, multi: multi, zeroSkipped: zeroSkipped, zeroName: zeroName, hiddenSmall: hiddenSmall, minRows: spec.minRows || 0 };
   };
 
   // ------------------------------------------------------------ option helpers
@@ -230,7 +253,7 @@
     return data.series.map(function (sd, i) {
       var o = { name: sd.name, type: kind, data: data.cats.map(function (c) { return c.values[i]; }), emphasis: { focus: 'series' }, universalTransition: true };
       if (kind === 'bar') { o.barMaxWidth = 44; o.itemStyle = { borderRadius: [4, 4, 0, 0] }; }
-      if (spec.labels) o.label = { show: true, color: 'inherit', formatter: function (p) { return p.value == null ? '' : compact(p.value, spec._hi); }, position: kind === 'bar' ? 'top' : 'top' };
+      if (spec.labels) o.label = { show: true, color: 'inherit', formatter: function (p) { var v = p.value; return v == null ? '' : (Math.abs(v) < 100 && v !== Math.round(v) ? String(Math.round(v * 100) / 100) : compact(v, spec._hi)); }, position: kind === 'bar' ? 'top' : 'top' };
       if (extra) for (var k in extra) o[k] = extra[k];
       return o;
     });
@@ -359,10 +382,11 @@
   };
 
   // scatter / bubble use the original rows, not aggregated categories
-  function pointsFor(spec, headers, rows, idx) {
+  function pointsFor(spec, headers, rows, idx, meta) {
     var pts = [], sx = spec.xnum, sy = spec.ynum, sz = spec.size >= 0 ? spec.size : -1, g = spec.g >= 0 ? spec.g : -1;
     for (var k = 0; k < idx.length; k++) {
       var r = rows[idx[k]], x = num(r[sx]), y = num(r[sy]); if (x === null || y === null) continue;
+      if (spec.noZero && (x === 0 || y === 0)) { if (meta) meta.zs++; continue; }
       var p = { value: [x, y], ri: idx[k] };
       if (sz >= 0) { var z = num(r[sz]); if (z === null) continue; p.value.push(z); }
       p.g = g >= 0 ? (blank(r[g]) ? '(blank)' : s(r[g]).trim()) : null; pts.push(p);
@@ -435,7 +459,7 @@
     o.tooltip.trigger = 'axis'; o.tooltip.axisPointer = { type: 'shadow' }; o.tooltip.formatter = function (ps) { var i = ps[0].dataIndex; return indian(h.edges[i]) + ' – ' + indian(h.edges[i + 1]) + '<br/><b>' + ps[0].value + '</b> ' + T(env, 'rows', 'पंक्तियाँ'); };
     o.grid = cartesianGrid(spec, env, h.counts.length); o.legend = undefined;
     o.xAxis = catAxis(env, h.counts.map(function (_, i) { return compact((h.edges[i] + h.edges[i + 1]) / 2, env.hi); }), { name: s(headers[spec.xnum]), nameLocation: 'middle', nameGap: 30, nameTextStyle: { color: env.sub } }); o.yAxis = valueAxis(env, T(env, 'Rows', 'पंक्तियाँ'));
-    o.series = [{ type: 'bar', data: h.counts, barCategoryGap: '4%', itemStyle: { borderRadius: [3, 3, 0, 0] }, markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#d6456b' }, label: { color: '#d6456b', formatter: function (p) { return p.name + ' ' + compact(p.value, env.hi); } }, data: [{ name: T(env, 'mean', 'औसत'), xAxis: h.meanBin }, { name: T(env, 'median', 'माध्यिका'), xAxis: h.medianBin }].filter(function (d) { return d.xAxis != null; }).map(function (d) { return { name: d.name, xAxis: d.xAxis, value: d.name === T(env, 'mean', 'औसत') ? h.mean : h.median }; }) } }];
+    o.series = [{ type: 'bar', data: h.counts, barCategoryGap: '4%', itemStyle: { borderRadius: [3, 3, 0, 0] }, markLine: { silent: true, symbol: 'none', lineStyle: { type: 'dashed', color: '#d6456b' }, label: { color: '#d6456b', formatter: function (p) { return p.name + ' ' + compact(p.value, env.hi); } }, data: [{ name: T(env, 'mean', 'औसत'), xAxis: h.meanBin }, { name: T(env, 'median', 'माध्यिका'), xAxis: h.medianBin }].filter(function (d) { return d.xAxis != null; }).map(function (d, k) { var isMean = d.name === T(env, 'mean', 'औसत'); return { name: d.name, xAxis: d.xAxis, value: isMean ? h.mean : h.median, label: { position: 'end', offset: [0, k * 16], color: isMean ? '#d6456b' : '#6d5bd0', formatter: function () { var v = isMean ? h.mean : h.median; return d.name + ' ' + (Math.abs(v) < 100 && v !== Math.round(v) ? String(Math.round(v * 100) / 100) : compact(v, env.hi)); } }, lineStyle: { type: 'dashed', color: isMean ? '#d6456b' : '#6d5bd0' } }; }) } }];
     o.brush = { xAxisIndex: 0, brushStyle: { borderWidth: 1, color: 'rgba(109,91,208,.15)', borderColor: '#6d5bd0' } };
     return o;
   };
@@ -473,10 +497,10 @@
     var env = envOf(env0), ctx = {}, data; spec = Object.assign({}, spec); spec._hi = env.hi;
     if (SCATTER[type]) {
       if (spec.xnum === undefined || spec.ynum === undefined) throw new Error('Choose two number columns');
-      ctx.points = pointsFor(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
+      var pm = { zs: 0 }; ctx.points = pointsFor(spec, headers, rows, idx, pm); data = { cats: [], series: [], rowsUsed: idx.length, zeroSkipped: pm.zs, zeroName: s(headers[spec.xnum]) + ' / ' + s(headers[spec.ynum]) };
     } else if (type === 'histogram') {
-      var vals = []; idx.forEach(function (i) { var x = num(rows[i][spec.xnum]); if (x !== null) vals.push(x); });
-      ctx.hist = histogram(vals, spec.bins); data = { cats: [], series: [], rowsUsed: idx.length };
+      var vals = [], zs = 0; idx.forEach(function (i) { var x = num(rows[i][spec.xnum]); if (x !== null) { if (spec.noZero && x === 0) zs++; else vals.push(x); } });
+      ctx.hist = histogram(vals, spec.bins); data = { cats: [], series: [], rowsUsed: idx.length, zeroSkipped: zs, zeroName: s(headers[spec.xnum]) };
     } else if (type === 'heatmap') {
       ctx.matrix = matrix2(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
     } else if (type === 'sankey') {
@@ -486,7 +510,7 @@
     } else if (type === 'calendar') {
       ctx.cal = calData(spec, headers, rows, idx); data = { cats: [], series: [], rowsUsed: idx.length };
     } else if (type === 'gauge') {
-      var col = (spec.ys && spec.ys[0] && spec.ys[0].col >= 0) ? spec.ys[0] : { col: -1, fn: 'count' }, vv = idx.map(function (i) { return col.col < 0 ? 1 : rows[i][col.col]; }), val = reduce(vv, col.fn || 'sum');
+      var col = (spec.ys && spec.ys[0] && spec.ys[0].col >= 0) ? spec.ys[0] : { col: -1, fn: 'count' }, vv = idx.map(function (i) { return col.col < 0 ? 1 : rows[i][col.col]; }), val = reduce(spec.noZero && col.fn !== 'count' && col.fn !== 'distinct' ? vv.map(function (q) { return num(q) === 0 ? null : q; }) : vv, col.fn || 'sum');
       var mx = idx.length ? niceMax((val || 0) * 1.25) : 1; ctx.kpi = { value: Math.round((val || 0) * 100) / 100, max: mx, label: (col.name ? (col.as === 'count' ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(col.as || col.fn || 'sum', env.hi) + ' — ' + col.name) : col.col < 0 ? T(env, 'Rows', 'पंक्तियाँ') : fnLabel(col.fn || 'sum', env.hi) + ' — ' + headers[col.col]) }; data = { cats: [], series: [], rowsUsed: idx.length };
     } else {
       var sp = Object.assign({}, spec);
@@ -509,6 +533,9 @@
     if (!BUILD[type]) throw new Error('Unknown chart type: ' + type);
     var o = BUILD[type](spec, headers, data, env, ctx);
     var cap = caption(type, spec, headers, data, ctx, env);
+    if (data.zeroSkipped) cap.push(env.hi ? indian(data.zeroSkipped) + ' पंक्तियों में “' + data.zeroName + '” में 0 है और उन्हें गणना से बाहर रखा गया (0 का अर्थ प्रायः “कोई मान नहीं / अंकित नहीं” होता है)।' : indian(data.zeroSkipped) + ' rows have 0 in “' + data.zeroName + '” and are left out of this calculation (0 usually means “no value / not rated”).');
+    if (data.hiddenSmall) cap.push(env.hi ? indian(data.hiddenSmall) + ' समूह छिपाए गए क्योंकि उनमें ' + data.minRows + ' से कम पंक्तियाँ हैं (इतने कम पर औसत भरोसेमंद नहीं)।' : indian(data.hiddenSmall) + ' groups with fewer than ' + data.minRows + ' rows are hidden — an average of so few rows is not reliable.');
+    if (data.multi) cap.push(env.hi ? 'हर पंक्ति अपनी सूची की हर वस्तु के अंतर्गत गिनी गई है, इसलिए पट्टियों का योग पंक्तियों की संख्या से अधिक हो सकता है।' : 'Each row is counted under every item in its list, so the bars can add up to more than the number of rows.');
     return { option: o, data: data, ctx: ctx, caption: cap };
   };
   CH.num = num; CH.reduce = reduce;
@@ -582,7 +609,7 @@
   }
   function boxData(spec, headers, rows, idx) {
     var col = spec.ys[0].col, by = {}, order = [];
-    idx.forEach(function (i) { var k = s(rows[i][spec.x]).trim(); if (!k) return; var x = num(rows[i][col]); if (x === null) return; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(x); });
+    idx.forEach(function (i) { var k = s(rows[i][spec.x]).trim(); if (!k) return; var x = num(rows[i][col]); if (x === null || (spec.noZero && x === 0)) return; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(x); });
     order = order.filter(function (k) { return by[k].length >= 3; }).sort(function (a, b) { return by[b].length - by[a].length; }).slice(0, spec.topN > 0 ? spec.topN : 20);
     var stats = [], outliers = [];
     order.forEach(function (k, ci) {
@@ -651,11 +678,17 @@
       var cats = data.cats.filter(function (c) { return !c.isOthers; }), n = cats.length; if (!n) return out;
       var tot = data.cats.reduce(function (a, c) { return a + (c.total || 0); }, 0), name = data.series[0] ? data.series[0].name : '';
       var shownFn = data.series[0] ? (data.series[0].shown || data.series[0].fn) : '', fl = data.series[0] ? fnLabel(shownFn, hi) : '';
-      if (['pie', 'donut', 'rose', 'funnel', 'treemap', 'sunburst', 'pareto', 'column', 'bar', 'stackedColumn', 'percentColumn', 'waterfall', 'combo'].indexOf(type) >= 0 && data.series.length && tot > 0) {
+      if (data.multi && shownFn === 'count' && cats.length) {                       // a list column: say how many rows have the item, not a share of the item mentions
+        var topm = cats.slice().sort(function (a, b) { return b.total - a.total; })[0], nr = data.rowsUsed;
+        add(topm.label + ' appears in ' + indian(topm.rows.length) + ' of ' + indian(nr) + ' rows (' + pctText(topm.rows.length / nr * 100) + ').', topm.label + ' ' + indian(nr) + ' में से ' + indian(topm.rows.length) + ' पंक्तियों में है (' + pctText(topm.rows.length / nr * 100) + ')।');
+      } else if (['pie', 'donut', 'rose', 'funnel', 'treemap', 'sunburst', 'pareto', 'column', 'bar', 'stackedColumn', 'percentColumn', 'waterfall', 'combo'].indexOf(type) >= 0 && data.series.length && tot > 0) {
         var best = cats.slice().sort(function (a, b) { return b.total - a.total; })[0], share = best.total / tot * 100;
         if (shownFn === 'sum' || shownFn === 'count' || shownFn === 'distinct') {
           add(best.label + ' is the largest: ' + indian(best.total) + ' (' + pctText(share) + ' of the total ' + indian(tot) + ').', best.label + ' सबसे बड़ा है: ' + indian(best.total) + ' (कुल ' + indian(tot) + ' का ' + pctText(share) + ')।');
           if (type === 'pareto' && ctx !== undefined) { var cum = 0, k = 0; var sorted = cats.slice().sort(function (a, b) { return b.total - a.total; }); for (; k < sorted.length; k++) { cum += sorted[k].total; if (cum / tot >= 0.8) { k++; break; } } add(k + ' of ' + sorted.length + ' (' + pctText(k / sorted.length * 100) + ') account for 80% of the total.', sorted.length + ' में से ' + k + ' (' + pctText(k / sorted.length * 100) + ') कुल का 80% देते हैं।'); }
+        } else if (data.series.length > 1) {                                           // several series of averages / medians: the single highest bar (adding averages together means nothing)
+          var bc = null, bs = null, bv = -Infinity; cats.forEach(function (c) { c.values.forEach(function (v, si) { if (v !== null && v > bv) { bv = v; bc = c; bs = data.series[si]; } }); });
+          if (bc) add('Highest ' + fl.toLowerCase() + ': ' + bs.name + ' in ' + bc.label + ' (' + indian(Math.round(bv * 100) / 100) + ').', 'सर्वाधिक: ' + bc.label + ' में ' + bs.name + ' (' + indian(Math.round(bv * 100) / 100) + ')।');
         } else add('Highest ' + fl.toLowerCase() + ': ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ').', 'सर्वाधिक: ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ')।');
       }
       if (['line', 'area', 'stackedArea'].indexOf(type) >= 0 && n >= 2) {
@@ -670,29 +703,69 @@
   }
 
   // ------------------------------------------------------------ recommendations
+  var NAME_GROUP = /city|country|state|district|region|zone|type|categor|status|station|department|designation|gender|segment|class|brand|group|cuisine|ward|block|mode|source|channel|जिला|थाना|श्रेणी|स्थिति|विभाग|पद|शहर|राज्य|प्रकार/i;
+  var NAME_AMOUNT = /amount|cost|price|sales|revenue|salary|votes|total|qty|quantity|fee|value|income|expense|balance|राशि|कीमत|वेतन|मूल्य|वोट/i;
+  // one column is just another way of writing a different one (Rating text / Rating colour from the rating)
+  function derivedFrom(a, b, rows, idx) {                                            // does column a (few values) split the numbers of b into separate, non-overlapping ranges?
+    var by = {}, n = Math.min(idx.length, 4000);
+    for (var k = 0; k < n; k++) { var r = rows[idx[k]], key = s(r[a.index]).trim(), x = num(r[b.index]); if (!key || x === null) continue; var o = by[key] || (by[key] = [Infinity, -Infinity, 0]); if (x < o[0]) o[0] = x; if (x > o[1]) o[1] = x; o[2]++; }
+    var g = Object.keys(by).map(function (q) { return by[q]; }).filter(function (o) { return o[2] >= 3; }).sort(function (p, q) { return p[0] - q[0]; });
+    if (g.length < 2) return false;
+    for (var i2 = 1; i2 < g.length; i2++) if (g[i2 - 1][1] >= g[i2][0]) return false;
+    return true;
+  }
+  function sameInfo(a, b, rows, idx) {                                               // two text columns that map one-to-one
+    var pairs = {}, np = 0, n = Math.min(idx.length, 3000);
+    for (var k = 0; k < n; k++) { var r = rows[idx[k]], key = s(r[a.index]).trim() + '\u0001' + s(r[b.index]).trim(); if (!pairs[key]) { pairs[key] = 1; np++; } }
+    return np <= Math.max(a.distinct, b.distinct) * 1.05;
+  }
+  // which columns are real measures (not IDs, codes, coordinates or short whole-number labels), best first, and how to combine them
+  CH.isMeasure = function (p) { return p.numeric && !p.serial && !p.code && !p.unique && !p.coord && !p.idLike && !p.lowInt; };
+  function measScore(p) { return (p.score ? 3 : 0) + (NAME_AMOUNT.test(p.name) ? 2 : 0) + Math.min(p.distinct, 200) / 400 + p.fill; }
+  CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
+  CH.avgy = function (p) { return p.score || /average|avg|mean|per\b|price|cost/i.test(p.name); };
+  CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
   CH.recommend = function (headers, rows, idx, max) {
     max = max || 8;
     var prof = CH.profile(headers, rows, idx), M = STL.merge, out = [];
-    var nums = prof.filter(function (p) { return p.numeric && !p.serial && !p.code && !p.unique; });
-    var dates = prof.filter(function (p) { return p.date && !p.numeric; });
-    var cats = prof.filter(function (p) { return !p.numeric && !p.date && !p.code && p.distinct >= 2 && p.distinct <= 40 && p.fill >= 0.6 && !(p.unique); });
-    // prefer geographic / organisational names, then fewer groups
-    function catScore(p) { var sc = -Math.abs(p.distinct - 8) * 0.05; if (M && M.score) { ['district', 'police station', 'department', 'category', 'status', 'designation'].forEach(function (g) { if (M.score(p.name, g).score >= 0.9) sc += 1; }); } return sc; }
+    var isMeasure = CH.isMeasure;
+    var nums = prof.filter(isMeasure), dates = prof.filter(function (p) { return p.date && !p.numeric; });
+    var cats = prof.filter(function (p) {
+      var named = NAME_GROUP.test(p.name), lim = named ? 300 : 40;
+      return ((!p.numeric && !p.date && !p.list) || p.lowInt) && !p.unique && !(p.code && !p.lowInt) && p.distinct >= 2 && p.distinct <= lim && p.fill >= 0.6;
+    });
+    var lists = prof.filter(function (p) { return p.list && p.fill >= 0.6; });
+    // derived columns: drop a category that only restates a number, then one of two that mean the same thing
+    cats = cats.filter(function (c) { return !(c.distinct <= 12 && nums.some(function (m) { return derivedFrom(c, m, rows, idx); })); });
+    cats = cats.filter(function (c, i) { return !cats.some(function (o, j) { return j < i && o.distinct <= 40 && c.distinct <= 40 && !c.numeric && !o.numeric && sameInfo(o, c, rows, idx); }); });
+    function catScore(p) { var sc = -Math.abs(Math.min(p.distinct, 25) - 8) * 0.05 + (p.distinct > 40 ? -0.5 : 0); if (NAME_GROUP.test(p.name)) sc += 1.2; if (/city|district|state|region|शहर|जिला|राज्य/i.test(p.name)) sc += 0.4; if (p.lowInt && p.code) sc -= 1.0; if (M && M.score) { ['district', 'police station', 'department', 'category', 'status', 'designation'].forEach(function (g) { if (M.score(p.name, g).score >= 0.9) sc += 1; }); } if (p.lowInt) sc -= 0.3; return sc; }
     cats.sort(function (a, b) { return catScore(b) - catScore(a); });
-    nums.sort(function (a, b) { return b.filled - a.filled; });
-    var c1 = cats[0], c2 = cats[1], n1 = nums[0], n2 = nums[1];
+    nums = CH.rankMeasures(nums);
+    var avgy = CH.avgy, fnFor = CH.fnFor;
+    var nz = function (p) { return p.score && p.zeroPct >= 0.01; };                   // 0 in a rating column means "not rated"
+    var FN = { avg: ['Average ', 'औसत '], sum: ['Total ', 'योग '] };
+    var c1 = cats[0], c2 = cats[1], n1 = nums[0], n2 = nums[1], L = lists[0], yesNo = cats.filter(function (p) { return p.distinct === 2 && !p.numeric; }).slice(0, 2);
     function add(type, spec, whyEn, whyHi, score) { out.push({ type: type, spec: spec, why: B(whyEn, whyHi), score: score }); }
-    if (c1 && n1) add('column', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 12, title: n1.name + ' — ' + c1.name }, 'Compare ' + n1.name + ' across ' + c1.name, c1.name + ' के अनुसार ' + n1.name + ' की तुलना', 100);
-    if (c1) add('bar', { x: c1.index, ys: [{ col: -1, fn: 'count' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Number of rows by ', '') + c1.name }, 'How many rows for each ' + c1.name, 'हर ' + c1.name + ' में कितनी पंक्तियाँ', 92);
-    if (c1 && c1.distinct <= 8) add('donut', { x: c1.index, ys: n1 ? [{ col: n1.index, fn: 'sum' }] : [{ col: -1, fn: 'count' }], sort: 'desc', title: (n1 ? n1.name + ' — ' : '') + c1.name }, 'Share of the total by ' + c1.name, c1.name + ' के अनुसार कुल की हिस्सेदारी', 84);
-    if (dates[0]) { var dd = dates[0]; add('area', { x: dd.index, ys: n1 ? [{ col: n1.index, fn: 'sum' }] : [{ col: -1, fn: 'count' }], time: 'month', sort: 'label', title: (n1 ? n1.name : T({ hi: false }, 'Rows', '')) + ' — ' + dd.name, smooth: true }, 'Trend over time by month', 'महीने के अनुसार समय के साथ प्रवृत्ति', 90); }
-    if (n1 && n2) add('scatter', { xnum: n1.index, ynum: n2.index, trend: true, g: c1 && c1.distinct <= 6 ? c1.index : -1, title: n1.name + ' vs ' + n2.name }, 'Do ' + n1.name + ' and ' + n2.name + ' move together?', n1.name + ' और ' + n2.name + ' क्या साथ चलते हैं?', 80);
-    if (n1) add('histogram', { xnum: n1.index, title: T({ hi: false }, 'Spread of ', '') + n1.name }, 'How the values of ' + n1.name + ' are spread', n1.name + ' के मान कैसे फैले हैं', 70);
+    var pre = function (p) { return /^(average|avg|mean|total)\b/i.test(p.name) ? '' : FN[fnFor(p)][0]; };
+    function ttl(p, c) { return pre(p) + p.name + ' — ' + c.name; }
+    if (c1 && n1) add('column', { x: c1.index, ys: [{ col: n1.index, fn: fnFor(n1) }], sort: 'desc', topN: 12, noZero: nz(n1), minRows: avgy(n1) ? 20 : 0, title: ttl(n1, c1) },
+        'Which ' + c1.name + ' has the highest ' + (avgy(n1) ? 'average ' : 'total ') + n1.name + '?', 'किस ' + c1.name + ' का ' + (avgy(n1) ? 'औसत ' : 'योग ') + n1.name + ' सबसे अधिक है?', 100);
+    if (c1) add('bar', { x: c1.index, ys: [{ col: -1, fn: 'count' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Number of rows by ', '') + c1.name }, 'How many rows for each ' + c1.name, 'हर ' + c1.name + ' में कितनी पंक्तियाँ', 94);
+    if (n1) add('histogram', { xnum: n1.index, noZero: nz(n1), title: T({ hi: false }, 'Spread of ', '') + n1.name }, 'How the values of ' + n1.name + ' are spread' + (nz(n1) ? ' (zeros left out)' : ''), n1.name + ' के मान कैसे फैले हैं' + (nz(n1) ? ' (शून्य छोड़कर)' : ''), 92);
+    if (L) { var sc = nums.filter(function (p) { return p.score; })[0] || n1;
+      add('bar', { x: L.index, multi: true, ys: [{ col: -1, fn: 'count' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Most common ', '') + L.name }, 'Which ' + L.name + ' are most common (each item counted separately)', 'कौन-से ' + L.name + ' सबसे आम हैं (हर वस्तु अलग गिनी)', 90);
+      if (sc) add('bar', { x: L.index, multi: true, ys: [{ col: sc.index, fn: 'avg' }], sort: 'desc', topN: 15, minRows: 30, noZero: nz(sc), title: 'Average ' + sc.name + ' — ' + L.name }, 'Which ' + L.name + ' have the highest average ' + sc.name + ' (small groups hidden)', 'किन ' + L.name + ' का औसत ' + sc.name + ' सबसे अधिक है (छोटे समूह छिपाए)', 88); }
+    if (dates[0]) { var dd = dates[0]; add('area', { x: dd.index, ys: n1 ? [{ col: n1.index, fn: fnFor(n1) }] : [{ col: -1, fn: 'count' }], time: 'month', sort: 'label', noZero: n1 ? nz(n1) : false, title: (n1 ? FN[fnFor(n1)][0] + n1.name : T({ hi: false }, 'Rows', '')) + ' — ' + dd.name, smooth: true }, 'Trend over time by month', 'महीने के अनुसार समय के साथ प्रवृत्ति', 89); }
+    if (c1 && c1.distinct <= 8) add('donut', { x: c1.index, ys: [{ col: -1, fn: 'count' }], sort: 'desc', title: T({ hi: false }, 'Share of rows by ', '') + c1.name }, 'Share of the rows by ' + c1.name, c1.name + ' के अनुसार पंक्तियों की हिस्सेदारी', 84);
+    if (n1 && n2) add('scatter', { xnum: n1.index, ynum: n2.index, trend: true, noZero: nz(n1) || nz(n2), g: c1 && c1.distinct <= 6 ? c1.index : -1, title: n1.name + ' vs ' + n2.name }, 'Do ' + n1.name + ' and ' + n2.name + ' move together?', n1.name + ' और ' + n2.name + ' क्या साथ चलते हैं?', 82);
+    yesNo.forEach(function (b2, bi) { var sm = nums.filter(function (p) { return p.score; })[0] || n1; if (!sm) return;
+      add('column', { x: b2.index, ys: [{ col: sm.index, fn: 'avg' }], noZero: nz(sm), title: 'Average ' + sm.name + ' — ' + b2.name }, 'Is the average ' + sm.name + ' different for “' + b2.name + '”?', '“' + b2.name + '” के अनुसार औसत ' + sm.name + ' कितना अलग है?', 87 - bi); });
+    if (c1 && n2 && n2 !== n1) add('column', { x: c1.index, ys: [{ col: n2.index, fn: fnFor(n2) }], sort: 'desc', topN: 12, noZero: nz(n2), minRows: avgy(n2) ? 20 : 0, title: ttl(n2, c1) }, 'Which ' + c1.name + ' has the highest ' + (avgy(n2) ? 'average ' : 'total ') + n2.name + '?', 'किस ' + c1.name + ' का ' + (avgy(n2) ? 'औसत ' : 'योग ') + n2.name + ' सबसे अधिक है?', 80);
     if (c1 && c2 && c1.distinct <= 25 && c2.distinct <= 25) add('heatmap', { x: c1.index, g: c2.index, ys: [{ col: -1, fn: 'count' }], title: c1.name + ' × ' + c2.name }, 'Where ' + c1.name + ' and ' + c2.name + ' overlap most', c1.name + ' और ' + c2.name + ' कहाँ सबसे अधिक मिलते हैं', 66);
-    if (c1 && c1.distinct >= 12 && n1) add('treemap', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 40, title: n1.name + ' — ' + c1.name }, 'Which ' + c1.name + ' values are biggest', 'कौन-से ' + c1.name + ' सबसे बड़े हैं', 64);
     if (c1 && c2 && c1.distinct <= 14 && c2.distinct <= 14) add('sankey', { x: c1.index, g: c2.index, ys: [{ col: -1, fn: 'count' }], topN: 8, title: c1.name + ' → ' + c2.name }, 'How rows flow from ' + c1.name + ' to ' + c2.name, 'पंक्तियाँ ' + c1.name + ' से ' + c2.name + ' में कैसे बँटती हैं', 63);
-    if (c1 && n1 && c1.distinct >= 5) add('pareto', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Pareto: ', 'पैरेटो: ') + n1.name + ' / ' + c1.name }, 'Do a few ' + c1.name + ' values make most of the total?', 'क्या कुछ ' + c1.name + ' कुल का अधिकांश बनाते हैं?', 62);
-    if (c1 && n1 && c1.distinct <= 12) add('boxplot', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], title: n1.name + ' — ' + c1.name }, 'How widely ' + n1.name + ' varies inside each ' + c1.name, 'हर ' + c1.name + ' में ' + n1.name + ' कितना बदलता है', 58);
+    if (c1 && n1 && c1.distinct <= 12) add('boxplot', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], noZero: nz(n1), title: n1.name + ' — ' + c1.name }, 'How widely ' + n1.name + ' varies inside each ' + c1.name, 'हर ' + c1.name + ' में ' + n1.name + ' कितना बदलता है', 60);
+    if (c1 && n1 && c1.distinct >= 12 && !avgy(n1)) add('treemap', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 40, title: n1.name + ' — ' + c1.name }, 'Which ' + c1.name + ' values are biggest', 'कौन-से ' + c1.name + ' सबसे बड़े हैं', 58);
+    if (c1 && n1 && !avgy(n1) && c1.distinct >= 5) add('pareto', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Pareto: ', 'पैरेटो: ') + n1.name + ' / ' + c1.name }, 'Do a few ' + c1.name + ' values make most of the total?', 'क्या कुछ ' + c1.name + ' कुल का अधिकांश बनाते हैं?', 56);
     if (c1 && nums.length >= 3 && c1.distinct <= 8) add('radar', { x: c1.index, ys: nums.slice(0, 5).map(function (p) { return { col: p.index, fn: 'avg' }; }), sort: 'desc', title: c1.name }, 'Profile of each ' + c1.name + ' across several measures', 'कई मापों में हर ' + c1.name + ' का स्वरूप', 54);
     if (dates[0] && (function () { var a = Infinity, b = -Infinity; idx.slice(0, 4000).forEach(function (i) { var ms = dateMs(rows[i][dates[0].index]); if (ms !== null) { if (ms < a) a = ms; if (ms > b) b = ms; } }); return (b - a) / 86400000 >= 45; })()) add('calendar', { x: dates[0].index, ys: [{ col: -1, fn: 'count' }], title: T({ hi: false }, 'Rows per day — ', 'प्रतिदिन पंक्तियाँ — ') + dates[0].name }, 'Which days are busiest', 'कौन-से दिन सबसे व्यस्त हैं', 52);
     out.sort(function (a, b) { return b.score - a.score; });

@@ -57,6 +57,7 @@
     if (type !== 'sankey' && type !== 'heatmap') req.g2 = -1;
     if (type === 'sunburst' || type === 'treemap') req.maxGroups = 9;
     req.measures = ys.map(function (y) { return { col: y.col, fn: y.fn }; });
+    req.multi = !!spec.multi && req.x >= 0 && !date; req.nozero = !!spec.noZero; req.minRows = spec.minRows > 0 ? spec.minRows : 0;
     return { req: req, ys: ys, date: date, hasG: req.g >= 0, hasG2: req.g2 >= 0, hasX: req.x >= 0 };
   };
 
@@ -78,7 +79,7 @@
   };
   BC.spec2 = function (type, spec, plan, headers) {
     var s = Object.assign({}, spec, {
-      x: plan.hasX ? 0 : -1, g: plan.hasG ? 1 : -1, g2: plan.hasG2 ? 2 : -1, time: 'none', topN: type === 'sankey' ? 1000 : 0, maxGroups: 99, preOthers: true,
+      x: plan.hasX ? 0 : -1, g: plan.hasG ? 1 : -1, g2: plan.hasG2 ? 2 : -1, time: 'none', topN: type === 'sankey' ? 1000 : 0, maxGroups: 99, preOthers: true, multi: false, noZero: false, minRows: 0,
       ys: plan.ys.map(function (y, k) { return { col: 3 + k, fn: 'sum', as: y.fn, name: y.col < 0 ? undefined : String(headers[y.col]) }; })
     });
     if (plan.date) { s.sort = type === 'calendar' ? s.sort : (spec.sort || 'label'); if (spec.time === 'weekday') s.labelOrder = 'weekday'; }
@@ -97,29 +98,29 @@
         var sy = BC.synth(res, plan, H, spec), s2 = BC.spec2(type, spec, plan, H);
         if (type === 'calendar' && !sy.rows.length) throw new Error(T('No dates could be read in this column.', 'इस कॉलम में कोई तारीख नहीं पढ़ी जा सकी।'));
         var c = CH.compute(type, s2, sy.headers, sy.rows, sy.idx, env);
-        c.data.rowsUsed = res.matched;
+        c.data.rowsUsed = res.matched; c.data.zeroSkipped = res.zeroSkipped || 0; c.data.zeroName = res.zeroName || ''; c.data.hiddenSmall = res.hiddenSmall || 0; c.data.minRows = spec.minRows || 0; c.data.multi = !!plan.req.multi;
         var out = CH.finish(type, spec2for(type, s2, spec), sy.headers, c.data, c.ctx, env);
         var more = res.rows.some(function (r) { return r[0] === '(Others)' || (plan.hasG && r[1] === '(Others)'); });
         return done(out, res.matched, { plan: plan, more: more });
       });
     }
     if (type === 'histogram') {
-      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'hist', col: spec.xnum, bins: spec.bins || 0 }, sc)).then(function (h) {
-        return done(CH.finish('histogram', spec, H, { cats: [], series: [], rowsUsed: h.n }, { hist: CH.histFrom(h) }, env), h.n);
+      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'hist', col: spec.xnum, bins: spec.bins || 0, nozero: !!spec.noZero }, sc)).then(function (h) {
+        return done(CH.finish('histogram', spec, H, { cats: [], series: [], rowsUsed: h.n, zeroSkipped: h.zeroSkipped || 0, zeroName: H[spec.xnum] }, { hist: CH.histFrom(h) }, env), h.n);
       });
     }
     if (type === 'boxplot') {
       var col = spec.ys && spec.ys[0] ? spec.ys[0].col : -1;
       if (!(col >= 0) || !(spec.x >= 0)) return Promise.reject(new Error(T('Choose a category and a number column.', 'एक श्रेणी और एक संख्या कॉलम चुनें।')));
-      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'box', x: spec.x, col: col, top: spec.topN > 0 ? spec.topN : 20 }, sc)).then(function (b) {
+      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'box', x: spec.x, col: col, top: spec.topN > 0 ? spec.topN : 20, nozero: !!spec.noZero }, sc)).then(function (b) {
         return done(CH.finish('boxplot', spec, H, { cats: [], series: [], rowsUsed: big.matched }, { box: { labels: b.labels, stats: b.stats, outliers: b.outliers } }, env), big.matched);
       });
     }
     if (type === 'scatter' || type === 'bubble') {
       if (spec.xnum === undefined || spec.ynum === undefined) return Promise.reject(new Error('Choose two number columns'));
-      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'points', xnum: spec.xnum, ynum: spec.ynum, size: type === 'bubble' && spec.size >= 0 ? spec.size : -1, g: spec.g >= 0 ? spec.g : -1, limit: 5000 }, sc)).then(function (r) {
+      return api('/api/engine/' + big.ds + '/chart', Object.assign({ kind: 'points', xnum: spec.xnum, ynum: spec.ynum, size: type === 'bubble' && spec.size >= 0 ? spec.size : -1, g: spec.g >= 0 ? spec.g : -1, limit: 5000, nozero: !!spec.noZero }, sc)).then(function (r) {
         var pts = r.points.map(function (p) { var o = { value: [p[1], p[2]], ri: p[0], g: null }; var k = 3; if (r.hasSize) o.value.push(p[k++]); if (r.hasGroup) o.g = p[k]; return o; });
-        var out = CH.finish(type, spec, H, { cats: [], series: [], rowsUsed: r.n }, { points: pts, reg: r.reg }, env);
+        var out = CH.finish(type, spec, H, { cats: [], series: [], rowsUsed: r.n, zeroSkipped: r.zeroSkipped || 0, zeroName: H[spec.xnum] + ' / ' + H[spec.ynum] }, { points: pts, reg: r.reg }, env);
         if (r.sampled) out.caption.push(T('The dots are a random sample of ' + pts.length.toLocaleString('en-IN') + ' of ' + r.n.toLocaleString('en-IN') + ' rows; the trend line and the correlation use all rows.', 'बिंदु ' + r.n.toLocaleString('en-IN') + ' में से ' + pts.length.toLocaleString('en-IN') + ' पंक्तियों का यादृच्छिक नमूना हैं; ट्रेंड रेखा और सहसंबंध सभी पंक्तियों से बने हैं।'));
         return done(out, r.n, { sampled: r.sampled });
       });
@@ -132,6 +133,7 @@
   function catFilter(col, spec, label, time) {
     if (time) return { col: col, op: 'bucket', value: spec.time, value2: label, label: '= ' + label };
     if (label === '(blank)') return { col: col, op: 'empty' };
+    if (spec.multi && col === spec.x) return { col: col, op: 'item', value: label, label: '= ' + label };
     return { col: col, op: 'ieq', value: label, label: '= ' + label };
   }
   // one bar / slice / cell / band was clicked: which filters show exactly those rows?
@@ -190,6 +192,7 @@
     var timeSel = isTime(spec), txt = labels.slice(0, 3).join(', ') + (labels.length > 3 ? ' +' + (labels.length - 3) : '');
     if (timeSel) return { col: spec.x, op: 'bucket', value: spec.time, value2: labels, label: '= ' + txt };
     if (labels.indexOf('(blank)') >= 0 && labels.length === 1) return { col: spec.x, op: 'empty' };
+    if (spec.multi) return { col: spec.x, op: 'item', value: labels, label: '= ' + txt };
     return { col: spec.x, op: 'iin', value: labels, label: '= ' + txt };
   };
   // Ctrl+click adds a bar to what is already selected (only when it is the same column)

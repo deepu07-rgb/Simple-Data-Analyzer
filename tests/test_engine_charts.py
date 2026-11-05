@@ -238,3 +238,69 @@ def test_numeric_request_fields_are_numbers_only(ds):
     with pytest.raises((ValueError, TypeError)):
         eng.chart_agg(i, x=0, max_cats="5; DROP TABLE x")
     assert eng.chart_points(i, 3, 2, limit=100)["n"] > 0, "the dataset is still there"
+
+
+# ---------------------------------------------------------------- analyst features: lists, zeros as "not rated", small groups
+CUIS = ["North Indian", "Chinese", "Italian", "Cafe", "Desserts", "Seafood", "Mexican"]
+
+
+@pytest.fixture()
+def zm(eng):
+    r = random.Random(5)
+    rows, truth = [], []
+    for i in range(4000):
+        cu = sorted({r.choice(CUIS), r.choice(CUIS)}) if r.random() < 0.8 else [r.choice(CUIS)]
+        city = r.choice(["Delhi", "Delhi", "Delhi", "Pune", "Goa"] + (["Tiny"] if i < 12 else []))
+        rating = 0.0 if r.random() < 0.25 else round(2.2 + r.random() * 2.6, 1)
+        rows.append([", ".join(cu), city, str(rating), str(r.randint(0, 900))])
+        truth.append({"cu": cu, "city": city, "rating": rating})
+    info = eng.load_rows(["Cuisines", "City", "Rating", "Votes"], rows, "z")
+    return eng, info["id"], truth
+
+
+def test_list_column_items_are_counted_separately(zm):
+    eng, i, truth = zm
+    res = eng.chart_agg(i, x=0, multi=True, measures=[{"col": -1, "fn": "count"}], max_cats=50)
+    got = {r[0].lower(): r[1] for r in res["rows"]}
+    want = {c.lower(): sum(1 for t in truth if c in t["cu"]) for c in CUIS}
+    assert got == want and sum(got.values()) > len(truth)
+    avg = eng.chart_agg(i, x=0, multi=True, nozero=True, measures=[{"col": 2, "fn": "avg"}], max_cats=50)
+    for row in avg["rows"]:
+        v = [t["rating"] for t in truth if any(c.lower() == row[0].lower() for c in t["cu"]) and t["rating"] > 0]
+        assert row[1] == pytest.approx(sum(v) / len(v), rel=1e-9)
+    assert avg["zeroSkipped"] == sum(1 for t in truth if t["rating"] == 0)
+
+
+def test_item_filter_finds_the_rows_of_a_list_item(zm):
+    eng, i, truth = zm
+    n = eng.rows(i, 0, 1, filters=[{"col": 0, "op": "item", "value": "Cafe"}], count=True)["matched"]
+    assert n == sum(1 for t in truth if "Cafe" in t["cu"])
+    n2 = eng.rows(i, 0, 1, filters=[{"col": 0, "op": "item", "value": ["cafe", "SEAFOOD"]}], count=True)["matched"]
+    assert n2 == sum(1 for t in truth if "Cafe" in t["cu"] or "Seafood" in t["cu"])
+    assert eng.rows(i, 0, 1, filters=[{"col": 0, "op": "item", "value": "Ca"}], count=True)["matched"] == 0, "an item is matched whole, not as part of another word"
+
+
+def test_zeros_can_be_left_out_of_every_chart_kind(zm):
+    eng, i, truth = zm
+    rated = [t["rating"] for t in truth if t["rating"] > 0]
+    by = {r[0]: r[1] for r in eng.chart_agg(i, x=1, nozero=True, measures=[{"col": 2, "fn": "avg"}])["rows"]}
+    for city, v in by.items():
+        vals = [t["rating"] for t in truth if t["city"] == city and t["rating"] > 0]
+        assert v == pytest.approx(sum(vals) / len(vals), rel=1e-9)
+    cnt = eng.chart_agg(i, x=1, nozero=True, measures=[{"col": -1, "fn": "count"}])
+    assert sum(r[1] for r in cnt["rows"]) == len(truth), "counting still counts every row"
+    h = eng.chart_hist(i, 2, bins=8, nozero=True)
+    assert h["n"] == len(rated) and sum(h["counts"]) == len(rated) and h["zeroSkipped"] == len(truth) - len(rated) and h["min"] > 0
+    assert eng.chart_hist(i, 2, bins=8)["n"] == len(truth)
+    b = eng.chart_box(i, 1, 2, nozero=True)
+    assert all(st[0] > 0 for st in b["stats"])
+    p = eng.chart_points(i, 3, 2, nozero=True, limit=500)
+    assert all(pt[1] > 0 and pt[2] > 0 for pt in p["points"]) and p["zeroSkipped"] > 0
+
+
+def test_small_groups_are_hidden_but_never_all_of_them(zm):
+    eng, i, truth = zm
+    res = eng.chart_agg(i, x=1, nozero=True, min_rows=100, measures=[{"col": 2, "fn": "avg"}])
+    assert {r[0] for r in res["rows"]} == {"Delhi", "Pune", "Goa"} and res["hiddenSmall"] == 1
+    res2 = eng.chart_agg(i, x=1, min_rows=10_000_000, measures=[{"col": 2, "fn": "avg"}])
+    assert len(res2["rows"]) == 4 and res2["hiddenSmall"] == 0, "if nothing would be left, nothing is hidden"

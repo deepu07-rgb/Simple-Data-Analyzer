@@ -162,3 +162,24 @@ test('performance: 100,000 rows analysed in a few seconds', () => {
   assert.ok(ms < 8000, 'took ' + ms + ' ms');
   console.log('      100,000 rows analysed in ' + ms + ' ms');
 });
+
+test('a record whose NAME starts with "Total" is not a total row (restaurant register), but real total rows still are', () => {
+  const reg = [['Restaurant ID', 'Restaurant Name', 'City', 'Address', 'Votes', 'Rating']];
+  for (let i = 0; i < 12; i++) reg.push([String(6300000 + i), i === 5 ? 'Total Food Court' : 'Cafe ' + i, 'Faridabad', 'Sector ' + i + ', Faridabad', String(10 + i), '3.' + (i % 9)]);
+  assert.ok(!ids(F.analyze(reg)).includes('totalRows'), 'Total Food Court is a restaurant');
+  const withTotal = reg.concat([['', 'Total', '', '', '222', '']]);
+  assert.ok(ids(F.analyze(withTotal)).includes('totalRows'), 'a label with numbers and nothing else is a total row');
+  const sub = reg.concat([['Jaipur', 'Sub Total', '', '', '90', '']]);
+  assert.ok(ids(F.analyze(sub)).includes('totalRows'), 'a district + Sub Total row is still caught');
+});
+
+test('turning text into numbers never rounds real digits (GPS coordinates, rates)', () => {
+  const g = [['नाम', 'अक्षांश', 'दर', 'राशि']];
+  for (let i = 0; i < 8; i++) g.push(['n' + i, '121.' + (1000000 + i * 7).toString().slice(0, 7), '0.1234567', i % 2 ? '1.1 लाख' : '110000']);
+  const r = F.analyze(g);
+  const num = r.steps.filter(s => s.id === 'numbers')[0];
+  const out = num ? plain(F.apply(g, ['numbers']).grid) : g;
+  assert.deepEqual(out.map(x => x[1]), g.map(x => x[1]), 'coordinates keep every digit');
+  assert.deepEqual(out.map(x => x[2]), g.map(x => x[2]), 'rates keep every digit');
+  assert.equal(out[2][3], '110000', '1.1 lakh is 110000, without float noise');
+});

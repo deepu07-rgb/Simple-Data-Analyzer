@@ -351,29 +351,14 @@ function setupGlobalPaste() {
 
 function parseCSVTSV(text) {
   let sep = ',';
-  const firstLine = text.split('\n')[0];
+  const firstLine = text.replace(/^\uFEFF/, '').split(/\r?\n/)[0];
   const tabs = (firstLine.match(/\t/g) || []).length;
   const commas = (firstLine.match(/,/g) || []).length;
   const semis = (firstLine.match(/;/g) || []).length;
   if (tabs > commas && tabs > semis) sep = '\t';
   else if (semis > commas) sep = ';';
 
-  const lines = text.split(/\r?\n/).filter(l => l.trim());
-  const data = lines.map(line => {
-    const row = [];
-    let inQuote = false, cell = '';
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuote && line[i+1] === '"') { cell += '"'; i++; continue; }
-        inQuote = !inQuote; continue;
-      }
-      if (ch === sep && !inQuote) { row.push(cell.trim()); cell = ''; continue; }
-      cell += ch;
-    }
-    row.push(cell.trim());
-    return row;
-  });
+  const data = STL.parseCsv(text, sep);          // one stream: quoted cells may contain line breaks
   importData(data);
 }
 
@@ -416,6 +401,10 @@ function importData(data) {
     toast(`Imported ${rawData.length} rows × ${headers.length} columns`, 'success');
   }
   checkHindiEncodingInData();
+  try {
+    const damaged = STL.countDamaged(rawData);
+    if (damaged) toast((uiLanguage === 'hi' ? damaged.toLocaleString('en-IN') + ' खानों में क्षतिग्रस्त अक्षर (�) हैं — किसी पुराने सेव में बिगड़े। मूल अक्षर लौटाए नहीं जा सकते; स्रोत से नई फ़ाइल मँगाएँ।' : damaged.toLocaleString('en-IN') + ' cells contain damaged letters (�) from an earlier save. The original letters cannot be recovered — ask for a fresh export from the source.'), 'warning');
+  } catch (e) {}
 }
 
 function detectTypes() {

@@ -242,6 +242,11 @@ function makeCsv() {
   await wait(1200);
   ok(big < 6000, 'A 60,000-row table opens in the Studio without freezing (' + Math.round(big) + ' ms)', big);
 
+  // ---- a CSV whose quoted cells contain line breaks keeps every record whole (this used to tear 6 restaurants of a 9,551-row file into 12 broken rows)
+  const multi = 'ID,Name,Address,Rating\r\n1,Cafe A,"The Quayside\n60 Roberston Quay #01-13",4.5\r\n2,"Cafe, B","Food Court, HUDA City Center Metro\n Station, Sector 29",3.9\r\n3,Cafe C,Plain,0\r\n';
+  await page.setInputFiles('#fileInput', { name: 'multiline.csv', mimeType: 'text/csv', buffer: Buffer.from(multi, 'utf8') }); await wait(900);
+  const ml = await ev(() => ({ n: rawData.length, w: rawData.map(r => r.length), a: rawData[1][2], h: headers.slice() }));
+  ok(ml.n === 3 && ml.w.every(x => x === 4) && ml.a.includes('Food Court, HUDA City Center Metro') && ml.h[0] === 'ID', 'A CSV cell with a line break stays one record (3 rows, 4 fields each)', ml);
   ok(external.length === 0, 'No external network requests were attempted', external);
   ok(errors.length === 0, 'No JavaScript errors', errors);
   await browser.close();

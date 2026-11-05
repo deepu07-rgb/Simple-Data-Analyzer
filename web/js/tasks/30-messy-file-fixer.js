@@ -66,8 +66,7 @@
   }
   function fmtNum(n) {
     if (Math.abs(n) >= 1e15) return String(n);
-    var r = Math.round(n * 1e6) / 1e6;
-    return String(r);
+    return String(parseFloat(n.toPrecision(15)));                                   // only float noise is trimmed (110000.00000000001): real digits are never rounded
   }
 
   // ---------------------------------------------------------------- date parsing (day first, Indian style)
@@ -234,6 +233,10 @@
         if (i === 0) return true;
         var firsts = r.filter(function (v) { return !isBlank(v); }).slice(0, 2);
         var hit = firsts.some(function (v) { return TOTAL_RE.test(s(v).trim()); });
+        if (hit) {                                                                    // "Total Food Court" is a restaurant: a total row is a label (and maybe a name) followed by numbers
+          var cells = r.filter(function (v) { return !isBlank(v); }), words = cells.filter(function (v) { return !looksNumeric(v); }).length;
+          if (words > 2 || !cells.some(looksNumeric)) hit = false;
+        }
         if (hit) { n++; if (ex.length < 3) ex.push({ before: clip(r.filter(function (v) { return !isBlank(v); }).slice(0, 4).join(' | '), 70), after: '' }); }
         return !hit;
       });
@@ -355,12 +358,12 @@
           cells.push(r);
           var t = v.trim();
           if (/^0\d+$/.test(t) || /^\d{10,}$/.test(t)) codeLike++;
-          var p = parseNumber(v); if (p !== null) { parsed++; if (fmtNum(p) === t) plain++; }
+          var p = parseNumber(v); if (p !== null) { parsed++; if (fmtNum(p) === t || /^-?\d+(\.\d+)?$/.test(t)) plain++; }          // an ordinary decimal is already a number
         }
         if (cells.length < 2 || parsed / cells.length < 0.6 || codeLike / cells.length > 0.3 || plain === parsed) continue;
         cells.forEach(function (r) {
           var v = s(out[r][c]), t = v.trim(), p = parseNumber(v);
-          if (p === null || /^0\d+$/.test(t)) return;
+          if (p === null || /^0\d+$/.test(t) || /^-?\d+(\.\d+)?$/.test(t)) return;
           var u = fmtNum(p); if (u !== t) { out[r][c] = u; n++; if (ex.length < 4) ex.push({ before: clip(v, 22), after: u }); }
         });
       }

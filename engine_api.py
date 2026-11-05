@@ -128,14 +128,15 @@ def chart(ds):
     kind, s, f = b.get("kind"), b.get("search") or None, b.get("filters")
     if kind == "agg":
         return jsonify(json_safe(eng.chart_agg(ds, b.get("x"), b.get("time"), b.get("g"), b.get("g2"), b.get("measures"),
-                                               b.get("rank", "value"), b.get("maxCats", 300), b.get("maxGroups", 9), s, f)))
+                                               b.get("rank", "value"), b.get("maxCats", 300), b.get("maxGroups", 9), s, f,
+                                               bool(b.get("multi")), bool(b.get("nozero")), b.get("minRows", 0))))
     if kind == "hist":
-        return jsonify(json_safe(eng.chart_hist(ds, b.get("col"), b.get("bins", 0), s, f)))
+        return jsonify(json_safe(eng.chart_hist(ds, b.get("col"), b.get("bins", 0), s, f, bool(b.get("nozero")))))
     if kind == "box":
-        return jsonify(json_safe(eng.chart_box(ds, b.get("x"), b.get("col"), b.get("top", 20), s, f)))
+        return jsonify(json_safe(eng.chart_box(ds, b.get("x"), b.get("col"), b.get("top", 20), s, f, bool(b.get("nozero")))))
     if kind == "points":
         return jsonify(json_safe(eng.chart_points(ds, b.get("xnum"), b.get("ynum"), b.get("size"), b.get("g"),
-                                                  b.get("limit", 5000), s, f, b.get("maxGroups", 8))))
+                                                  b.get("limit", 5000), s, f, b.get("maxGroups", 8), bool(b.get("nozero")))))
     return _err("Unknown chart kind.")
 
 
