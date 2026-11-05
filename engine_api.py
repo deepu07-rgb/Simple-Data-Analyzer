@@ -143,6 +143,10 @@ def chart(ds):
         return jsonify(json_safe(eng.fair_pairs(ds, b.get("y"), b.get("pairs"), bool(b.get("nozero")), s, f, b.get("bands"))))
     if kind == "label_sample":
         return jsonify(json_safe(eng.label_sample(ds, b.get("label"), b.get("cols"), b.get("perClass", 1500), b.get("total", 20000), s, f)))
+    if kind == "fair_linear":
+        return jsonify(json_safe(eng.fair_linear(ds, b.get("y"), b.get("factor"), b.get("catAdj"), b.get("linAdj"), bool(b.get("nozero")), s, f, b.get("ref"), bool(b.get("curve")))))
+    if kind == "column_checks":
+        return jsonify(json_safe(eng.column_checks(ds, b.get("formulas"), b.get("caps"), s, f)))
     if kind == "rule_check":
         return jsonify(json_safe(eng.rule_check(ds, b.get("label"), b.get("rules"), b.get("default", ""), s, f)))
     return _err("Unknown chart kind.")

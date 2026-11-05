@@ -163,6 +163,8 @@ body.cs-open .document-meta,body.cs-open .product-subtitle{display:none}
 .fr-tbl tr.fr-main td{background:rgba(109,91,208,.09)}
 .fr-chart{height:270px;background:#fff;border:1px solid var(--border);border-radius:12px;margin:6px 0}
 .dr-via{font-size:12px;color:var(--text-secondary);margin-top:2px;font-weight:400}
+.cc-list{margin:4px 0 10px 18px;padding:0;font-size:13px;line-height:1.55}
+.cc-list li{margin:2px 0}
 .dr-rule-h{text-transform:none;letter-spacing:0;font-size:14px;color:var(--text-primary)}
 .dr-rule td:nth-child(2){font-size:13px}
 .fr-how{font-size:12px;color:var(--text-secondary);margin-top:10px;line-height:1.5}

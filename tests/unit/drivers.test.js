@@ -115,3 +115,31 @@ test('stand-in only when almost nothing is left; a real overlap is called "partl
 test('an accuracy just under 100% is never shown as 100%', () => {
   assert.equal(D.accText(12994 / 13000), '99.95%'); assert.equal(D.accText(1), '100%'); assert.equal(D.accText(0.9776), '97.8%'); assert.equal(D.accText(0.99999), '99.99%');
 });
+test('a rule may use a text column ("region is North or East")', () => {
+  const R = [], regs = ['North', 'South', 'East', 'West', 'Centre'];
+  for (let i = 0; i < 2000; i++) { const reg = regs[i % 5], sc = (i * 7919) % 100; R.push([String(sc), reg, (sc >= 50 && (reg === 'North' || reg === 'East')) ? 'Gold' : 'Plain']); }
+  const q = D.findRule(R, R.map((_, i) => i), 2, [{ col: 0, name: 'Score' }, { col: 1, name: 'Region', kind: 'cat' }]);
+  assert.equal(q.accuracy, 1, 'exact');
+  const t = D.ruleLines(q).map(l => l.label + ': ' + D.lineText(l, false));
+  assert.ok(t.length === 1 && /Score ≥ 50/.test(t[0]) && /Region is “(North|East)” or “(North|East)”/.test(t[0]) && q.otherwise.label === 'Plain', t.join(' | '));
+  assert.match(D.lineText(D.ruleLines(q)[0], true), /Region = “(North|East)” या/);
+});
+test('a small group the tree cannot reach is added as an exception ("waste ≥ 30")', () => {
+  const R = [];
+  for (let i = 0; i < 6000; i++) { const w = (i * 37) % 300 / 10, t = 30 + (i * 53) % 420 / 10; R.push([String(w), String(t), (t < 48 || w >= 29.5) ? 'Bad' : w >= 20 ? 'Fair' : 'Good']); }
+  const q = D.findRule(R, R.map((_, i) => i), 2, [{ col: 0, name: 'Waste' }, { col: 1, name: 'Temp' }], { depth: 2 });
+  assert.equal(q.accuracy, 1, 'every row right: ' + D.ruleLines(q).map(l => l.label + ': ' + D.lineText(l)).join(' | '));
+  assert.ok(D.ruleLines(q).some(l => l.label === 'Bad' && /Waste ≥ 29\.5/.test(D.lineText(l))));
+});
+test('a text column made of two others is called a summary of them, even when it is the strongest', () => {
+  const R = [];
+  for (let i = 0; i < 4000; i++) { const a = i % 2, b = Math.floor(i / 2) % 2, u = k => ((i * k) % 1000) / 1000, noise = 2.2 * (u(7919) + u(104729) + u(1299709) - 1.5); R.push([String(1.5 * a + 1.2 * b + noise), a ? 'A1' : 'A0', b ? 'B1' : 'B0', ['none', 'one', 'one', 'both'][a + 2 * b]]); }
+  const I = R.map((_, i) => i), r = D.rank(R, I, ['Y', 'A', 'B', 'AB'], 0, { candidates: [{ col: 1, name: 'A', kind: 'cat' }, { col: 2, name: 'B', kind: 'cat' }, { col: 3, name: 'AB', kind: 'cat' }] });
+  const ab = r.find(x => x.name === 'AB');
+  assert.ok(ab.omega2 > 0.3, 'strong overall ' + ab.omega2);
+  assert.ok(ab.standIn && ab.standIn.made && ab.standIn.cols.length === 2 && ab.standIn.omega2 < 0.005, JSON.stringify(ab.standIn));
+  assert.ok(!r.find(x => x.name === 'A').standIn && !r.find(x => x.name === 'B').standIn, 'the parts are not called stand-ins for the summary');
+  const L = D.summary(r, 'Y', false);
+  assert.ok(L.some(l => /“AB” is made of “[AB]” and “[AB]” \(every combination of them has one value of it\)/.test(l)), L.join('\n'));
+  assert.match(L[0], /go most with “A”/, 'the headline is a real column, not the summary');
+});

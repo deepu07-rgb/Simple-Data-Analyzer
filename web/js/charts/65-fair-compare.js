@@ -88,6 +88,76 @@
     return null;
   }
 
+  // ------------------------------------------------------------ number adjusters as straight lines (row by row)
+  // An exact row-level regression of y on the group (0/1 columns), text adjusters (0/1 columns) and number adjusters
+  // (one slope each), with HC3 errors - the same as the engine computes on large files. Also the fit with each
+  // adjuster alone. spec: { y, factor, cats: [cols], lins: [cols], noZero, ref }
+  //   -> { levels: { level: [diff, se] }, r2, n, alone: [ { level: [diff, se] } ], ref }
+  F.linearFit = function (rows, idx, spec) {
+    var label = function (v) { var t = s(v).trim(); return t === '' ? '(blank)' : t; }, dims = [spec.factor].concat(spec.cats || []), lins = spec.lins || [];
+    var data = [];
+    for (var k = 0; k < idx.length; k++) {
+      var r = rows[idx[k]], y = num(r[spec.y]); if (y === null || (spec.noZero && y === 0)) continue;
+      var z = lins.map(function (c) { return num(r[c]); }); if (z.some(function (v) { return v === null; })) continue;
+      data.push({ d: dims.map(function (c) { return label(r[c]); }), z: z, y: y });
+    }
+    var means = lins.map(function (_, j) { var t = 0; data.forEach(function (o) { t += o.z[j]; }); return data.length ? t / data.length : 0; });
+    if (spec.curve) data.forEach(function (o) { o.z = o.z.concat(o.z.map(function (v, j) { return (v - means[j]) * (v - means[j]); })); });   // a bend: the centred square
+    var nz = spec.curve ? 2 * lins.length : lins.length;
+    var levels = dims.map(function (_, n) { var cnt = {}; data.forEach(function (o) { cnt[o.d[n]] = (cnt[o.d[n]] || 0) + 1; }); return Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a] || (a < b ? -1 : 1); }).slice(0, n === 0 ? 12 : 60); });
+    if (levels[0].length < 2) return null;
+    var refs = levels.map(function (lv, n) { return n === 0 && lv.indexOf(spec.ref) >= 0 ? spec.ref : lv[0]; });
+    var blocks = [], p = 1;
+    levels.forEach(function (lv, n) { var keep = lv.filter(function (v) { return v !== refs[n]; }); if (n > 0 || lv.length >= 12) keep.push('(Others)'); var pos = {}; keep.forEach(function (v, j) { pos[v] = p + j; }); blocks.push({ st: p, keep: keep, pos: pos, known: lv }); p += keep.length; });
+    var linAt = []; for (var zj = 0; zj < nz; zj++) linAt.push(p + zj); p += nz;
+    // each row as its non-zero design columns
+    var X = data.map(function (o) { var c = [0], v = [1]; o.d.forEach(function (lv, n) { if (lv === refs[n]) return; var B = blocks[n], j = B.pos[B.known.indexOf(lv) >= 0 ? lv : '(Others)']; if (j !== undefined) { c.push(j); v.push(1); } }); linAt.forEach(function (at, j) { c.push(at); v.push(o.z[j]); }); return { c: c, v: v }; });
+    var grp = [0]; for (var g = 0; g < blocks[0].keep.length; g++) grp.push(blocks[0].st + g);
+    var subsets = [Array.from({ length: p }, function (_, j) { return j; })];
+    for (var n = 1; n < blocks.length; n++) subsets.push(grp.concat(Array.from({ length: blocks[n].keep.length }, function (_, j) { return blocks[n].st + j; })));
+    lins.forEach(function (_, j) { subsets.push(grp.concat(spec.curve ? [linAt[j], linAt[lins.length + j]] : [linAt[j]])); });
+    var N = data.length, sy = 0, syy = 0; data.forEach(function (o) { sy += o.y; syy += o.y * o.y; }); var sst = syy - sy * sy / N;
+    function one(sub) {
+      var where = {}; sub.forEach(function (c, j) { where[c] = j; }); var q = sub.length;
+      var rowsX = X.map(function (x) { var c = [], v = []; for (var t = 0; t < x.c.length; t++) { var j = where[x.c[t]]; if (j !== undefined) { c.push(j); v.push(x.v[t]); } } return { c: c, v: v }; });
+      var A = [], b = new Array(q).fill(0), i, j, t, u;
+      for (i = 0; i < q; i++) A.push(new Array(q).fill(0));
+      rowsX.forEach(function (x, r) { var yv = data[r].y; for (t = 0; t < x.c.length; t++) { b[x.c[t]] += x.v[t] * yv; for (u = 0; u < x.c.length; u++) A[x.c[t]][x.c[u]] += x.v[t] * x.v[u]; } });
+      var dropped = {}, iv, keep;
+      for (var tries = 0; tries <= q; tries++) {                              // a column that copies others is set aside (as in the cell fit)
+        keep = []; for (i = 0; i < q; i++) if (!dropped[i]) keep.push(i);
+        iv = invert(keep.map(function (a) { return keep.map(function (c) { return A[a][c]; }); }));
+        if (iv.inv) break; dropped[keep[iv.bad]] = true;
+      }
+      if (!iv.inv) return null;
+      var Ai = iv.inv, kq = keep.length, kp = {}; keep.forEach(function (c, j2) { kp[c] = j2; });
+      var beta = Ai.map(function (row) { var s2 = 0; for (var j3 = 0; j3 < kq; j3++) s2 += row[j3] * b[keep[j3]]; return s2; });
+      var meat = []; for (i = 0; i < kq; i++) meat.push(new Array(kq).fill(0));
+      var sse = 0;
+      rowsX.forEach(function (x, r) {
+        var c = [], v = []; for (t = 0; t < x.c.length; t++) if (kp[x.c[t]] !== undefined) { c.push(kp[x.c[t]]); v.push(x.v[t]); }
+        var yh = 0, h = 0; for (t = 0; t < c.length; t++) { yh += beta[c[t]] * v[t]; for (u = 0; u < c.length; u++) h += v[t] * Ai[c[t]][c[u]] * v[u]; }
+        var e = data[r].y - yh; sse += e * e; var w = e * e / Math.pow(Math.max(1 - h, 1e-6), 2);
+        for (t = 0; t < c.length; t++) for (u = 0; u < c.length; u++) meat[c[t]][c[u]] += w * v[t] * v[u];
+      });
+      var tmp = Ai.map(function (row) { return meat[0].map(function (_, j4) { var s3 = 0; for (var q2 = 0; q2 < kq; q2++) s3 += row[q2] * meat[q2][j4]; return s3; }); });
+      var out = {};
+      keep.forEach(function (ci, j5) { var col = sub[ci]; if (col >= 1 && col < 1 + blocks[0].keep.length) { var vv = 0; for (var q3 = 0; q3 < kq; q3++) vv += tmp[j5][q3] * Ai[q3][j5]; out[blocks[0].keep[col - 1]] = [beta[j5], Math.sqrt(Math.max(vv, 0))]; } });
+      return { levels: out, sse: sse, p: kq };
+    }
+    var full = one(subsets[0]); if (!full) return null;
+    return { levels: full.levels, r2: sst > 0 ? 1 - full.sse / sst : 0, n: N, sse: full.sse, p: full.p, aic: N * Math.log(full.sse / N) + 2 * full.p, curve: !!spec.curve, ref: refs[0], alone: subsets.slice(1).map(function (sb) { var f = one(sb); return f ? f.levels : {}; }), adjusters: (spec.cats || []).concat(lins) };
+  };
+  // put the straight-line results into an analysis made from cells (raw gaps, strata and make-up stay from the cells)
+  F.useLinear = function (R, lin, names) {
+    if (!R || R.error || !lin) return R;
+    R.levels.forEach(function (l) { var r = lin.levels[l.level]; l.adj = r ? { diff: r[0], se: r[1], lo: r[0] - 1.96 * r[1], hi: r[0] + 1.96 * r[1], p: r[1] > 0 ? pTwoSided(r[0] / r[1]) : 1 } : null; });
+    R.drivers.forEach(function (d) { var a = lin.alone[d.dim - 1], r = a && a[R.main.level]; if (r) { d.effect = r[0]; d.move = Math.abs(r[0] - R.main.raw.diff); } });
+    R.r2 = lin.r2; R.linear = lin.curve ? 'curve' : 'line'; R.nLinear = lin.n;
+    if (names) R.adjusters = names.slice(1);
+    return R;
+  };
+
   // ------------------------------------------------------------ the analysis
   F.analyse = function (cells, names, opts) {
     opts = opts || {};
@@ -131,7 +201,8 @@
       strata = strata.slice(0, 12);
       mix = { main: main.level, ref: refs[0], rows: dimLevels[D].slice(0, 8).map(function (lv) { var o = byLevel[lv] || {}; return { level: lv, shareMain: ((o[main.level] || { n: 0 }).n) / main.n, shareRef: ((o[refs[0]] || { n: 0 }).n) / g[refs[0]].n }; }) };
     }
-    return { names: names, ref: refs[0], groups: factorLevels.map(function (lv) { return { level: lv, n: g[lv].n, mean: g[lv].mean }; }), levels: levels, main: main, drivers: drivers, driver: drv, strata: strata, mix: mix,
+    var sstAll = Math.max(syy - sy * sy / ntotal, 0), sseFull = (1 - full.r2) * sstAll;
+    return { aic: ntotal * Math.log(Math.max(sseFull, 1e-300) / ntotal) + 2 * full.p, names: names, ref: refs[0], groups: factorLevels.map(function (lv) { return { level: lv, n: g[lv].n, mean: g[lv].mean }; }), levels: levels, main: main, drivers: drivers, driver: drv, strata: strata, mix: mix,
              r2: full.r2, n: ntotal, sd: sd, nAdjust: nd - 1, adjusters: names.slice(1) };
   };
 
@@ -204,6 +275,7 @@
     };
     if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) STL.bigCharts.loadSample().then(go).catch(function (e) { toast(e.message, 'error'); }); else go();
   };
+  function linCols() { return FS.adj.filter(function (c) { var p = FS.prof[c]; return p && p.numeric && !p.lowInt; }); }
   function autoZero() { var p = FS.prof[FS.y]; return !!(p && p.score && p.zeroPct >= 0.01); }
   function adjCandidates() { var D = STL.drivers; return D.candidates(HD(), FS.prof, FS.y).filter(function (c) { return c.col !== FS.f && !D.sharesName(c.name, HD()[FS.y]).length; }); }
   function suggestAdjust() {                                                     // adjust for what goes most with the number (not for columns made from it)
@@ -225,12 +297,14 @@
       '<label class="rp-field"><span>' + T('Compare groups by', 'समूह इसके अनुसार') + '</span><select id="frF" class="big-select">' + opt(groupCols, FS.f) + '</select></label></div>' +
       '<div class="prj-sub">' + T('Make the comparison fair: adjust for', 'तुलना निष्पक्ष बनाएँ: इनके लिए समायोजन') + '</div><div class="rp-checks" id="frAdj">' + (cand.length ? cand.map(function (p) { return '<label class="rp-inline"><input type="checkbox" data-a="' + p.index + '"' + (FS.adj.indexOf(p.index) >= 0 ? ' checked' : '') + '> ' + esc(p.name) + (p.w >= 0.005 ? ' <em>' + (Math.round(p.w * 1000) / 10) + '%</em>' : '') + '</label>'; }).join('') : '<em>' + T('no suitable columns', 'कोई उपयुक्त कॉलम नहीं') + '</em>') + '</div>' +
       '<label class="rp-inline" style="margin:8px 0"><input type="checkbox" id="frZ"' + (FS.noZero ? ' checked' : '') + '> ' + T('Ignore zeros (0 usually means “no value / not rated”)', 'शून्य छोड़ें (0 का अर्थ प्रायः “कोई मान नहीं / अंकित नहीं”)') + '</label>' +
+      '<label class="rp-field" id="frLinW" style="max-width:420px' + (linCols().length ? '' : ';display:none') + '"><span>' + T('Number columns to adjust for, as', 'समायोजन के संख्या कॉलम, इस रूप में') + '</span><select id="frLin" class="big-select">' + [['auto', T('Automatic: the shape that fits best', 'स्वचालित: जो आकार सबसे अच्छा बैठे')], ['bands', T('5 bands (any shape, coarse)', '5 समूह (कोई भी आकार, मोटा)')], ['line', T('a straight line (one slope, exact values)', 'सीधी रेखा (एक ढलान, सटीक मान)')], ['curve', T('a curve (a slope and a bend)', 'वक्र (ढलान और मोड़)')]].map(function (o) { return '<option value="' + o[0] + '"' + ((FS.shape || 'auto') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></label>' +
       '<div id="frOut"><div class="big-note">…</div></div>';
     var o = U.overlay('fairDialog', html, true); o.querySelector('.stl-box').classList.add('fr-box');
     $('frX').onclick = function () { disposeChart(); o.remove(); };
     $('frY').onchange = function () { FS.y = +this.value; FS.noZero = autoZero(); suggestAdjust(); render(); compute(); };
     $('frF').onchange = function () { FS.f = +this.value; suggestAdjust(); render(); compute(); };
     $('frZ').onchange = function () { FS.noZero = this.checked; compute(); };
+    $('frLin').onchange = function () { FS.shape = this.value; compute(); };
     o.querySelectorAll('[data-a]').forEach(function (b) { b.onchange = function () { var c = +b.dataset.a, i = FS.adj.indexOf(c); if (b.checked && i < 0 && FS.adj.length < 4) FS.adj.push(c); else if (!b.checked && i >= 0) FS.adj.splice(i, 1); else if (b.checked) b.checked = false; compute(); }; });
   }
 
@@ -239,12 +313,37 @@
   function compute() {
     var out = $('frOut'); if (!out) return;
     if (FS.y < 0 || FS.f < 0) { out.innerHTML = '<div class="big-err">' + T('This file needs a number column and a column of groups.', 'इस फ़ाइल में एक संख्या वाला कॉलम और समूहों का कॉलम चाहिए।') + '</div>'; return; }
-    var H = HD(), names = [H[FS.f]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? T(' (bands)', ' (समूह)') : ''); })), seq = ++FS.seq || (FS.seq = 1);
+    var H = HD(), names = [H[FS.f]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? T(' (bands)', ' (समूह)') : ''); })),
+        shapeNames = function (shape) { return [H[FS.f]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? (shape === 'curve' ? T(' (curve)', ' (वक्र)') : T(' (straight line)', ' (सीधी रेखा)')) : ''); })); }, seq = ++FS.seq || (FS.seq = 1);
     out.innerHTML = '<div class="big-note">' + T('Calculating…', 'गणना हो रही है…') + '</div>';
     var done = function (cellsRes) {
       if (seq !== FS.seq || !$('frOut')) return;
-      var R = F.analyse(cellsRes.cells, names); FS.result = R; FS.meta = cellsRes; show(R);
+      var R = F.analyse(cellsRes.cells, names); FS.meta = cellsRes;
+      var lins = linCols(), wLin = $('frLinW'); if (wLin) wLin.style.display = lins.length ? '' : 'none';
+      var shape = FS.shape || 'auto';
+      if (shape === 'bands' || !lins.length || !R || R.error) { if (R && !R.error && lins.length) R.shapeNote = null; FS.result = R; show(R); return; }
+      // number adjusters as a straight line or a curve: the like-for-like gaps from a row-level regression
+      var cats = FS.adj.filter(function (c) { return lins.indexOf(c) < 0; }), order = cats.concat(lins);
+      var fitOne = function (curve) {
+        var back = function (lin) { if (lin) lin.alone = FS.adj.map(function (c) { return lin.alone[order.indexOf(c)]; }); return lin; };   // back to the order on screen
+        if (isBig()) return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair_linear', y: FS.y, factor: FS.f, catAdj: cats, linAdj: lins, curve: curve, nozero: FS.noZero, ref: R.ref }, STL.bigCharts.scope())).then(back);
+        return new Promise(function (ok) { setTimeout(function () { ok(back(F.linearFit(RD(), viewIdx(), { y: FS.y, factor: FS.f, cats: cats, lins: lins, curve: curve, noZero: FS.noZero, ref: R.ref }))); }, 10); });
+      };
+      var want = shape === 'auto' ? [false, true] : [shape === 'curve'];
+      Promise.all(want.map(fitOne)).then(function (fits) {
+        if (seq !== FS.seq || !$('frOut')) return;
+        // automatic: the lowest AIC (fit against the number of values used) among 5 bands, a straight line and a curve
+        var cand = fits.filter(Boolean).map(function (f) { return { kind: f.curve ? 'curve' : 'line', aic: f.aic, fit: f, n: f.n }; });
+        if (shape === 'auto' && R.n === (cand[0] || {}).n) cand.push({ kind: 'bands', aic: R.aic, n: R.n });
+        cand.sort(function (a, b) { return a.aic - b.aic; });
+        var best = cand[0]; if (!best) { FS.result = R; show(R); return; }
+        var lbl = { bands: T('5 bands', '5 समूह'), line: T('a straight line', 'सीधी रेखा'), curve: T('a curve', 'वक्र') };
+        if (best.kind !== 'bands') F.useLinear(R, best.fit, shapeNames(best.kind));
+        R.shapeNote = shape === 'auto' && cand.length > 1 ? T('Number columns adjusted for as ' + lbl[best.kind] + ' — it fits the data best (lowest AIC; others: ', 'संख्या कॉलम ' + lbl[best.kind] + ' के रूप में समायोजित — यह डेटा पर सबसे अच्छा बैठता है (सबसे कम AIC; अन्य: ') + cand.slice(1).map(function (c) { return lbl[c.kind] + ' +' + Math.round(c.aic - best.aic); }).join(', ') + ').' : null;
+        FS.result = R; show(R);
+      }).catch(function (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; });
     };
+
     if (isBig()) {
       var sc = STL.bigCharts.scope();
       var bb = bandsFor(FS.adj), edges = {}; Object.keys(bb).forEach(function (c) { if (bb[c]) edges[c] = bb[c].edges; });
@@ -271,7 +370,7 @@
         html += '<div class="prj-sub">' + T('Between like-for-like groups: within each ', 'बराबर समूहों में: हर ') + esc(R.driver.name) + '</div><div id="frChart" class="fr-chart"></div>';
         html += '<details class="rp-settings"><summary>' + T('How the groups differ in make-up', 'समूहों की बनावट कैसे अलग है') + '</summary><table class="big-tbl"><tr><th>' + esc(R.driver.name) + '</th><th>' + T('Share of ', 'हिस्सा: ') + esc(R.mix.main) + '</th><th>' + T('Share of ', 'हिस्सा: ') + esc(R.mix.ref) + '</th></tr>' + R.mix.rows.map(function (r) { return '<tr><td>' + esc(r.level) + '</td><td class="num">' + Math.round(r.shareMain * 100) + '%</td><td class="num">' + Math.round(r.shareRef * 100) + '%</td></tr>'; }).join('') + '</table></details>';
       }
-      html += '<div class="fr-how">' + T('How it is calculated: a linear regression of ' + yName + ' on the group and on each “adjust for” column (every value a 0/1 column), with robust (HC3) standard errors; the 95% range is ± 1.96 standard errors. It shows an association, not a cause. Adjusted for: ' + (R.adjusters.join(', ') || 'nothing') + '. R² = ' + R.r2.toFixed(2) + '.', 'गणना कैसे होती है: ' + yName + ' का रैखिक रिग्रेशन — समूह और हर “समायोजन” कॉलम पर (हर मान एक 0/1 कॉलम), मज़बूत (HC3) मानक त्रुटि के साथ; 95% सीमा = ± 1.96 मानक त्रुटि। यह संबंध दिखाता है, कारण नहीं। समायोजन: ' + (R.adjusters.join(', ') || 'कोई नहीं') + '. R² = ' + R.r2.toFixed(2) + '।') + '</div>';
+      html += '<div class="fr-how">' + (R.shapeNote ? '<b>' + esc(R.shapeNote) + '</b> ' : '') + (R.linear ? esc(R.linear === 'curve' ? T('Number columns are adjusted for as curves (a slope and a bend each, every row on its exact value); the plain gaps, the chart and the make-up table use 5 bands. ', 'संख्या कॉलम वक्र के रूप में समायोजित (हर एक की ढलान और मोड़, हर पंक्ति अपने सटीक मान पर); सीधे अंतर, चार्ट और बनावट तालिका 5 समूहों से। ') : T('Number columns are adjusted for as straight lines (one slope each, every row on its exact value); the plain gaps, the chart and the make-up table use 5 bands. ', 'संख्या कॉलम सीधी रेखा के रूप में समायोजित (हर एक की एक ढलान, हर पंक्ति अपने सटीक मान पर); सीधे अंतर, चार्ट और बनावट तालिका 5 समूहों से। ')) : '') + T('How it is calculated: a linear regression of ' + yName + ' on the group and on each “adjust for” column (every value a 0/1 column), with robust (HC3) standard errors; the 95% range is ± 1.96 standard errors. It shows an association, not a cause. Adjusted for: ' + (R.adjusters.join(', ') || 'nothing') + '. R² = ' + R.r2.toFixed(2) + '.', 'गणना कैसे होती है: ' + yName + ' का रैखिक रिग्रेशन — समूह और हर “समायोजन” कॉलम पर (हर मान एक 0/1 कॉलम), मज़बूत (HC3) मानक त्रुटि के साथ; 95% सीमा = ± 1.96 मानक त्रुटि। यह संबंध दिखाता है, कारण नहीं। समायोजन: ' + (R.adjusters.join(', ') || 'कोई नहीं') + '. R² = ' + R.r2.toFixed(2) + '।') + '</div>';
       html += '<div class="prj-row" style="margin-top:8px;flex-wrap:wrap"><button class="tb-btn" id="frCopy">' + T('Copy the finding', 'निष्कर्ष कॉपी करें') + '</button><button class="tb-btn" id="frChartBtn">📊 ' + T('Open as a chart', 'चार्ट के रूप में खोलें') + '</button></div>';
     }
     out.innerHTML = html;

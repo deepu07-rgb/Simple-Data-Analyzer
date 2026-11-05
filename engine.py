@@ -768,8 +768,10 @@ class Engine:
         INSIDE the groups of a stronger one? Each pair is one grouped scan."""
         out = []
         for p in (pairs or [])[:200]:
-            r = self.fair_cells(ds_id, y, p.get("x"), [p.get("z")], nozero, search, filters,
-                                bands={k: v for k, v in (bands or {}).items() if int(k) in (int(p.get("x")), int(p.get("z")))})
+            zs = p.get("z") if isinstance(p.get("z"), list) else [p.get("z")]      # one stronger column, or several together
+            used = {int(p.get("x"))} | {int(z) for z in zs}
+            r = self.fair_cells(ds_id, y, p.get("x"), zs[:3], nozero, search, filters,
+                                bands={k: v for k, v in (bands or {}).items() if int(k) in used})
             out.append({"x": p.get("x"), "z": p.get("z"), "cells": r["cells"]})
         return {"pairs": out}
 
@@ -803,7 +805,14 @@ class Engine:
         for n, r in enumerate((rules or [])[:60]):
             parts = []
             for c in r.get("conds") or []:
-                x = _num(self._check_col(d, c.get("col")))
+                ci = self._check_col(d, c.get("col"))
+                vals = c.get("values") if c.get("values") is not None else c.get("notValues")
+                if vals is not None:                                   # a text column: is (not) one of these values
+                    vals = [str(v) for v in vals][:500]
+                    marks = ", ".join("?" for _ in vals) or "NULL"
+                    parts.append(f"trim(coalesce({_col(ci)}, '')) {'IN' if c.get('values') is not None else 'NOT IN'} ({marks})"); wp.extend(vals)
+                    continue
+                x = _num(ci)
                 if c.get("min") is not None:
                     parts.append(f"({x} >= ? OR {x} IS NULL)"); wp.append(float(c["min"]))
                 if c.get("max") is not None:
@@ -827,6 +836,148 @@ class Engine:
             if l == want:
                 st["right"] += n; right += n
         return {"rules": stats, "otherwise": other, "n": total, "right": right}
+
+    def fair_linear(self, ds_id, y, factor, cat_adj=None, lin_adj=None, nozero=False, search=None, filters=None, ref=None, curve=False):
+        """Fair comparison with NUMBER adjusters as straight lines: an exact row-level linear regression of y on the
+        group (0/1 columns), text adjusters (0/1 columns) and number adjusters (one slope each), with HC3 robust errors
+        - streamed in two passes over the rows, so every row is used. Also the fit with each adjuster alone (for
+        "which factor moves the gap"), from sub-blocks of the same sums.
+        Returns {levels: {level: [diff, se]}, r2, n, alone: [{levels}], ref}"""
+        import numpy as np
+        d = self._ds(ds_id)
+        yi, fi = self._check_col(d, y), self._check_col(d, factor)
+        cats = [self._check_col(d, c) for c in (cat_adj or [])][:4]
+        lins = [self._check_col(d, c) for c in (lin_adj or [])][:4]
+        if fi in cats + lins or yi in [fi] + cats + lins:
+            raise EngineError("Choose different columns for the outcome, the groups and the adjustments.")
+        where, params = self._where(d, search, filters)
+
+        def text(i):
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+        conds = [f"{self._numz(yi, nozero)} IS NOT NULL"] + [f"{_num(i)} IS NOT NULL" for i in lins]
+        base = f"FROM {d['table']}{where}{' AND' if where else ' WHERE'} " + " AND ".join(conds)
+        cur = self.db.cursor()
+        dims, levels = [fi] + cats, []
+        for n, i in enumerate(dims):                                              # the values of each text column, most rows first
+            lim = 12 if n == 0 else 60
+            lv = [r[0] for r in cur.execute(f"SELECT {text(i)} AS v, count(*) {base} GROUP BY v ORDER BY count(*) DESC, v LIMIT {lim}", params).fetchall()]
+            levels.append(lv)
+        if len(levels[0]) < 2:
+            raise EngineError("The groups column needs at least two values.")
+        r0 = ref if ref in levels[0] else levels[0][0]
+        refs = [r0] + [lv[0] for lv in levels[1:]]
+        # design columns: intercept | group levels (not the reference) | each text adjuster's levels | each number adjuster
+        blocks, colnames, p = [], [], 1
+        for n, lv in enumerate(levels):
+            keep = [v for v in lv if v != refs[n]] + (["(Others)"] if n > 0 or len(lv) >= 12 else [])
+            blocks.append((p, keep)); colnames += [(n, v) for v in keep]; p += len(keep)
+        nz = len(lins) * (2 if curve else 1)                                       # a curve: each number also as its centred square
+        lin_at = list(range(p, p + nz)); p += nz
+        means = [cur.execute(f"SELECT avg({_num(i)}) {base}", params).fetchone()[0] or 0.0 for i in lins] if curve else []
+        # each text column arrives as the number of its design column (0 = the reference value: no column)
+        codes, cparams = [], []
+        for n, i in enumerate(dims):
+            st, keep = blocks[n]
+            known = [v for v in levels[n] if v != refs[n]]
+            other = (keep.index("(Others)") + 1) if "(Others)" in keep else 0
+            codes.append(f"CASE WHEN {text(i)} = ? THEN 0 ELSE coalesce(list_position(?::VARCHAR[], {text(i)}), {other}) END")
+            cparams += [refs[n], known]
+        sel = ", ".join(codes + [_num(i) for i in lins] + [self._numz(yi, nozero)])
+        sql = f"SELECT {sel} {base}"
+        qparams = cparams + params
+        subsets = [list(range(p))]                                                 # the full fit, then group + one adjuster
+        grp = [0] + list(range(blocks[0][0], blocks[0][0] + len(blocks[0][1])))
+        for n in range(1, len(dims)):
+            st, keep = blocks[n]; subsets.append(grp + list(range(st, st + len(keep))))
+        for k in range(len(lins)):
+            subsets.append(grp + ([lin_at[k], lin_at[len(lins) + k]] if curve else [lin_at[k]]))
+
+        def chunks():
+            res = cur.execute(sql, qparams)                                         # duckdb 1.4+: to_arrow_reader; older: fetch_record_batch
+            reader = res.to_arrow_reader(100000) if hasattr(res, "to_arrow_reader") else res.fetch_record_batch(100000)
+            for batch in reader:
+                m = batch.num_rows
+                X = np.zeros((m, p)); X[:, 0] = 1.0
+                rr = np.arange(m)
+                for n in range(len(dims)):
+                    st = blocks[n][0]
+                    code = np.asarray(batch.column(n).to_numpy(zero_copy_only=False), dtype=np.int64)
+                    on = code > 0
+                    X[rr[on], st + code[on] - 1] = 1.0
+                for k in range(len(lins)):
+                    z = np.asarray(batch.column(len(dims) + k).to_numpy(zero_copy_only=False), dtype=float)
+                    X[:, lin_at[k]] = z
+                    if curve:
+                        X[:, lin_at[len(lins) + k]] = (z - means[k]) ** 2
+                yv = np.asarray(batch.column(len(dims) + len(lins)).to_numpy(zero_copy_only=False), dtype=float)
+                yield X, yv
+        XtX, Xty, n, sy, syy = np.zeros((p, p)), np.zeros(p), 0, 0.0, 0.0
+        for X, yv in chunks():
+            XtX += X.T @ X; Xty += X.T @ yv; n += len(yv); sy += yv.sum(); syy += (yv * yv).sum()
+        if n <= p:
+            raise EngineError("Too few rows for this comparison.")
+        fits = []
+        for sub in subsets:
+            A = np.linalg.pinv(XtX[np.ix_(sub, sub)], rcond=1e-10)
+            fits.append({"sub": sub, "A": A, "b": A @ Xty[sub], "meat": np.zeros((len(sub), len(sub))), "sse": 0.0,
+                         "rank": int(np.linalg.matrix_rank(XtX[np.ix_(sub, sub)]))})
+        for X, yv in chunks():
+            for f in fits:
+                Xs = X[:, f["sub"]]
+                e = yv - Xs @ f["b"]
+                h = np.einsum("ij,jk,ik->i", Xs, f["A"], Xs)
+                w = (e / np.maximum(1 - h, 1e-6)) ** 2
+                f["meat"] += (Xs * w[:, None]).T @ Xs; f["sse"] += float(e @ e)
+        sst = syy - sy * sy / n
+
+        def result(f):
+            V = f["A"] @ f["meat"] @ f["A"]
+            out = {}
+            for j, col in enumerate(f["sub"]):
+                if 1 <= col < 1 + len(blocks[0][1]):
+                    out[blocks[0][1][col - 1]] = [float(f["b"][j]), float(math.sqrt(max(V[j, j], 0)))]
+            return out
+        sse, rank = fits[0]["sse"], fits[0]["rank"]
+        return {"levels": result(fits[0]), "r2": 1 - sse / sst if sst > 0 else 0.0, "n": n, "ref": r0, "sse": sse, "p": rank,
+                "aic": n * math.log(max(sse, 1e-300) / n) + 2 * rank, "curve": bool(curve),
+                "alone": [result(f) for f in fits[1:]], "adjusters": [int(c) for c in cats] + [int(c) for c in lins]}
+
+    FORMULA_SQL = {
+        "add": "({a} + {b})", "sub": "({a} - {b})", "mul": "({a} * {b})", "div": "({a} / NULLIF({b}, 0))",
+        "pctof": "({a} * {b} / 100)", "less": "({a} * (1 - {b} / 100))", "more": "({a} * (1 + {b} / 100))",
+        "divless": "({a} / NULLIF(1 - {b} / 100, 0))", "share": "({a} / NULLIF({b}, 0) * 100)",
+        "cdiv": "((? - {a}) / NULLIF({b}, 0))", "divc": "(({a} - ?) / NULLIF({b}, 0))", "lin": "(? * {a} + ?)",
+    }
+
+    def column_checks(self, ds_id, formulas=None, caps=None, search=None, filters=None):
+        """Formulas between columns and caps, checked on EVERY row: per formula how many rows fit (allowing for the
+        rounding of the result column), per cap how many rows sit exactly on the value."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        cur = self.db.cursor()
+        out_f, out_c = [], []
+        for f in (formulas or [])[:40]:
+            op = f.get("op")
+            if op not in self.FORMULA_SQL:
+                raise EngineError("Unknown formula.")
+            t = _num(self._check_col(d, f.get("t")))
+            a = _num(self._check_col(d, f.get("a")))
+            b = _num(self._check_col(d, f.get("b"))) if op != "lin" else "NULL"
+            expr = self.FORMULA_SQL[op].format(a=a, b=b)
+            ep = [float(f.get("c") or 0)] if op in ("cdiv", "divc") else ([float(f.get("k", 1)), float(f.get("c") or 0)] if op == "lin" else [])
+            dec = max(0, min(int(f.get("d", 6)), 6))
+            tol = f"(0.5 * {10.0 ** -dec!r} * 1.01 + 0.002 * abs(t) + 1e-9)"
+            sql = (f"SELECT count(*), count(*) FILTER (WHERE abs(p - t) <= {tol}) FROM "
+                   f"(SELECT {t} AS t, {expr} AS p FROM {d['table']}{where}) WHERE t IS NOT NULL AND p IS NOT NULL AND isfinite(p)")
+            n, ok = cur.execute(sql, ep + params).fetchone()
+            out_f.append({"n": n, "ok": ok})
+        for c in (caps or [])[:40]:
+            x = _num(self._check_col(d, c.get("col")))
+            n, cnt = cur.execute(f"SELECT count({x}), count(*) FILTER (WHERE {x} = ?) FROM {d['table']}{where}",
+                                 [float(c.get("value"))] + params).fetchone()
+            out_c.append({"n": n, "count": cnt})
+        return {"formulas": out_f, "caps": out_c}
 
     def sample(self, ds_id, n=4000):
         """An evenly random handful of rows (always the same ones) so the browser can tell which columns are

@@ -413,3 +413,78 @@ def test_fair_pairs_equal_fair_cells_one_by_one(tiers):
     two = eng.fair_cells(i, 0, 1, [2], bands={1: bands[1]})["cells"]
     key = lambda cs: sorted((tuple(c["k"]), c["n"], round(c["sy"], 6)) for c in cs)
     assert key(res[0]["cells"]) == key(one) and key(res[1]["cells"]) == key(two)
+
+
+def test_column_checks_count_formulas_and_caps_on_every_row(eng):
+    r = random.Random(4)
+    rows = []
+    for _ in range(3000):
+        cost = min(round(r.uniform(9000, 16000)), 15000)                          # capped at 15,000
+        waste = round(r.uniform(1, 30), 1)
+        temp = round(r.uniform(30, 72), 1)
+        transit = r.randint(5, 90)
+        rows.append([str(cost), str(waste), str(round(cost / (1 - waste / 100))), str(temp), str(transit), str(round((75 - temp) / transit, 3))])
+    i = eng.load_rows(["Cost", "Waste", "Adjusted", "Temp", "Transit", "Cooling"], rows, "f")["id"]
+    res = eng.column_checks(i, formulas=[{"t": 2, "a": 0, "b": 1, "op": "divless", "d": 0}, {"t": 5, "a": 3, "b": 4, "op": "cdiv", "c": 75, "d": 3},
+                                         {"t": 2, "a": 0, "b": 1, "op": "mul", "d": 0}],
+                            caps=[{"col": 0, "value": 15000}])
+    assert res["formulas"][0] == {"n": 3000, "ok": 3000}
+    assert res["formulas"][1] == {"n": 3000, "ok": 3000}
+    assert res["formulas"][2]["ok"] < 100, "a wrong formula does not fit"
+    want = sum(1 for row in rows if row[0] == "15000")
+    assert res["caps"][0] == {"n": 3000, "count": want} and want > 300
+    with pytest.raises(eng_mod.EngineError):
+        eng.column_checks(i, formulas=[{"t": 2, "a": 0, "b": 1, "op": "drop table"}])
+
+
+def test_fair_pairs_accepts_several_columns_together(tiers):
+    eng, i, truth = tiers
+    res = eng.fair_pairs(i, 0, [{"x": 3, "z": [2, 1]}], bands={1: [30, 48, 60, 73]})["pairs"][0]["cells"]
+    one = eng.fair_cells(i, 0, 3, [2, 1], bands={1: [30, 48, 60, 73]})["cells"]
+    key = lambda cs: sorted((tuple(c["k"]), c["n"]) for c in cs)
+    assert key(res) == key(one) and all(len(c["k"]) == 3 for c in res)
+
+
+def test_fair_linear_equals_statsmodels_hc3(eng):
+    sm = pytest.importorskip("statsmodels.formula.api")
+    import pandas as pd
+    r = random.Random(12)
+    rows = []
+    for _ in range(3000):
+        mode = r.choice(["Boat", "Van", "Bike", "Bike"])
+        grp = r.choice(["SD", "SMP", "SMA"])
+        temp = round(r.uniform(30, 72) - (12 if mode == "Boat" else 0), 1)
+        waste = round(20 - 0.15 * temp + (3 if grp == "SD" else 0) + r.gauss(0, 3), 1)
+        rows.append([mode, grp, str(temp), str(waste)])
+    i = eng.load_rows(["Mode", "Group", "Temp", "Waste"], rows, "l")["id"]
+    res = eng.fair_linear(i, 3, 0, [1], [2], ref="Bike")
+    df = pd.DataFrame(rows, columns=["mode", "grp", "temp", "waste"]).astype({"temp": float, "waste": float})
+    m = sm.ols("waste ~ C(mode, Treatment('Bike')) + C(grp, Treatment('SD')) + temp", df).fit(cov_type="HC3")
+    for lv in ["Boat", "Van"]:
+        k = f"C(mode, Treatment('Bike'))[T.{lv}]"
+        assert abs(res["levels"][lv][0] - m.params[k]) < 1e-8 and abs(res["levels"][lv][1] - m.bse[k]) < 1e-8
+    assert abs(res["r2"] - m.rsquared) < 1e-9 and res["n"] == 3000
+    alone = sm.ols("waste ~ C(mode, Treatment('Bike')) + temp", df).fit(cov_type="HC3")
+    assert abs(res["alone"][1]["Boat"][0] - alone.params["C(mode, Treatment('Bike'))[T.Boat]"]) < 1e-8
+    assert abs(res["alone"][1]["Boat"][1] - alone.bse["C(mode, Treatment('Bike'))[T.Boat]"]) < 1e-8
+
+
+def test_fair_linear_curve_and_aic_equal_statsmodels(eng):
+    sm = pytest.importorskip("statsmodels.formula.api")
+    import pandas as pd
+    r = random.Random(3)
+    rows = []
+    for _ in range(2500):
+        mode = r.choice(["Boat", "Bike", "Bike"])
+        temp = round(r.uniform(30, 72) - (10 if mode == "Boat" else 0), 1)
+        waste = round(30 - 0.6 * temp + 0.005 * (temp - 50) ** 2 * 10 + r.gauss(0, 2), 1)
+        rows.append([mode, str(temp), str(waste)])
+    i = eng.load_rows(["Mode", "Temp", "Waste"], rows, "c")["id"]
+    df = pd.DataFrame(rows, columns=["mode", "temp", "waste"]).astype({"temp": float, "waste": float})
+    df["t2"] = (df.temp - df.temp.mean()) ** 2
+    for curve, formula in [(False, "waste ~ C(mode, Treatment('Bike')) + temp"), (True, "waste ~ C(mode, Treatment('Bike')) + temp + t2")]:
+        res = eng.fair_linear(i, 2, 0, [], [1], ref="Bike", curve=curve)
+        m = sm.ols(formula, df).fit(cov_type="HC3")
+        k = "C(mode, Treatment('Bike'))[T.Boat]"
+        assert abs(res["levels"]["Boat"][0] - m.params[k]) < 1e-8 and abs(res["levels"]["Boat"][1] - m.bse[k]) < 1e-8
+        assert res["p"] == len(m.params) and abs(res["aic"] - (len(df) * np.log(m.ssr / len(df)) + 2 * len(m.params))) < 1e-6

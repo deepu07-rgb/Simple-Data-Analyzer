@@ -65,3 +65,24 @@ test('fast on a quarter of a million rows', () => {
   const t0 = Date.now(), R = F.analyse(F.cellsFromRows(big, big.map((_, i) => i), { y: 0, factor: 1, adjusters: [2, 3] }).cells, ['F', 'A', 'B']);
   assert.ok(R.main.adj && Date.now() - t0 < 3000, 'took ' + (Date.now() - t0));
 });
+
+test('number adjusters as straight lines: row-level regression equals statsmodels (HC3)', () => {
+  const LX = JSON.parse(require('fs').readFileSync(__dirname + '/fixtures/linear_fixture.json', 'utf8'));
+  const F2 = F, idx = LX.rows.map((_, i) => i);
+  const r = F2.linearFit(LX.rows, idx, { y: 3, factor: 0, cats: [1], lins: [2], ref: 'Bike' });
+  ['Boat', 'Van'].forEach(lv => { assert.ok(Math.abs(r.levels[lv][0] - LX.full[lv][0]) < 1e-8, lv + ' coef'); assert.ok(Math.abs(r.levels[lv][1] - LX.full[lv][1]) < 1e-8, lv + ' se'); });
+  assert.ok(Math.abs(r.r2 - LX.r2) < 1e-9);
+  assert.ok(Math.abs(r.alone[1].Boat[0] - LX.aloneTemp.Boat[0]) < 1e-8 && Math.abs(r.alone[1].Boat[1] - LX.aloneTemp.Boat[1]) < 1e-8, 'temperature alone');
+});
+
+test('a curve (slope + bend) and the AIC used to choose the shape equal statsmodels', () => {
+  const LX = JSON.parse(require('fs').readFileSync(__dirname + '/fixtures/linear_fixture.json', 'utf8')), idx = LX.rows.map((_, i) => i);
+  const line = F.linearFit(LX.rows, idx, { y: 3, factor: 0, cats: [1], lins: [2], ref: 'Bike' });
+  const curve = F.linearFit(LX.rows, idx, { y: 3, factor: 0, cats: [1], lins: [2], ref: 'Bike', curve: true });
+  ['Boat', 'Van'].forEach(lv => { assert.ok(Math.abs(curve.levels[lv][0] - LX.curve[lv][0]) < 1e-8 && Math.abs(curve.levels[lv][1] - LX.curve[lv][1]) < 1e-8, lv); });
+  assert.ok(Math.abs(line.aic - LX.aicLine) < 1e-6 && Math.abs(curve.aic - LX.aicCurve) < 1e-6, line.aic + ' / ' + curve.aic);
+  const R = F.analyse(F.cellsFromRows(LX.rows, idx, { y: 3, factor: 0, adjusters: [1] }).cells, ['Mode', 'Group']);
+  assert.ok(Math.abs(R.aic - LX.aicCats) < 1e-6, 'cell fit AIC ' + R.aic + ' vs ' + LX.aicCats);
+  const R2 = F.useLinear(F.analyse(F.cellsFromRows(LX.rows, idx, { y: 3, factor: 0, adjusters: [1, 2] }).cells, ['Mode', 'Group', 'Temp (bands)']), line, ['Mode', 'Group', 'Temp (straight line)']);
+  assert.equal(R2.linear, 'line'); assert.deepEqual([...R2.adjusters], ['Group', 'Temp (straight line)']);
+});
