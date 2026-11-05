@@ -109,7 +109,7 @@ const file = (name, buffer) => ({ name, mimeType: 'application/octet-stream', bu
   ok(/rose by|fell by/.test(sent) && /\d/.test(sent), 'Change Radar writes what moved, with numbers', sent.slice(0, 160));
   const sumNow = M2.reduce((a, x) => a + +x[2], 0), sumPrev = M1.reduce((a, x) => a + +x[2], 0);
   ok(await page.$eval('#crDialog', (e, v) => e.innerText.includes(v), new Intl.NumberFormat('en-IN').format(sumNow)), 'the totals shown are the real totals');
-  ok(await page.waitForFunction(() => !!document.getElementById('crChart') && !!Chart.getChart(document.getElementById('crChart')), null, { timeout: 8000 }).then(() => true).catch(() => false), 'a movers chart is drawn');
+  ok(await page.waitForFunction(() => !!document.getElementById('crChart') && !!window.echarts && !!echarts.getInstanceByDom(document.getElementById('crChart')), null, { timeout: 8000 }).then(() => true).catch(() => false), 'a movers chart is drawn');
   await shot('p3_change');
   await page.evaluate(() => document.getElementById('crDialog').remove());
 
@@ -131,7 +131,7 @@ const file = (name, buffer) => ({ name, mimeType: 'application/octet-stream', bu
   ok(+kpi[2].split(' ')[0] === Math.max(...pending), 'oldest case is right', kpi[2]);
   const over180 = pending.filter(a => a > 180).length;
   ok(kpi[3].startsWith(String(over180)), 'over-180-day count is right', kpi[3]);
-  ok(await page.waitForFunction(() => !!document.getElementById('pdChart') && !!Chart.getChart(document.getElementById('pdChart')), null, { timeout: 8000 }).then(() => true).catch(() => false), 'stacked age chart is drawn');
+  ok(await page.waitForFunction(() => !!document.getElementById('pdChart') && !!window.echarts && !!echarts.getInstanceByDom(document.getElementById('pdChart')), null, { timeout: 8000 }).then(() => true).catch(() => false), 'stacked age chart is drawn');
   await page.fill('#pdDl', '90'); await page.dispatchEvent('#pdDl', 'change');
   await page.waitForSelector('#pdOver');
   const overdue = pending.filter(a => a > 90).length;
@@ -142,6 +142,21 @@ const file = (name, buffer) => ({ name, mimeType: 'application/octet-stream', bu
   await page.click('#pdOver');
   await page.waitForFunction(n => rawData.length === n, overdue, { timeout: 8000 });
   ok(true, 'the overdue cases open in the sheet for action');
+
+  // the stacked chart is clickable: a coloured segment opens exactly those cases
+  await page.evaluate(() => STL.openPendency());
+  await page.waitForFunction(() => !!document.getElementById('pdChart') && !!window.echarts && !!echarts.getInstanceByDom(document.getElementById('pdChart')), null, { timeout: 8000 });
+  await page.waitForTimeout(900);
+  const seg = await page.evaluate(() => {
+    const inst = echarts.getInstanceByDom(document.getElementById('pdChart')), o = inst.getOption(), r = document.getElementById('pdChart').getBoundingClientRect();
+    let cum = 0; for (let b = 0; b < o.series.length; b++) { const v = o.series[b].data[0]; if (v >= 3) { const p = inst.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [cum + v / 2, 0]); return { x: r.left + p[0], y: r.top + p[1], count: v, group: o.yAxis[0].data[0] }; } cum += v; }
+    return null;
+  });
+  if (seg) {
+    await page.mouse.click(seg.x, seg.y); await page.waitForTimeout(800);
+    const opened = await page.evaluate(() => ({ n: rawData.length, name: document.getElementById('documentName').textContent, dialog: !!document.getElementById('pdDialog') }));
+    ok(opened.n === seg.count && !opened.dialog && opened.name.includes(seg.group), 'clicking a coloured segment of the age chart opens exactly those ' + seg.count + ' cases', { seg, opened });
+  } else ok(false, 'no segment large enough to click in the age chart');
 
   // ---- 4. Letters
   const people = ['नाम,पिता का नाम,गाँव,प्रकरण संख्या,राशि'];

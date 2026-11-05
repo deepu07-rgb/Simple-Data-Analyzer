@@ -10,16 +10,19 @@
   function $(id) { return document.getElementById(id); }
   function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
   function lang() { return (typeof uiLanguage !== 'undefined' && uiLanguage === 'hi') ? 'hi' : 'en'; }
+  // charts use the same ECharts look as the Chart Studio: hover tooltips, save as picture, data view, legend toggles, click to act
   var charts = {};
-  function drawChart(id, cfg) {
-    ensureChartLibrary(function () {
+  function disposeCharts() { Object.keys(charts).forEach(function (k) { try { charts[k].dispose(); } catch (e) {} }); charts = {}; }
+  function drawChart(id, build, onClick) {
+    STL.ensureECharts(function () {
       var el = $(id); if (!el) return;
-      if (charts[id]) { try { charts[id].destroy(); } catch (e) {} }
-      Chart.defaults.font.family = "'Inter','Noto Sans Devanagari','Mangal',sans-serif";
-      charts[id] = new Chart(el, cfg);
+      if (charts[id]) { try { charts[id].dispose(); } catch (e) {} }
+      var inst = charts[id] = echarts.init(el, null, { renderer: 'canvas' });
+      inst.setOption(build(STL.charts.kit.envOf({ hi: lang() === 'hi' })));
+      if (onClick) inst.on('click', onClick);
+      if (window.ResizeObserver) new ResizeObserver(function () { try { inst.resize(); } catch (e) {} }).observe(el);
     });
   }
-  function axisColors() { var c = css('--text-secondary') || '#64748b', g = css('--border') || 'rgba(127,127,127,.25)'; return { tick: c, grid: g }; }
 
   // =================================================================== CHANGE RADAR
   STL.openChangeRadar = function () {
@@ -44,7 +47,7 @@
         // chart
         if (res.insights.length) {
           html += '<div class="rp-chart-h"><select id="crChartSel" class="big-select">' + res.insights.map(function (i, k) { return '<option value="' + k + '"' + (k === CR.chartIdx ? ' selected' : '') + '>' + esc(i.column + ' — ' + T('by ', 'के अनुसार ') + i.groupBy) + '</option>'; }).join('') + '</select></div>' +
-            '<div class="rp-chart"><canvas id="crChart"></canvas></div>';
+            '<div class="rp-chart"><div id="crChart" class="rp-echart"></div></div>';
         }
         // totals
         html += '<div class="prj-sub">' + T('All number columns', 'सभी संख्या कॉलम') + '</div><div class="big-tbl-wrap" style="max-height:200px"><table class="big-tbl"><tr><th>' + T('Column', 'कॉलम') + '</th><th>' + T('Last month', 'पिछला माह') + '</th><th>' + T('Now', 'अब') + '</th><th>' + T('Change', 'बदलाव') + '</th><th>%</th></tr>' +
@@ -60,7 +63,7 @@
           '<button class="tb-btn" id="crCopy">' + T('Copy summary', 'सार कॉपी करें') + '</button><button class="tb-btn" id="crAgain">' + T('Another file', 'दूसरी फ़ाइल') + '</button></div>';
       }
       var o = overlay('crDialog', html, true);
-      $('crX').onclick = function () { o.remove(); };
+      $('crX').onclick = function () { o.remove(); disposeCharts(); };
       if ($('crPick')) $('crPick').onclick = pick;
       if ($('crAgain')) $('crAgain').onclick = pick;
       if ($('crChartSel')) $('crChartSel').onchange = function () { CR.chartIdx = +this.value; chart(); };
@@ -75,11 +78,16 @@
     function kpi(label, value, extra) { return '<div class="rp-kpi"><b>' + value + '</b><span>' + label + '</span>' + (extra ? '<i>' + extra + '</i>' : '') + '</div>'; }
     function chart() {
       var ins = CR.res.insights[CR.chartIdx]; if (!ins) return;
-      var ax = axisColors(), mv = ins.movers.slice().sort(function (a, b) { return b.delta - a.delta; });
-      drawChart('crChart', { type: 'bar', data: { labels: mv.map(function (x) { return String(x.name).slice(0, 22); }),
-        datasets: [{ data: mv.map(function (x) { return x.delta; }), backgroundColor: mv.map(function (x) { return x.delta > 0 ? '#6d5bd0' : '#14a38b'; }), borderRadius: 4, maxBarThickness: 22 }] },
-        options: { indexAxis: 'y', animation: { duration: 450 }, plugins: { legend: { display: false }, title: { display: true, text: ins.column + ' — ' + T('change since last month', 'पिछले माह से बदलाव'), color: ax.tick }, tooltip: { callbacks: { label: function (c) { return (c.raw > 0 ? '+' : '') + C.indian(c.raw); } } } },
-          scales: { x: { ticks: { color: ax.tick }, grid: { color: ax.grid } }, y: { ticks: { color: ax.tick }, grid: { display: false } } }, maintainAspectRatio: false } });
+      var mv = ins.movers.slice().sort(function (a, b) { return b.delta - a.delta; });
+      drawChart('crChart', function (env) {
+        var K = STL.charts.kit, o = K.base({ title: ins.column + ' — ' + T('change since last month', 'पिछले माह से बदलाव') }, env), sg = function (v) { return (v > 0 ? '+' : '') + STL.charts.indian(v); };
+        o.legend = undefined; o.tooltip.trigger = 'axis'; o.tooltip.axisPointer = { type: 'shadow' };
+        o.tooltip.formatter = function (ps) { var p = ps[0]; return p.name + '<br/>' + p.marker + '<b>' + sg(p.value) + '</b> ' + (p.value > 0 ? T('more than last month', 'पिछले माह से अधिक') : T('less than last month', 'पिछले माह से कम')); };
+        o.grid = { left: 12, right: 54, top: 50, bottom: 16, containLabel: true };
+        o.xAxis = K.valueAxis(env, '', function (v) { return STL.charts.compact(v, env.hi); }); o.yAxis = K.catAxis(env, mv.map(function (x) { return x.name; }), { inverse: true });
+        o.series = [{ type: 'bar', barMaxWidth: 22, emphasis: { focus: 'self' }, data: mv.map(function (x) { return { value: x.delta, itemStyle: { color: x.delta > 0 ? '#6d5bd0' : '#14a38b', borderRadius: x.delta > 0 ? [0, 4, 4, 0] : [4, 0, 0, 4] }, label: { show: true, position: x.delta > 0 ? 'right' : 'left', color: env.sub, formatter: function (p) { return (p.value > 0 ? '+' : '') + STL.charts.compact(p.value, env.hi); } } }; }) }];
+        return o;
+      });
     }
     function pick() {
       H.pickFile('.csv,.tsv,.txt,.xlsx,.xls').then(function (f) {
@@ -140,7 +148,7 @@
         var t = res.total;
         html += '<div class="rp-kpis">' + [[T('Pending cases', 'लंबित प्रकरण'), fmt(t.total)], [T('Average age', 'औसत आयु'), Math.round(t.avgAge) + ' ' + T('days', 'दिन')], [T('Oldest', 'सबसे पुराना'), t.oldest + ' ' + T('days', 'दिन')], [T('Over 180 days', '180 दिन से अधिक'), fmt(t.over180) + ' (' + t.over180Pct.toFixed(0) + '%)']].map(function (k) { return '<div class="rp-kpi"><b>' + k[1] + '</b><span>' + k[0] + '</span></div>'; }).join('') +
           (res.deadline ? '<div class="rp-kpi warn"><b>' + fmt(res.overdueCount) + '</b><span>' + T('past the ' + res.deadline + '-day deadline', res.deadline + ' दिन की समय-सीमा पार') + '</span></div>' : '') + '</div>';
-        if (res.groups.length > 1) html += '<div class="rp-chart tall"><canvas id="pdChart"></canvas></div>';
+        if (res.groups.length > 1) html += '<div class="rp-chart tall"><div id="pdChart" class="rp-echart"></div></div>';
         var maxCol = res.labels.map(function (_, b) { return Math.max.apply(null, res.groups.map(function (x) { return x.counts[b]; })) || 1; });
         html += '<div class="big-tbl-wrap" style="max-height:300px"><table class="big-tbl rp-heat"><tr><th>' + (PD.group >= 0 ? esc(headers[PD.group]) : '') + '</th>' + res.labels.map(function (l) { return '<th>' + esc(l) + ' ' + T('days', 'दिन') + '</th>'; }).join('') + '<th>' + T('Total', 'कुल') + '</th><th>' + T('Oldest', 'सबसे पुराना') + '</th><th>&gt;180 %</th></tr>' +
           res.groups.map(function (gx) { return '<tr><td>' + esc(gx.name) + '</td>' + gx.counts.map(function (n, b) { return '<td class="num" style="background:' + heat(n / maxCol[b], b, res.labels.length) + '">' + (n || '') + '</td>'; }).join('') + '<td class="num"><b>' + fmt(gx.total) + '</b></td><td class="num">' + gx.oldest + '</td><td class="num">' + gx.over180Pct.toFixed(0) + '%</td></tr>'; }).join('') +
@@ -157,16 +165,30 @@
         html += '<div class="prj-row" style="margin-top:10px;flex-wrap:wrap"><button class="tb-btn primary" id="pdSnap">' + T('Save this week\'s snapshot', 'इस सप्ताह का स्नैपशॉट सहेजें') + '</button><button class="tb-btn" id="pdSheet">' + T('Put this table in the sheet', 'यह तालिका शीट में रखें') + '</button></div>';
       }
       var o = overlay('pdDialog', html, true);
-      $('pdX').onclick = function () { o.remove(); };
+      $('pdX').onclick = function () { o.remove(); disposeCharts(); };
       $('pdSet').addEventListener('toggle', function () { PD.open = this.open; });          // stay open while the user is adjusting settings
       wire(o); if (res && res.groups.length > 1) chart();
     }
     function heat(frac, b, n) { if (!frac) return 'transparent'; var c = rampFor(n)[b], a = 0.12 + 0.55 * Math.min(frac, 1); var m = /#(..)(..)(..)/.exec(c); return 'rgba(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ',' + a.toFixed(2) + ')'; }
     function chart() {
-      var res = PD.res, ax = axisColors(), top = res.groups.slice(0, 12), cols = rampFor(res.labels.length);
-      drawChart('pdChart', { type: 'bar', data: { labels: top.map(function (x) { return String(x.name).slice(0, 20); }), datasets: res.labels.map(function (l, b) { return { label: l + ' ' + T('days', 'दिन'), data: top.map(function (x) { return x.counts[b]; }), backgroundColor: cols[b], borderRadius: 2 }; }) },
-        options: { indexAxis: 'y', animation: { duration: 450 }, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: ax.tick, boxWidth: 12 } }, title: { display: true, text: T('Pending cases by age', 'आयु के अनुसार लंबित प्रकरण') + (res.groups.length > 12 ? ' (' + T('top 12', 'शीर्ष 12') + ')' : ''), color: ax.tick } },
-          scales: { x: { stacked: true, ticks: { color: ax.tick }, grid: { color: ax.grid } }, y: { stacked: true, ticks: { color: ax.tick }, grid: { display: false } } } } });
+      var res = PD.res, top = res.groups.slice(0, 12), cols = rampFor(res.labels.length);
+      drawChart('pdChart', function (env) {
+        var K = STL.charts.kit, o = K.base({ title: T('Pending cases by age', 'आयु के अनुसार लंबित प्रकरण') + (res.groups.length > 12 ? ' (' + T('top 12', 'शीर्ष 12') + ')' : '') }, env);
+        o.color = cols; o.tooltip.trigger = 'axis'; o.tooltip.axisPointer = { type: 'shadow' };
+        o.tooltip.formatter = function (ps) { var g = top[ps[0].dataIndex], tot = ps.reduce(function (a, p) { return a + (p.value || 0); }, 0); return '<b>' + g.name + '</b><br/>' + ps.filter(function (p) { return p.value; }).map(function (p) { return p.marker + p.seriesName + ': <b>' + STL.charts.indian(p.value) + '</b>'; }).join('<br/>') + '<br/>' + T('Total ', 'कुल ') + '<b>' + STL.charts.indian(tot) + '</b><br/><span style="color:#94a3b8">' + T('Click a coloured bar to open those cases', 'उन प्रकरणों को खोलने के लिए रंगीन पट्टी पर क्लिक करें') + '</span>'; };
+        o.grid = { left: 12, right: 24, top: 50, bottom: 44, containLabel: true };
+        o.xAxis = K.valueAxis(env, '', function (v) { return STL.charts.compact(v, env.hi); }); o.yAxis = K.catAxis(env, top.map(function (x) { return x.name; }), { inverse: true });
+        o.legend = { type: 'scroll', bottom: 4, textStyle: { color: env.text }, icon: 'roundRect', itemWidth: 12, itemHeight: 8 };
+        o.series = res.labels.map(function (l, b) { return { name: l + ' ' + T('days', 'दिन'), type: 'bar', stack: 'age', barMaxWidth: 26, emphasis: { focus: 'series' }, itemStyle: { borderColor: '#fff', borderWidth: 1 }, label: { show: true, color: '#fff', fontSize: 10, formatter: function (p) { return p.value >= 8 ? p.value : ''; } }, data: top.map(function (x) { return x.counts[b]; }) }; });
+        return o;
+      }, function (p) {                                                                 // click a segment: those very cases open in the sheet
+        var g = top[p.dataIndex], rows = g.rows.filter(function (_, i) { return g.bk[i] === p.seriesIndex; });
+        if (!rows.length) return;
+        var dlg = $('pdDialog'); if (dlg) dlg.remove(); disposeCharts();
+        U.loadGrid([headers.slice()].concat(rows.map(function (i) { return rawData[i].slice(); })));
+        if ($('documentName')) $('documentName').textContent = g.name + ' · ' + res.labels[p.seriesIndex] + ' ' + T('days', 'दिन');
+        toast(fmt(rows.length) + T(' cases opened in the sheet', ' प्रकरण शीट में खुले'), 'success');
+      });
     }
     function wire(o) {
       var again = function () { var d = $('pdSet'); if (d) PD.open = d.open; compute(); render(); };      // remember the panel state before redrawing

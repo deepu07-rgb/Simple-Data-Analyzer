@@ -465,6 +465,9 @@
   var SCATTER = { scatter: 1, bubble: 1 };
   function niceMax(v) { if (v <= 0) return 1; var p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
 
+  // the look shared by every chart in Stellura (used by the radars and the large-file group tab too)
+  CH.kit = { base: base, valueAxis: valueAxis, catAxis: catAxis, colors: colors, envOf: envOf, T: T, zoom: zoom };
+
   // data and side tables a chart type needs (prepared once; the builders only draw)
   CH.compute = function (type, spec, headers, rows, idx, env0) {
     var env = envOf(env0), ctx = {}, data; spec = Object.assign({}, spec); spec._hi = env.hi;

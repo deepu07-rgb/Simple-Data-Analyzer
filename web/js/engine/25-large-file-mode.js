@@ -382,6 +382,23 @@
   }
 
   var groupChart = null;
+  // the Group tab draws with the same chart system as the Studio; clicking a bar filters the file to that group
+  function drawGroupChart(r, fn, by) {
+    var el = $('bgChart'); if (!el) return;
+    var hi = (typeof uiLanguage !== 'undefined' && uiLanguage === 'hi');
+    STL.ensureECharts(function () {
+      var CH = STL.charts, idx = r.rows.map(function (_, i) { return i; });
+      var out = CH.build('bar', { x: 0, ys: [{ col: 1, fn: 'sum', as: fn, name: r.headers[1] }], sort: 'desc', topN: 0, title: r.headers[1] + ' — ' + r.headers[0] }, r.headers, r.rows, idx, { hi: hi });
+      var o = out.option; o.toolbox = undefined; o.dataZoom = undefined; o.brush = undefined;
+      if (groupChart) { try { groupChart.dispose(); } catch (e) {} }
+      groupChart = echarts.init(el, null, { renderer: 'canvas' }); groupChart.setOption(o);
+      groupChart.on('click', function (p) {
+        var c = out.data.cats[p.dataIndex]; if (!c || c.isOthers) return;
+        BIG.filters.push(c.label === '(blank)' ? { col: by, op: 'empty' } : { col: by, op: 'ieq', value: c.label, label: '= ' + c.label });
+        renderFilterBar(); BIG.refresh();
+      });
+    });
+  }
   function paneGroup(pane) {
     var cols = BIG.headers.map(function (h, i) { return '<option value="' + i + '">' + esc(h) + '</option>'; }).join('');
     var nums = (BIG.profile ? BIG.profile.columns.filter(function (c) { return c.type === 'number'; }) : [])
@@ -403,15 +420,9 @@
       var aggs = [fn === 'count' ? { fn: 'count' } : { fn: fn, col: +col }];
       api('/api/engine/' + BIG.ds + '/aggregate', { groupBy: [by], aggs: aggs, limit: n, desc: true, search: BIG.search, filters: queryBody().filters }).then(function (r) {
         var out = $('bgOut');
-        out.innerHTML = '<canvas id="bgChart" height="190"></canvas><table class="big-tbl"><tr><th>' + esc(r.headers[0]) + '</th><th>' + esc(r.headers[1]) + '</th></tr>' +
+        out.innerHTML = '<div id="bgChart" class="big-echart"></div><div class="big-note">' + T('Click a bar to show only that group in the file.', 'केवल उस समूह को फ़ाइल में देखने के लिए पट्टी पर क्लिक करें।') + '</div><table class="big-tbl"><tr><th>' + esc(r.headers[0]) + '</th><th>' + esc(r.headers[1]) + '</th></tr>' +
           r.rows.map(function (x) { return '<tr><td>' + esc(x[0]) + '</td><td class="num">' + fmtNum(x[1]) + '</td></tr>'; }).join('') + '</table>';
-        ensureChartLibrary(function () {
-          if (groupChart) groupChart.destroy();
-          var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#6366f1';
-          groupChart = new Chart($('bgChart'), { type: 'bar',
-            data: { labels: r.rows.map(function (x) { return String(x[0]).slice(0, 18); }), datasets: [{ label: r.headers[1], data: r.rows.map(function (x) { return x[1]; }), backgroundColor: accent }] },
-            options: { indexAxis: 'y', plugins: { legend: { display: false } }, animation: false, scales: { x: { ticks: { color: '#94a3b8' } }, y: { ticks: { color: '#94a3b8' } } } } });
-        });
+        drawGroupChart(r, fn, by);
       }).catch(function (e) { toast(e.message, 'error'); });
     };
   }

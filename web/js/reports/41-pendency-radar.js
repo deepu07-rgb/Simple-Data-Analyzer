@@ -106,8 +106,8 @@
       if (age < 0) { future++; return; }
       var gname = opts.groupCol >= 0 ? (s(r[opts.groupCol]).trim() || '(blank)') : 'All';
       var g = groups[gname];
-      if (!g) { g = groups[gname] = { name: gname, counts: edges.map(function () { return 0; }).concat([0]), total: 0, ages: 0, oldest: -1, rows: [] }; order.push(gname); }
-      var b = bucket(age); g.counts[b]++; g.total++; g.ages += age; if (age > g.oldest) g.oldest = age; g.rows.push(ri);
+      if (!g) { g = groups[gname] = { name: gname, counts: edges.map(function () { return 0; }).concat([0]), total: 0, ages: 0, oldest: -1, rows: [], bk: [] }; order.push(gname); }
+      var b = bucket(age); g.counts[b]++; g.total++; g.ages += age; if (age > g.oldest) g.oldest = age; g.rows.push(ri); g.bk.push(b);
       total.counts[b]++; total.total++; total.ages += age; if (age > total.oldest) total.oldest = age;
       if (dl) {
         if (age > dl) overdue.push({ row: ri, age: age, group: gname, over: age - dl });             // past the deadline

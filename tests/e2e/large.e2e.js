@@ -99,8 +99,15 @@ console.log(`test file: ${N.toLocaleString()} rows, ${(fs.statSync(file).size / 
   await page.selectOption('#bgFn', 'sum'); await page.selectOption('#bgBy', '2');
   await page.click('#bgRun');
   await page.waitForSelector('#bgOut table tr:nth-child(2)', { timeout: 8000 });
-  const chartDrawn = await page.waitForFunction(() => typeof Chart !== 'undefined' && !!Chart.getChart(document.getElementById('bgChart')), null, { timeout: 8000 }).then(() => true).catch(() => false);
+  const chartDrawn = await page.waitForFunction(() => !!window.echarts && !!echarts.getInstanceByDom(document.getElementById('bgChart')), null, { timeout: 8000 }).then(() => true).catch(() => false);
   ok(chartDrawn, 'Group & chart shows a table and a bar chart (respecting the filters)');
+  // clicking a bar of the group chart filters the file to that group
+  await page.waitForTimeout(1100);                                                  // let the bars finish growing
+  const gbar = await page.evaluate(() => { const inst = echarts.getInstanceByDom(document.getElementById('bgChart')), o = inst.getOption(), v = o.series[0].data[0], val = typeof v === 'object' && v ? v.value : v; const p = inst.convertToPixel({ seriesIndex: 0 }, [val, 0]), r = document.getElementById('bgChart').getBoundingClientRect(); return { x: r.left + Math.max(10, p[0] - 8), y: r.top + p[1], label: o.yAxis[0].data[0], matched: BIG.matched }; });
+  await page.mouse.click(gbar.x, gbar.y); await page.waitForTimeout(1200);
+  const gAfter = await page.evaluate(() => ({ matched: BIG.matched, f: BIG.filters.map(f => f.op + ':' + f.value) }));
+  ok(gAfter.matched > 0 && gAfter.matched <= gbar.matched && gAfter.f.includes('ieq:' + gbar.label), 'clicking a bar of the group chart adds a filter for that group (' + gbar.label + ', ' + gAfter.matched + ' rows)', { gbar, gAfter });
+  await page.evaluate(() => { BIG.filters = BIG.filters.filter(f => f.op !== 'ieq'); BIG.syncFilters(); }); await page.waitForTimeout(800);
   await page.click('.big-tabs button[data-tab="sql"]');
   await page.fill('#sqlText', 'SELECT "जिला", count(*) AS n FROM data GROUP BY 1 ORDER BY n DESC');
   await page.click('#sqlRun');
