@@ -307,13 +307,13 @@
   };
   // a yes/no (or few-valued text) column can be the outcome: "how often Late = Yes". On a large file the values come from every row.
   function outcomeOptions() {
-    var cols = FS.prof.filter(function (p) { return !p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 8 && (!p.numeric || p.flag || p.lowInt && p.distinct <= 3); }).map(function (p) { return p.index; });
+    var cols = FS.prof.filter(function (p) { return !p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 8 && (!p.numeric || p.flag || p.lowInt && (p.distinct <= 3 || STL.drivers.NAME_OUTCOMECAT.test(p.name))); }).map(function (p) { return p.index; });
     var fromRows = function () { var o = {}; cols.forEach(function (c) { var cnt = {}; viewIdx().forEach(function (i) { var v = String(RD()[i][c] == null ? '' : RD()[i][c]).trim(); if (v) cnt[v] = (cnt[v] || 0) + 1; }); o[c] = { distinct: Object.keys(cnt).length, values: Object.keys(cnt).map(function (k) { return [k, cnt[k]]; }).sort(function (a, b) { return b[1] - a[1]; }) }; }); return o; };
     var p = isBig() && STL.bigCharts.values && cols.length ? STL.bigCharts.values(cols).catch(fromRows) : Promise.resolve(fromRows());
     return p.then(function (V) {
       // the value worth asking about: the "bad" one (Yes, High, Late, Default…), else the rarer of two, else the two commonest; outcome-like columns first, 14 at most
       var BADV = /^(yes|y|true|high|severe|bad|fail|failed|churn|churned|default|defaulted|positive|critical|poor|late|dropout|risk|1)$/i, list = [];
-      cols.forEach(function (c) { var v = V[c]; if (!v || v.distinct < 2 || v.distinct > 8) return; var vals = v.values.map(function (x) { return String(x[0]); }), bad = vals.filter(function (x) { return BADV.test(x); }), pick = bad.length ? bad.slice(0, 1) : (v.distinct === 2 ? [vals[vals.length - 1]] : vals.slice(0, 2)); list.push({ col: c, vals: pick, rank: bad.length ? 0 : 1 }); });
+      cols.forEach(function (c) { var v = V[c]; if (!v || v.distinct < 2 || v.distinct > 8) return; var vals = v.values.map(function (x) { return String(x[0]); }), bad = vals.filter(function (x) { return BADV.test(x); }), pick = v.distinct === 2 ? (bad.length ? bad.slice(0, 1) : [vals[vals.length - 1]]) : bad.slice(0, 1).concat(vals.filter(function (x) { return bad.indexOf(x) < 0; })).slice(0, 4); list.push({ col: c, vals: pick, rank: bad.length ? 0 : 1 }); });
       list.sort(function (a, b) { return a.rank - b.rank; }); FS.outs = []; list.forEach(function (o) { o.vals.forEach(function (x) { if (FS.outs.length < 14) FS.outs.push({ col: o.col, value: x }); }); });
     });
   }

@@ -118,6 +118,11 @@
   }
   CH.profile = function (headers, rows, idx) {
     var prof = headers.map(function (h, i) { return colFacts(rows, idx, i, h); });
+    // a large file: a row number (1, 2, 3 … up to the number of rows) cannot be told from a random 4,000-row sample; the engine's counts over every row can
+    try {
+      var bg = root.BIG, bp = bg && bg.active && bg.profile, S = root.STL && STL.bigCharts && STL.bigCharts.sample;
+      if (bp && S && rows === S.rows && bp.rows >= 50) prof.forEach(function (p, i) { var b = bp.columns[i]; if (b && b.type === 'number' && b.min !== null && b.min <= 1 && b.distinct >= 0.97 * bp.rows && b.max - b.min + 1 <= 1.05 * bp.rows) { p.serial = true; p.unique = true; p.numeric = false; } });
+    } catch (e) { /* the sample alone still works */ }
     // how many other columns carry a word of this column's name ("plate_waste_percentage" -> "waste_adjusted_cost",
     // "primary_food_waste_driver"): the number other columns are built from is usually the headline number
     // a word that many columns carry ("customer_review_rating", "customer_brand_loyalty_tier", ...) says nothing about

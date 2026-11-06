@@ -19,7 +19,7 @@
   D.logY = false; D.yFn = null;                                                                 // yFn: explain "share of rows where Burnout = High" instead of a number column
   function yv(v) { if (D.yFn) return D.yFn(v); var C = CH(), x = C.num(v); return (x !== null && D.logY) ? Math.log1p(Math.max(x, 0)) : x; }
   // columns that count what happens AFTER a yes/no outcome (plays after "viral", sales after "bought") are results of it
-  D.NAME_OUTCOMECAT = /burnout|risk|status|outcome|result|grade|churn|dropout|default|fraud|satisf|performance|viral|success|pass|fail|severity|rating|stage|decision|approved/i;
+  D.NAME_OUTCOMECAT = /label|class|category|target|emotion|sentiment|burnout|risk|status|outcome|result|grade|churn|dropout|default|fraud|satisf|performance|viral|success|pass|fail|severity|rating|stage|decision|approved/i;
   D.NAME_RESULT = /streams|plays|views|downloads|listens|clicks|likes|shares|orders|sales|revenue|visits|installs|साझा|बिक्री/i;
   D.omega = function (levels) {
     var N = 0, SY = 0, SYY = 0, k = 0, ssb = 0, ssw = 0;
@@ -578,9 +578,16 @@
       var prof = CH.profile(HD(), RD(), viewIdx()), nums = CH.rankMeasures(prof.filter(CH.isMeasure));
       DS = { prof: prof, y: preset && preset.y >= 0 ? preset.y : (nums[0] ? nums[0].index : -1), noZero: false, seq: 0, yCat: preset && preset.yCat || null, pairs: STL.derive ? STL.derive.pairs(HD(), prof) : [] };
       var p = prof[DS.y]; DS.noZero = preset && preset.noZero !== undefined ? !!preset.noZero : !!(p && p.score && p.zeroPct >= 0.01);
-      var after = function () { render(); compute(); };
+      var firstOutcome = function () {                                                       // no number to explain: explain how often the first outcome-like column takes its commonest value
+        if (DS.y >= 0 || DS.yCat) return;
+        var ok = function (q) { return (!q.numeric || (q.lowInt && D.NAME_OUTCOMECAT.test(q.name))) && !q.date && !q.list && !q.unique && !q.serial && q.distinct >= 2 && q.distinct <= 8 && q.fill >= 0.5; };
+        var pc = prof.filter(function (q) { return ok(q) && D.NAME_OUTCOMECAT.test(q.name); })[0] || prof.filter(ok)[0]; if (!pc) return;
+        var vs = (DS.catVals || {})[pc.index], v = vs && vs[0]; if (!v) { var cnt = {}, ix = viewIdx(), rr = RD(); ix.forEach(function (i) { var x = s0(rr[i][pc.index]).trim(); if (x) cnt[x] = (cnt[x] || 0) + 1; }); v = Object.keys(cnt).sort(function (a, b) { return cnt[b] - cnt[a]; })[0]; }
+        if (v) { DS.y = pc.index; DS.yCat = { col: pc.index, value: String(v) }; }
+      };
+      var after = function () { firstOutcome(); render(); compute(); };
       if (!isBig()) { after(); return; }
-      var oc = prof.filter(function (p) { return !p.numeric && !p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 40 && p.fill >= 0.5 && (p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name)); }).map(function (p) { return p.index; });
+      var oc = prof.filter(function (p) { return (!p.numeric || (p.lowInt && D.NAME_OUTCOMECAT.test(p.name))) && !p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 40 && p.fill >= 0.5 && (p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name)); }).map(function (p) { return p.index; });
       STL.bigCharts.values(oc).then(function (V) { DS.catVals = {}; oc.forEach(function (c) { var v = V[c]; if (v && v.distinct >= 2 && v.distinct <= 8) DS.catVals[c] = v.values.map(function (x) { return x[0]; }); }); after(); }).catch(after);
     };
     if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) STL.bigCharts.loadSample().then(go).catch(function (e) { toast(e.message, 'error'); }); else go();
@@ -588,7 +595,7 @@
   function render() {
     var numCols = DS.prof.filter(function (p) { return p.numeric && !p.unique && !p.serial && !p.idLike; }), catOpts = [];
     DS.prof.forEach(function (p) {                                                       // a text column with a few values: explain "how often it is High"
-      if (p.numeric || p.date || p.list || p.unique || p.distinct < 2 || p.distinct > 8 || p.fill < 0.5 || !(p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name))) return;
+      if ((p.numeric && !(p.lowInt && D.NAME_OUTCOMECAT.test(p.name))) || p.date || p.list || p.unique || p.distinct < 2 || p.distinct > 8 || p.fill < 0.5 || !(p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name))) return;
       var seen = {}, vs = [], rows = RD(), ix = viewIdx(); if (isBig()) { vs = ((DS.catVals || {})[p.index] || []).slice(0, 9); } else for (var k = 0; k < ix.length && vs.length < 9; k++) { var v = s0(rows[ix[k]][p.index]).trim(); if (v && !seen[v]) { seen[v] = 1; vs.push(v); } }
       vs.forEach(function (v) { catOpts.push({ col: p.index, value: v, label: p.name + ' = ' + v }); });
     });
@@ -627,6 +634,7 @@
     // large file: the engine sums EVERY row, per column; number columns are cut with the exact quantiles of every row; the outcome may be a text
     // value ("how often High") or on a log scale, as in the browser
     var sc = STL.bigCharts.scope(), S = STL.bigCharts.sample, BCs = STL.bigCharts, yspec = DS.yCat ? { is: DS.yCat.value } : (D.logY ? { log: true } : null);
+    if (!cands.length) { DS.inter = []; done([], T('Calculated by the engine from all rows of the file', 'इंजन ने फ़ाइल की सभी पंक्तियों से गणना की')); return; }          // nothing else to compare with the outcome
     var numC = cands.filter(function (c) { return c.kind === 'num'; }).map(function (c) { return c.col; });
     BCs.edges(numC, 5).then(function (E) {
       var bd = {}, bandOf = {}; cands.forEach(function (c) { if (c.kind === 'num') { var bb = E[c.col] || CH.quantileBands(S.idx.map(function (i) { return CH.num(S.rows[i][c.col]); }), 5); bandOf[c.col] = bb; bd[c.col] = bb.edges; } });

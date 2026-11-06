@@ -1084,8 +1084,16 @@ class Engine:
         extra = []
         for c in (conds or [])[:6]:
             i = self._check_col(d, c.get("col"))
-            extra.append(f"trim({_col(i)}) = ?")
-            params = list(params) + [str(c.get("value")).strip()]
+            op = c.get("op")
+            if op == "contains":                                            # the text contains these letters (capitals ignored)
+                extra.append(f"contains(lower({_col(i)}), lower(?))")
+                params = list(params) + [str(c.get("value")).strip()]
+            elif op == "word":                                              # the text contains this whole word
+                extra.append(f"list_contains({self.WORDS_SQL.format(c=_col(i))}, lower(?))")
+                params = list(params) + [str(c.get("value")).strip()]
+            else:
+                extra.append(f"trim({_col(i)}) = ?")
+                params = list(params) + [str(c.get("value")).strip()]
         w = where + ((" AND " if where else " WHERE ") + " AND ".join(extra) if extra else "")
         cur = self.db.cursor()
         if fn == "count" or y in (None, -1):
@@ -1235,6 +1243,92 @@ class Engine:
         hit = self.db.cursor().execute(f"SELECT count(*) FROM {d['table']} WHERE trim({_col(col)}) = ?", [str(old).strip()]).fetchone()[0]
         info["changed"] = hit
         return info
+
+    # ------------------------------------------------------------------ words and repeats in a text column
+    STOPWORDS = frozenset("""a an the of in on at to for from by with and or but if so as is are was were be been being am do does did have has had having
+        i me my mine we our us you your he she him her his hers it its they them their this that these those there here what which who whom when where why how
+        not no nor can could will would shall should may might must just than then too very also about into over under again more most some any all each
+        only own same such up down out off s t don im ive id ill dont didnt doesnt isnt wasnt cant couldnt wont wouldnt thats youre theyre one
+        because while after before during through between until though although both few other another many much even still yet ever get got let""".split())
+    WORDS_SQL = "list_distinct(string_split(trim(regexp_replace(lower({c}), '[^\\p{{L}}\\p{{N}}'']+', ' ', 'g')), ' '))"
+
+    def add_text_stats(self, ds_id, col, name=None):
+        """A new dataset with two more columns for a text column: its length in characters and its number of words (blank text = 0)."""
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        have = list(d["headers"])
+        base = have[ci]
+        names = unique_headers(have + [f"{base}_characters", f"{base}_words"])
+        c = _col(ci)
+        sel = ", ".join([f"{_col(i)} AS s{i}" for i in range(len(have))] +
+                        [f"length(trim(COALESCE({c}, ''))) AS s{len(have)}",
+                         f"CASE WHEN trim(COALESCE({c}, '')) = '' THEN 0 ELSE len(string_split(regexp_replace(trim({c}), '\\s+', ' ', 'g'), ' ')) END AS s{len(have) + 1}"])
+        return self._register_select(f"SELECT {sel} FROM {d['table']} ORDER BY __rid", [], names, name or d["name"])
+
+    def word_counts(self, ds_id, col, by=None, top=25, stand=12, ignore_common=True, min_rows=30, search=None, filters=None):
+        """Which words a text column uses, and (with `by`) which words stand out for each group of another column.
+        A word is counted once per row. Every row is read; nothing is sampled."""
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        c = _col(ci)
+        g = f"COALESCE(NULLIF(trim({_col(self._check_col(d, by))}), ''), '(blank)')" if by is not None and int(by) >= 0 else "'all'"
+        cur = self.db.cursor()
+        w = (where + " AND " if where else " WHERE ") + f"{c} IS NOT NULL AND trim({c}) <> ''"
+        tot = {r[0]: r[1] for r in cur.execute(f"SELECT {g}, count(*) FROM {d['table']}{w} GROUP BY 1", params).fetchall()}
+        if by is not None and int(by) >= 0 and len(tot) > 40:
+            raise EngineError("That column has too many different values to compare words by. Choose a column with a few values.")
+        rows = cur.execute(
+            f"SELECT g, word, count(*) FROM (SELECT {g} AS g, unnest({self.WORDS_SQL.format(c=c)}) AS word FROM {d['table']}{w}) "
+            f"WHERE length(word) >= 2 GROUP BY g, word", params).fetchall()
+        n = sum(tot.values())
+        allc, per = {}, {}
+        for gname, word, k in rows:
+            if ignore_common and word in self.STOPWORDS:
+                continue
+            allc[word] = allc.get(word, 0) + k
+            per.setdefault(word, {})[gname] = k
+        common = sorted(allc.items(), key=lambda kv: (-kv[1], kv[0]))[: int(top)]
+        groups = sorted(tot.items(), key=lambda kv: (-kv[1], str(kv[0])))
+        out = {"n": n, "groups": [{"g": k, "n": v} for k, v in groups], "distinct_words": len(allc),
+               "common": [{"w": w_, "rows": k, "by": per[w_]} for w_, k in common], "standout": {}}
+        if by is not None and int(by) >= 0:
+            for gname, ng in groups:
+                floor = max(int(min_rows), int(0.002 * ng))
+                cand = []
+                for w_, k in allc.items():
+                    kg = per[w_].get(gname, 0)
+                    if kg >= floor and k > 0:
+                        lift = (kg / ng) / (k / n)
+                        cand.append((lift, kg, w_, k))
+                cand.sort(key=lambda x: (-x[0], -x[1], x[2]))
+                out["standout"][gname] = [{"w": w_, "rows": kg, "share": kg / ng, "share_all": k / n, "lift": lift} for lift, kg, w_, k in cand[: int(stand)]]
+        return out
+
+    def repeats(self, ds_id, key, check=None, examples=8, search=None, filters=None):
+        """How many values of the key column(s) are repeated, how many rows that involves, and (if `check` is given) in how many repeated
+        values the check column is NOT the same in every row (e.g. the same text with different labels). Capitals and spaces are ignored."""
+        d = self._ds(ds_id)
+        keys = [self._check_col(d, k) for k in (key if isinstance(key, list) else [key])][:4]
+        where, params = self._where(d, search, filters)
+        kx = " || chr(31) || ".join(f"lower(trim({_col(k)}))" for k in keys)
+        chk = f"count(DISTINCT lower(trim({_col(self._check_col(d, check))})))" if check is not None and int(check) >= 0 else "1"
+        cur = self.db.cursor()
+        w = (where + " AND " if where else " WHERE ") + f"({kx}) <> '' AND ({kx}) <> chr(31)"
+        base = f"SELECT {kx} AS k, count(*) AS n, {chk} AS dv, min(__rid) AS first FROM {d['table']}{w} GROUP BY k"
+        r = cur.execute(
+            f"SELECT count(*), coalesce(sum(n), 0), count(*) FILTER (WHERE n > 1), coalesce(sum(n) FILTER (WHERE n > 1), 0), "
+            f"coalesce(sum(n - 1) FILTER (WHERE n > 1), 0), count(*) FILTER (WHERE n > 1 AND dv > 1), coalesce(sum(n) FILTER (WHERE n > 1 AND dv > 1), 0) FROM ({base})", params).fetchone()
+        out = {"rows": r[1], "values": r[0], "repeated_values": r[2], "rows_in_repeats": r[3], "extra_copies": r[4], "conflicting_values": r[5], "rows_in_conflicts": r[6], "examples": []}
+        if check is not None and int(check) >= 0 and r[5]:
+            ci = _col(self._check_col(d, check))
+            ex = cur.execute(
+                f"SELECT k, n, first FROM ({base}) WHERE n > 1 AND dv > 1 ORDER BY n DESC, first LIMIT {int(examples)}", params).fetchall()
+            for k, n, first in ex:
+                vals = [x[0] for x in cur.execute(
+                    f"SELECT DISTINCT trim({ci}) FROM {d['table']} WHERE ({kx}) = ? ORDER BY 1 LIMIT 12", [k]).fetchall()]
+                out["examples"].append({"key": k.replace("\x1f", " | ")[:200], "rows": n, "values": vals})
+        return out
 
     def sample(self, ds_id, n=4000):
         """An evenly random handful of rows (always the same ones) so the browser can tell which columns are

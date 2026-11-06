@@ -95,6 +95,7 @@
     }).catch(function (e) { U.busy(null); toast(e.message, 'error'); });
   }
 
+  STL.engineTable = { current: currentTable, drop: dropTable, api: api, get: getp, open: openResult };
   // ================================================================= link two files
   STL.openLink = function (other) {
     U.busy(T('Preparing…', 'तैयारी…'));

@@ -29,7 +29,8 @@
     headers.forEach(function (h, i) {
       var p = prof[i], ws = A.words(h).map(stem).filter(function (w) { return !STOP[w]; }), vals = null;
       if (!p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 40 && (!p.numeric || p.lowInt || p.flag)) { var seen = {}, k = 0; vals = []; for (var r = 0; r < idx.length && vals.length < 41; r++) { var v = s(idx[r][i]).trim(); if (v && !seen[v]) { seen[v] = 1; vals.push(v); } } }
-      var catOk = !p.date && !p.list && !p.unique && (!p.numeric || p.lowInt || p.flag); cols.push({ i: i, name: h, catOk: catOk, words: ws, p: p, measure: !!(p.numeric && !p.unique && !p.serial && !p.idLike && !p.lowInt && !p.code), numeric: !!p.numeric && !p.unique && !p.serial && !p.idLike, cat: !!vals, vals: vals, date: !!p.date });
+      var tl = 0, tn = 0; if (!p.numeric) for (var r0 = 0; r0 < Math.min(idx.length, 400); r0++) { var sv = s(idx[r0][i]); if (sv) { tl += sv.length; tn++; } }
+      var catOk = !p.date && !p.list && !p.unique && (!p.numeric || p.lowInt || p.flag); cols.push({ i: i, name: h, catOk: catOk, words: ws, p: p, avgLen: tn ? tl / tn : 0, measure: !!(p.numeric && !p.unique && !p.serial && !p.idLike && !p.lowInt && !p.code), numeric: !!p.numeric && !p.unique && !p.serial && !p.idLike, cat: !!vals, vals: vals, date: !!p.date });
     });
     var df = {}; cols.forEach(function (c) { var seen = {}; c.words.forEach(function (w) { if (!seen[w]) { seen[w] = 1; df[w] = (df[w] || 0) + 1; } }); }); cols.df = df;
     return cols;
@@ -43,7 +44,7 @@
   function prefix(a, b) { var i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; }
   function nameScore(col, qw, df, rareMax) {
     if (!col.words.length) return { sc: 0, pos: 99 }; var hit = 0, pos = 99, rare = 0, toks = [];
-    col.words.forEach(function (w) { var best = 0, at = 99; qw.forEach(function (q, k) { var sc = q === w ? 1 : (syn(q, w) ? 0.85 : ((q.length >= 4 && w.length >= 4 && (q.indexOf(w) === 0 || w.indexOf(q) === 0)) ? 0.7 : (prefix(q, w) >= 4 && prefix(q, w) >= 0.6 * Math.min(q.length, w.length) ? 0.65 : 0))); if (sc > best) { best = sc; at = k; } }); if (best) { hit += best; toks.push(at); if (at < pos) pos = at; if ((df[w] || 1) <= (rareMax || 2) && w.length >= 3 && best >= 0.85) rare = Math.max(rare, best); } });
+    col.words.forEach(function (w) { var best = 0, at = 99; if (/^\d+$/.test(w) && col.words.length > 1) return; qw.forEach(function (q, k) { var sc = q === w ? 1 : (syn(q, w) ? 0.85 : ((q.length >= 4 && w.length >= 4 && (q.indexOf(w) === 0 || w.indexOf(q) === 0)) ? 0.7 : (prefix(q, w) >= 4 && prefix(q, w) >= 0.6 * Math.min(q.length, w.length) ? 0.65 : 0))); if (sc > best) { best = sc; at = k; } }); if (best) { hit += best; toks.push(at); if (at < pos) pos = at; if ((df[w] || 1) <= (rareMax || 2) && w.length >= 3 && best >= 0.85) rare = Math.max(rare, best); } });
     var cover = hit / col.words.length;
     return { sc: rare ? Math.max(cover, 0.6 + 0.4 * cover) : cover, pos: pos, cover: cover, toks: toks };                  // one distinctive word of the name (burnout, gpa) is enough; common words (level, score) need most of the name
   }
@@ -79,6 +80,8 @@
   var RX = {
     clean: /\b(clean (up )?(the )?(file|data|sheet)|tidy|messy|fix the (file|data)|साफ़|सफाई)/i,
     dups: /duplicate|entered twice|same (case|person|record) (twice|again)|दोहराव|डुप्लीकेट/i,
+    words: /\b(commonest|common|frequent|most used|top)\s+words\b|\bkey ?words\b|\bword (count|frequency|cloud)\b|\bwhich words\b|\bwords?\b.*\b(go with|stand out|differ between)|शब्द/i,
+    contain: /\b(contain|contains|containing|mention|mentions|mentioning|include|includes|including|with the word|has the word|having the word|word)\s+(?:the\s+)?(?:words?\s+)?["“']?([A-Za-z0-9ऀ-ॿ']+)/i,
     link: /\b(link|lookup|vlookup|match|attach|bring)\b.*\b(files?|sheets?|tables?|columns?)\b|\bvlookup\b|दो फ़ाइलें ID|आईडी से जोड़/i,
     summary: /\bone row (for|per) (each|every)\b|\b(summari[sz]e|roll up)\b.*\b(per|by|for each)\b|\bper (person|customer|applicant|id)\b.*\b(summary|total|history)\b|हर (व्यक्ति|आईडी) की एक/i,
     merge: /\b(combine|merge|join|stack)\b.*\b(files?|sheets?|tables?)\b|फ़ाइलें जोड़/i,
@@ -135,6 +138,7 @@
       return res;
     }
     // ---- quick routes to existing tools
+    if (RX.words.test(q) && !RX.count.test(q)) return done({ intent: 'tool', tool: 'words', conf: 0.9, say: 'You want to see which words a text column uses.' });
     if (RX.summary.test(q)) return done({ intent: 'tool', tool: 'summary', conf: 0.9, say: 'You want one row for each person or ID.' });
     if (RX.link.test(q) && !RX.merge.test(q)) return done({ intent: 'tool', tool: 'link', conf: 0.9, say: 'You want to bring columns from another file, matched by a shared column.' });
     if (RX.merge.test(q)) return done({ intent: 'tool', tool: 'merge', conf: 0.9, say: 'You want to combine files.' });
@@ -195,12 +199,18 @@
     }
     // ---- counts
     if (RX.count.test(q)) {
-      var gb = cats.filter(function (c) { return !valOf(c); })[0], fv = vcols;
+      var gb = cats.filter(function (c) { return !valOf(c); })[0], fv = vcols, cm = RX.contain.exec(q), wcond = null;
+      if (cm && !/^(the|a|an|word|words|all|any)$/i.test(cm[2])) {                                  // "how many rows contain happy": the text column holds this word
+        var isTxt = function (c) { return !c.cat && !c.numeric && !c.date && !c.p.serial && !c.p.unique && c.avgLen >= 12; }, tcol = cols.filter(isTxt)[0] || cat.filter(isTxt).sort(function (a, b) { return b.avgLen - a.avgLen; })[0] || cat.filter(function (c) { return !c.cat && !c.numeric && !c.date && /text|comment|remark|description|feedback|complaint|message|note|review|reason/i.test(c.name); })[0] || cat.filter(function (c) { return !c.catOk && !c.numeric && !c.date; }).sort(function (a, b) { return b.p.distinct - a.p.distinct; })[0];
+        if (tcol) { wcond = { col: tcol.i, value: cm[2].toLowerCase(), op: 'word' }; used[cm[2].toLowerCase()] = 1; }
+      }
+
       if (RX.by.test(q) && gb) return done({ intent: 'count_by', x: gb.i, conf: 0.85, say: 'You want to count rows for each “' + gb.name + '”.' });
       var GEN = /^(row|record|entry|entrie|people|person|case|applic|applicant|application|total|number|count|file|data|line|item|there|exist|exists|tabl|sheet|column|one|everyone|everybody|customer|client|member|student|employee|worker)\w*$/;
       var left = A.words(q).map(stem).filter(function (w) { return !STOP[w] && !GEN.test(w) && !/^\d+$/.test(w) && !used[w] && !named.some(function (x) { return x.c.words.indexOf(w) >= 0; }) && !/^(count|different|distinct|unique)$/.test(w); });
-      if (!fv.length && left.length) return done({ intent: 'none', conf: 0, say: 'I could not match “' + left.slice(0, 3).join(' ') + '” to a column or a value of this file, so I did not count anything.' });
-      return done({ intent: 'count', conds: fv.map(function (v) { return { col: v.col, value: v.value }; }), conf: 0.85, say: fv.length ? 'You want to count the rows where ' + fv.map(function (v) { return '“' + headers[v.col] + '” = “' + v.value + '”'; }).join(' and ') + '.' : 'You want to count the rows.' });
+      if (!fv.length && !wcond && left.length) return done({ intent: 'none', conf: 0, say: 'I could not match “' + left.slice(0, 3).join(' ') + '” to a column or a value of this file, so I did not count anything.' });
+      var cc = fv.map(function (v) { return { col: v.col, value: v.value }; }).concat(wcond ? [wcond] : []), parts = fv.map(function (v) { return '“' + headers[v.col] + '” = “' + v.value + '”'; }).concat(wcond ? ['“' + headers[wcond.col] + '” contains the word “' + wcond.value + '”'] : []);
+      return done({ intent: 'count', conds: cc, conf: 0.85, say: parts.length ? 'You want to count the rows where ' + parts.join(' and ') + '.' : 'You want to count the rows.' });
     }
     // ---- highest / lowest
     var g0 = function (oc) { return cats.filter(function (c) { return c !== oc && !valOf(c) && !c.numeric; })[0] || cat.filter(function (c) { return c.cat && !c.numeric && c !== oc && c.vals.length <= 12; })[0]; };
@@ -269,8 +279,14 @@
     o.querySelectorAll('[data-ex]').forEach(function (b) { b.onclick = function () { $('akQ').value = S.ex[+b.dataset.ex]; run(S.ex[+b.dataset.ex]); }; });
   }
   function colName(i) { return S.H[i]; }
+  // an average of a column of codes (label 0-5, status 1-4) means little: say so
+  function codeNote(i) { var c = S.cat && S.cat[i]; return c && c.p && c.p.lowInt ? T('(“' + colName(i) + '” looks like a code with a few values, so an average means little; ask “how often …” instead.) ', '(“' + colName(i) + '” कुछ मानों वाला कोड लगता है, इसलिए औसत का अर्थ कम है; “कितनी बार …” पूछें।) ') : ''; }
   function nums(col) { var C = STL.charts, out = []; S.R.forEach(function (r) { var x = C.num(r[col]); if (x !== null) out.push(x); }); return out; }
-  function rowsWhere(conds) { return S.R.filter(function (r) { return (conds || []).every(function (c) { return String(r[c.col] == null ? '' : r[c.col]).trim() === c.value; }); }); }
+  function rowsWhere(conds) {
+    return S.R.filter(function (r) { return (conds || []).every(function (c) {
+      var v = String(r[c.col] == null ? '' : r[c.col]); if (c.op === 'word') return v.toLowerCase().replace(/[^a-z0-9ऀ-ॿ']+/g, ' ').split(' ').indexOf(c.value) >= 0; if (c.op === 'contains') return v.toLowerCase().indexOf(c.value) >= 0; return v.trim() === c.value;
+    }); });
+  }
   function mean(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; }
   function f2(x) { return STL.charts.indian(Math.round(x * 100) / 100, Math.abs(x) < 100 ? 2 : 0); }
 
@@ -293,7 +309,7 @@
       } else if ((I.intent === 'agg' || I.intent === 'count' || I.intent === 'distinct') && S.big) {
         var conds = (I.conds || []).filter(function (c) { return c.col !== I.y; }); out.innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + esc(res.say) + '</div><div class="big-note">' + T('Counting every row…', 'हर पंक्ति गिनी जा रही है…') + '</div>';
         STL.bigCharts.scalar(I.intent === 'count' ? -1 : I.y, I.intent === 'count' ? 'count' : (I.intent === 'distinct' ? 'distinct' : I.fn), conds).then(function (r) {
-          var txt = I.intent === 'distinct' ? fmt(r.value) + T(' different values of ', ' अलग-अलग मान: ') + colName(I.y) + '<p>' + esc(T('counted over ' + fmt(r.n) + ' filled rows, every row of the file', fmt(r.n) + ' भरी पंक्तियों में, फ़ाइल की हर पंक्ति')) + '</p>' : I.intent === 'count' ? fmt(r.n) + T(' of ' + fmt(r.total) + ' rows', ' / ' + fmt(r.total) + ' पंक्तियाँ') + (r.total ? ' (' + (r.n / r.total < 0.01 ? Math.round(r.n / r.total * 10000) / 100 : Math.round(r.n / r.total * 1000) / 10) + '%)' : '') : (I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ' + (r.value === null ? '–' : f2(r.value)) + '<p>' + esc(T('from ' + fmt(r.n) + ' rows, every row of the file counted', fmt(r.n) + ' पंक्तियों से, फ़ाइल की हर पंक्ति गिनी गई')) + '</p>';
+          var txt = I.intent === 'distinct' ? fmt(r.value) + T(' different values of ', ' अलग-अलग मान: ') + colName(I.y) + '<p>' + esc(T('counted over ' + fmt(r.n) + ' filled rows, every row of the file', fmt(r.n) + ' भरी पंक्तियों में, फ़ाइल की हर पंक्ति')) + '</p>' : I.intent === 'count' ? fmt(r.n) + T(' of ' + fmt(r.total) + ' rows', ' / ' + fmt(r.total) + ' पंक्तियाँ') + (r.total ? ' (' + (r.n / r.total < 0.01 ? Math.round(r.n / r.total * 10000) / 100 : Math.round(r.n / r.total * 1000) / 10) + '%)' : '') : (I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ' + (r.value === null ? '–' : f2(r.value)) + '<p>' + esc(codeNote(I.y) + T('from ' + fmt(r.n) + ' rows, every row of the file counted', fmt(r.n) + ' पंक्तियों से, फ़ाइल की हर पंक्ति गिनी गई')) + '</p>';
           if ($('akOut') && S.q === q) $('akOut').innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + esc(res.say) + '</div><div class="fr-verdict" style="border-color:#14a38b"><b>' + txt + '</b></div>';
         }).catch(function (e) { if ($('akOut')) $('akOut').innerHTML += '<div class="big-err">' + esc(e.message) + '</div>'; });
         return;
@@ -312,7 +328,7 @@
       } else if (I.intent === 'trend') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'line', spec: { x: I.x, ys: [{ col: I.y, fn: I.fn }], time: S.cat[I.x].date ? 'month' : undefined, sort: 'label' } }); });
       else if (I.intent === 'corr') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'scatter', spec: { xnum: I.x, ynum: I.y, trend: true } }); });
       else if (I.intent === 'dist') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'histogram', spec: { xnum: I.x } }); });
-      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: STL.openDuplicates, clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary }[I.tool] || function () {})(); });
+      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: (S.big && STL.openRepeats ? STL.openRepeats : STL.openDuplicates), clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary, words: STL.openWords }[I.tool] || function () {})(); });
       else if (I.intent === 'missing') open(T('Show the checks', 'जाँच दिखाएँ'), function () { close(); STL.openDrivers({}); });
       else if (I.intent === 'pick_value') (I.choices || []).forEach(function (v) { open(v, function () { run(q + ' ' + v); }); });
       else if (I.intent === 'ask_y' && I.choices) I.choices.forEach(function (c) { open(c, function () { run(q + ' ' + c); }); });

@@ -59,6 +59,7 @@
 @file js/tasks/37-derive.js
 @file js/tasks/38-ask.js
 @file js/tasks/39-link-files.js
+@file js/tasks/40-text-tools.js
 @file js/reports/40-name-match.js
 @file js/reports/41-pendency-radar.js
 @file js/reports/42-change-radar.js

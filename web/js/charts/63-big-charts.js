@@ -47,7 +47,8 @@
   BC.loadSample = function () {
     var big = B(), ds = big.ds;
     if (BC.sample.ds === ds) return Promise.resolve(BC.sample);
-    return api('/api/engine/' + ds + '/sample', { n: 4000 }).then(function (r) { BC.sample = { ds: ds, rows: r.rows, idx: r.rows.map(function (_, i) { return i; }) }; return BC.sample; });
+    var prof = big.profile ? Promise.resolve() : fetch('/api/engine/' + ds + '/profile').then(function (r) { return r.json(); }).then(function (p) { if (B().ds === ds && !p.error) big.profile = p; }).catch(function () {});
+    return Promise.all([api('/api/engine/' + ds + '/sample', { n: 4000 }), prof]).then(function (a) { var r = a[0]; BC.sample = { ds: ds, rows: r.rows, idx: r.rows.map(function (_, i) { return i; }) }; return BC.sample; });
   };
 
   // ------------------------------------------------------------ chart types and how the engine answers them

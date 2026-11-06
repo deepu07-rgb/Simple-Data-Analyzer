@@ -109,6 +109,25 @@ def replace_value(ds):
     return jsonify(get_engine().replace_value(ds, b.get("col"), b.get("old"), b.get("new", ""), b.get("name")))
 
 
+@bp.route("/api/engine/<ds>/words", methods=["POST"])
+def words(ds):
+    b = _body()
+    return jsonify(json_safe(get_engine().word_counts(ds, b.get("col"), b.get("by"), b.get("top", 25), b.get("stand", 12), b.get("ignoreCommon", True),
+                                                       b.get("minRows", 30), b.get("search") or None, b.get("filters"))))
+
+
+@bp.route("/api/engine/<ds>/textstats", methods=["POST"])
+def textstats(ds):
+    b = _body()
+    return jsonify(get_engine().add_text_stats(ds, b.get("col"), b.get("name")))
+
+
+@bp.route("/api/engine/<ds>/repeats", methods=["POST"])
+def repeats(ds):
+    b = _body()
+    return jsonify(json_safe(get_engine().repeats(ds, b.get("key"), b.get("check"), b.get("examples", 8), b.get("search") or None, b.get("filters"))))
+
+
 @bp.route("/api/engine/<ds>/drop", methods=["POST"])
 def drop(ds):
     return jsonify({"dropped": get_engine().drop(ds)})

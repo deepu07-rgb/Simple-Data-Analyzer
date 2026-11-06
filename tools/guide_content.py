@@ -91,6 +91,16 @@ SECTIONS = [
           "विवरण फ़ाइल में दो बार आई ID दो अलग व्यक्ति हो सकती है। जब तक आप “पहली वाली लें” न चुनें, वह खाली रखी जाती है। यदि किसी कॉलम में 365243 जैसा कोड “लागू नहीं” के लिए है, तो जाँच यह बताती है और **इन्हें खाली करें** देती है।"),
  ]),
  # ------------------------------------------------------------------ 5c
+ dict(id="freetext", icon="📝", en="Free text: words, repeats and conflicts", hi="खुला टेक्स्ट: शब्द, दोहराव और टकराव", blocks=[
+  ("p", "A column of complaints, remarks, reviews or messages can be read too. The app reads every row; nothing is sent anywhere.",
+        "शिकायतों, टिप्पणियों, समीक्षाओं या संदेशों का कॉलम भी पढ़ा जा सकता है। ऐप हर पंक्ति पढ़ता है; कुछ भी कहीं भेजा नहीं जाता।"),
+  ("steps", [("Home → **Words in text** (टेक्स्ट के शब्द). Choose the text column and, if you like, a column of groups such as a label or a department.", "Home → **टेक्स्ट के शब्द**। टेक्स्ट कॉलम चुनें और चाहें तो समूहों का कॉलम (जैसे लेबल या विभाग)।"),
+             ("You see the commonest words and, for each group, the words that stand out: their share of that group's rows and how many times more often than in all rows.", "सबसे आम शब्द दिखते हैं, और हर समूह के लिए अलग दिखने वाले शब्द: उस समूह की पंक्तियों में उनका हिस्सा और सभी पंक्तियों से कितनी गुना अधिक।"),
+             ("**Repeated values and conflicts** (Ctrl+K) shows how many texts are entered more than once, and in how many of them the label is not the same every time.", "**दोहराए गए मान और टकराव** (Ctrl+K) बताता है कि कितने टेक्स्ट एक से अधिक बार दर्ज हैं, और कितनों में लेबल हर बार एक जैसा नहीं है।"),
+             ("In the question box: “how many rows contain the word happy”, “how many rows containing sad have label 4”. The button **Add the length and the number of words** makes two number columns you can explain like any other.", "प्रश्न बॉक्स में: “how many rows contain the word happy”। **लंबाई और शब्दों की संख्या जोड़ें** बटन दो संख्या कॉलम बनाता है।")]),
+  ("tip", "Words that stand out go *with* a group; they do not prove that the word causes it. Very rare words (under about 30 rows) are not shown as standing out.",
+          "अलग दिखने वाले शब्द किसी समूह के *साथ* आते हैं; यह साबित नहीं होता कि शब्द उसका कारण है। बहुत दुर्लभ शब्द (लगभग 30 पंक्तियों से कम) नहीं दिखाए जाते।"),
+ ]),
  dict(id="register", icon="🗂️", en="One workbook, many sheets: tidy it, one spelling, no repeats", hi="एक वर्कबुक, कई शीट: साफ़ करें, एक वर्तनी, कोई दोहराव नहीं", blocks=[
   ("p", "A yearly register often comes as one Excel workbook with a sheet for every year, written by different people: a title and notes above the table, one section per block (“Block: Beawar”), subtotal and signature lines, months in text and Hindi digits, “₹ 1,500”, “1500/-” and “NIL” in the amount column, “Kishangarh”, “KISHANGARH” and “Kishangrah” for the same block, and the same case entered twice. Stellura handles these in four steps.",
         "वार्षिक पंजिका अक्सर एक एक्सेल वर्कबुक में आती है, हर वर्ष की अलग शीट, अलग-अलग लोगों द्वारा लिखी: तालिका के ऊपर शीर्षक और टिप्पणियाँ, हर खंड का अलग भाग (“Block: Beawar”), उप-योग और हस्ताक्षर की पंक्तियाँ, तारीखें पाठ और हिंदी अंकों में, राशि में “₹ 1,500”, “1500/-” और “NIL”, एक ही खंड के लिए “Kishangarh”, “KISHANGARH” और “Kishangrah”, और एक ही प्रकरण दो बार दर्ज। Stellura इन्हें चार चरणों में संभालता है।"),
