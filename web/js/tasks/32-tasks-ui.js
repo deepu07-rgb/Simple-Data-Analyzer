@@ -183,6 +183,7 @@
     var b = $('nextBanner');
     if (!b) { b = document.createElement('div'); b.id = 'nextBanner'; b.className = 'stl-banner'; b.style.flexWrap = 'wrap'; var stage = $('workspace-stage'); if (stage && stage.parentNode) stage.parentNode.insertBefore(b, stage); else document.body.appendChild(b); }
     b.innerHTML = '<span class="stl-banner-t"><b>' + T('Your file is ready: ', 'आपकी फ़ाइल तैयार है: ') + fmt(rawData.length) + T(' rows, ', ' पंक्तियाँ, ') + headers.length + T(' columns. What would you like to do?', ' कॉलम। आप क्या करना चाहेंगे?') + '</b></span>' +
+      '<button class="tb-btn" id="nbCols">✔ ' + T('Check my columns', 'मेरे कॉलम जाँचें') + '</button>' +
       '<button class="tb-btn primary" id="nbAsk">💬 ' + T('Ask in your own words', 'अपने शब्दों में पूछें') + '</button>' +
       '<button class="tb-btn" id="nbCharts">📊 ' + T('Show me the best charts', 'सबसे अच्छे चार्ट दिखाएँ') + '</button>' +
       '<button class="tb-btn" id="nbWhy">🔍 ' + T('What affects a number?', 'किसी संख्या को क्या प्रभावित करता है?') + '</button>' +
@@ -190,6 +191,7 @@
       '<button class="tb-btn" id="nbAdd">➕ ' + T('Add a column (like the change)', 'नया कॉलम जोड़ें (जैसे बदलाव)') + '</button>' +
       '<button class="tb-btn" id="nbX" aria-label="close">×</button>';
     b.style.display = 'flex';
+    $('nbCols').onclick = function () { hideNext(); if (STL.openColumnCheck) STL.openColumnCheck(); };
     $('nbAsk').onclick = function () { hideNext(); if (STL.openAsk) STL.openAsk(); };
     $('nbCharts').onclick = function () { hideNext(); if (STL.openChartStudio) STL.openChartStudio(); };
     $('nbWhy').onclick = function () { hideNext(); if (STL.openDrivers) STL.openDrivers(); };

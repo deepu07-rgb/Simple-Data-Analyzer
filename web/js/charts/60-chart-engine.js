@@ -116,7 +116,7 @@
     return { index: c, name: s(header), filled: nn, unit: unit, heavy: heavy, flag: flag, flagKeys: flagKeys, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
              zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)), tidx: numeric && NAME_TIMEIDX.test(s(header)) };
   }
-  CH.profile = function (headers, rows, idx) {
+  CH.profile = function (headers, rows, idx, noRoles) {
     var prof = headers.map(function (h, i) { return colFacts(rows, idx, i, h); });
     // a large file: a row number (1, 2, 3 … up to the number of rows) cannot be told from a random 4,000-row sample; the engine's counts over every row can
     try {
@@ -129,6 +129,8 @@
     // one being made from another: 4 or more columns (and 10%) make it a common word, ignored here and in the drivers
     var df = {}; headers.forEach(function (h) { var seen = {}; CH.nameWords(h, true).forEach(function (w) { if (!seen[w]) { seen[w] = 1; df[w] = (df[w] || 0) + 1; } }); });
     CH.commonWords = {}; Object.keys(df).forEach(function (w) { if (df[w] >= 4 && df[w] >= 0.1 * headers.length) CH.commonWords[w] = 1; });
+    // what the person said each column is (the “check your columns” screen) overrides the guesses above
+    if (!noRoles && root.STL && STL.roles && STL.roles.apply) { try { STL.roles.apply(headers, prof); } catch (e) { /* the guesses still work */ } }
     var W = prof.map(function (p) { return CH.nameWords(p.name); });
     prof.forEach(function (p, i) { p.namedBy = 0; W.forEach(function (w, j) { if (j !== i && w.some(function (x) { return W[i].indexOf(x) >= 0; })) p.namedBy++; }); });
     return prof;
@@ -790,7 +792,7 @@
   var NAME_OUTCOME = /revenue|sales|profit|margin|income|cups|volume|turnover|streams|plays|views|downloads|listens|clicks|likes|shares|orders|visits|installs|कमाई|बिक्री|मुनाफ़ा/i;
   function measScore(p) { return (p.score ? 3 : (NAME_OUTCOME.test(p.name) ? 5.5 : (NAME_AMOUNT.test(p.name) ? 3.5 : 0))) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b|(^|[_ ])per[_ ]/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
-  CH.avgy = function (p) { return p.score || p.unit || p.tidx || /income|earning|wage|salary per|\bage\b|_age|age_|birth|employed|tenure|seniority/i.test(p.name) || /gpa|cgpa|retention|dependency|anxiety|stress|satisfaction|percentile|average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
+  CH.avgy = function (p) { if (p.roleFn) return p.roleFn === 'avg'; return p.score || p.unit || p.tidx || /income|earning|wage|salary per|\bage\b|_age|age_|birth|employed|tenure|seniority/i.test(p.name) || /gpa|cgpa|retention|dependency|anxiety|stress|satisfaction|percentile|average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
   // columns that make sense to group or compare by, best first (no IDs, no columns that only restate a number, no duplicates)
   CH.groupColumns = function (prof, nums, rows, idx) {
