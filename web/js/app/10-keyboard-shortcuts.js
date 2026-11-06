@@ -102,6 +102,16 @@ function applyFormula() {
     if (formula.startsWith('=')) {
       const expr = formula.substring(1).trim();
 
+      // cell arithmetic (=B2*C2, =(A1+A2)/2, =SUM(A1:A5)+SUM(B1:B5), =ROUND(B2/C2,2)): the result is written to the active cell
+      if (!/^(IF|CONCAT|UPPER|LOWER|TRIM|COL)\(/i.test(expr) && !/^(SUM|AVERAGE|AVG|COUNT|MIN|MAX)\([^()]+\)$/i.test(expr) && activeCell.ri !== null) {
+        let calc, calcErr = null; try { calc = evalCellExpression(expr); } catch (err) { calcErr = err; }
+        if (calcErr === null) {
+          rawData[activeCell.ri][activeCell.ci] = String(calc);
+          registerFormulaResult(activeCell.ri, activeCell.ci, { formula, source: expr, sourceLabel: 'cells', label: 'cell formula', result: calc });
+          autoSave(); focusResultCell(activeCell.ri, activeCell.ci); toast(`${formula} = ${formatNum(calc)} (written to ${getCellRef(activeCell.ri, activeCell.ci)})`, 'success'); return;
+        }
+        if (/^[\s\d.+\-*\/^()%A-Za-z$:,\[\]]+$/.test(expr) && /[A-Za-z]{1,3}\$?\d/.test(expr)) { toast('Formula: ' + calcErr.message, 'error'); return; }
+      }
       // SUM, AVERAGE, COUNT, MIN, MAX - aggregate formulas
       const aggMatch = expr.match(/^(SUM|AVERAGE|AVG|COUNT|MIN|MAX)\((.+)\)$/i);
       if (aggMatch) {
@@ -269,7 +279,8 @@ function applyFormula() {
         headers.push(newName);
         colTypes.push('number');
         rawData.forEach(row => {
-          const v = parseFloat(row[ci]) || 0;
+          const v = parseFlexibleNumber(row[ci]);
+          if (v === null) { row.push(''); return; }
           let result = 0;
           switch(op) {
             case '+': result = v + operand; break;

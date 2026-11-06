@@ -113,6 +113,23 @@ def _safe_value(val):
     return str(val)
 
 
+_NUM_PLAIN = re.compile(r"^-?(0|[1-9]\d{0,14})(\.\d+)?$")
+_NUM_GROUPED = re.compile(r"^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$")
+
+
+def _excel_value(v):
+    """The editor holds every cell as text; in the .xlsx a number must be a number (so SUM, sorting and charts work in Excel).
+    Codes with a leading zero (0123), very long digit strings (phone, Aadhaar, IDs) and anything else stay text."""
+    if isinstance(v, str):
+        s = v.strip()
+        if _NUM_PLAIN.match(s):
+            return float(s) if "." in s else int(s)
+        if _NUM_GROUPED.match(s):
+            s2 = s.replace(",", "")
+            return float(s2) if "." in s2 else int(s2)
+    return v
+
+
 _XLSX_CACHE = {}                    # sha1 of the file -> {"sheets": [names], "rows": {name: [tuple, ...]}}; the newest two workbooks
 _XLSX_CACHE_ORDER = []
 _XLSX_CACHE_MAX_CELLS = 8_000_000
@@ -661,7 +678,7 @@ def _build_excel(payload):
         excel_row = row_idx_0 + header_row_idx + 1
         for col_idx_0, value in enumerate(row):
             col_idx = col_idx_0 + 1
-            cell = ws.cell(row=excel_row, column=col_idx, value=value)
+            cell = ws.cell(row=excel_row, column=col_idx, value=_excel_value(value))
             cell.border = thin_border
 
             cf_key = f"{row_idx_0}:{col_idx_0}"
@@ -689,7 +706,7 @@ def _build_excel(payload):
                 cell.fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
 
             # Alignment
-            align = cell_alignments.get(cf_key, "left")
+            align = cell_alignments.get(cf_key, "right" if isinstance(cell.value, (int, float)) else "left")
             wrap = bool(cell_wraps.get(cf_key))
             cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=wrap)
 

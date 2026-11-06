@@ -34,6 +34,7 @@
 @file js/app/17-export-pdf-excel.js
 @file js/app/18-hindi-fonts-and-utilities.js
 @file js/app/19-batch-functions-init-and-formula-studio.js
+@file js/app/20-excel-style-editing.js
 @text "</script>\n"
 @file html/20-fragment-1.html
 @text "<script>\n"

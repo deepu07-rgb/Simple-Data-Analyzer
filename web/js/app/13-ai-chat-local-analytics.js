@@ -536,8 +536,10 @@ function findReplace() {
     const cols = col === 'all' ? headers.map((_, i) => i) : [parseInt(col)];
     cols.forEach(ci => {
       const v = String(row[ci] == null ? '' : row[ci]);
-      if (v.includes(find)) {
-        row[ci] = v.split(find).join(replace);
+      const _mc = document.getElementById('findCase') && document.getElementById('findCase').checked;
+      const _re = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), _mc ? 'g' : 'gi');
+      if (_re.test(v)) {
+        row[ci] = v.replace(_re, () => replace);
         count++;
       }
     });

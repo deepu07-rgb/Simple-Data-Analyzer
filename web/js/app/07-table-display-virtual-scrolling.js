@@ -252,8 +252,9 @@ function getCellStyle(ri, ci) {
   for (const rule of cfRules) {
     if (rule.col !== ci) continue;
     const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
-    const numVal = parseFloat(val);
-    const ruleNum = parseFloat(rule.value);
+    const _pf = ((typeof parseFlexibleNumber === 'function') ? parseFlexibleNumber : (v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; }));
+    const numVal = _pf(val) === null ? NaN : _pf(val);
+    const ruleNum = _pf(rule.value) === null ? NaN : _pf(rule.value);
     let match = false;
     switch(rule.cond) {
       case 'gt': match = colTypes[ci]==='number' && !isNaN(numVal) ? numVal > ruleNum : val > rule.value; break;
@@ -262,7 +263,7 @@ function getCellStyle(ri, ci) {
       case 'neq': match = val !== rule.value; break;
       case 'contains': match = val.toLowerCase().includes(rule.value.toLowerCase()); break;
       case 'between': {
-        const rn2 = parseFloat(rule.value2);
+        const rn2 = _pf(rule.value2) === null ? NaN : _pf(rule.value2);
         match = colTypes[ci]==='number' && !isNaN(numVal) ? (numVal >= ruleNum && numVal <= rn2) : (val >= rule.value && val <= rule.value2);
         break;
       }
@@ -283,16 +284,17 @@ function getCellValidationClass(ri, ci) {
   return '';
 }
 
+function _vn(v) { return (((typeof parseFlexibleNumber === 'function') ? parseFlexibleNumber : (v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; })))(v); }      // 1,234 and ₹1,234 are numbers
 function validateCell(val, rule) {
   switch (rule.type) {
     case 'required': return val !== '';
-    case 'number': return val === '' || !isNaN(Number(val));
-    case 'min': return val === '' || (Number(val) >= Number(rule.value));
-    case 'max': return val === '' || (Number(val) <= Number(rule.value));
+    case 'number': return val === '' || _vn(val) !== null;
+    case 'min': return val === '' || (_vn(val) !== null && _vn(val) >= Number(rule.value));
+    case 'max': return val === '' || (_vn(val) !== null && _vn(val) <= Number(rule.value));
     case 'range': {
       const parts = rule.value.split('-');
       if (parts.length !== 2) return true;
-      const n = Number(val);
+      const n = _vn(val) === null ? NaN : _vn(val);
       return val === '' || (!isNaN(n) && n >= Number(parts[0]) && n <= Number(parts[1]));
     }
     case 'maxlen': return val.length <= Number(rule.value);
