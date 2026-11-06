@@ -16,9 +16,10 @@
   function s(v) { return v == null ? '' : String(v); }
 
   // a number with a few huge values (streams: 134 .. 443,000,000) is explained on a log scale: otherwise the handful of giants decides everything
-  D.logY = false;
-  function yv(v) { var C = CH(), x = C.num(v); return (x !== null && D.logY) ? Math.log1p(Math.max(x, 0)) : x; }
+  D.logY = false; D.yFn = null;                                                                 // yFn: explain "share of rows where Burnout = High" instead of a number column
+  function yv(v) { if (D.yFn) return D.yFn(v); var C = CH(), x = C.num(v); return (x !== null && D.logY) ? Math.log1p(Math.max(x, 0)) : x; }
   // columns that count what happens AFTER a yes/no outcome (plays after "viral", sales after "bought") are results of it
+  D.NAME_OUTCOMECAT = /burnout|risk|status|outcome|result|grade|churn|dropout|default|fraud|satisf|performance|viral|success|pass|fail|severity|rating|stage|decision|approved/i;
   D.NAME_RESULT = /streams|plays|views|downloads|listens|clicks|likes|shares|orders|sales|revenue|visits|installs|साझा|बिक्री/i;
   D.omega = function (levels) {
     var N = 0, SY = 0, SYY = 0, k = 0, ssb = 0, ssw = 0;
@@ -68,7 +69,7 @@
 
   // in-memory ranking from the rows
   D.rank = function (rows, idx, headers, y, opt) {
-    opt = opt || {}; D.logY = !!opt.logY; var C = CH(), prof = opt.prof || C.profile(headers, rows, idx), cands = opt.candidates || D.candidates(headers, prof, y);
+    opt = opt || {}; D.logY = !!opt.logY; D.yFn = opt.yFn || null; var C = CH(), prof = opt.prof || C.profile(headers, rows, idx), cands = opt.candidates || D.candidates(headers, prof, y);
     var ranked = D.finish(cands.map(function (c) {
       var bands = null, by = {};
       if (c.kind === 'num') bands = C.quantileBands(idx.map(function (i) { return C.num(rows[i][c.col]); }), 5);
@@ -89,7 +90,7 @@
       big.sort(function (a, b) { return b.mean - a.mean; });
       var shared = D.sharesName(d.name, yName);
       return { col: d.col, name: d.name, kind: d.kind, omega2: om.omega2, eta2: om.eta2, k: om.k, n: om.n, high: big[0] || null, low: big[big.length - 1] || null, levels: big, bands: d.bands || null,
-               derived: shared.length ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
+               derived: shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
     });
     out.sort(function (a, b) { return b.omega2 - a.omega2; });
     return out;
@@ -452,7 +453,7 @@
   };
 
   D.summary = function (ranked, yName, hi) {
-    var f = function (x) { return (Math.round(x * 1000) / 10) + '%'; }, n2 = function (v) { return Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 100) / 100); };
+    var f = function (x) { return (Math.round(x * 1000) / 10) + '%'; }, n2 = function (v) { return D.yFn ? f(v) : (Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 100) / 100)); };
     var causes = ranked.filter(function (r) { return !r.derived; }), res = ranked.filter(function (r) { return r.derived; }), out = [];
     var lab = causes.filter(function (r) { return r.walls; }); causes = causes.filter(function (r) { return !r.walls; });   // possible labels are told apart, not led with
     if (D.logY) out.push(hi ? '“' + yName + '” में कुछ बहुत बड़े मान हैं, इसलिए नीचे के प्रतिशत लॉग-स्केल पर हैं (वरना मुट्ठी भर बड़े मान सब तय कर देते)। दिखाए गए मान सामान्य (ज्यामितीय औसत) हैं।' : '“' + yName + '” has a few huge values, so the shares below are on a log scale (otherwise a handful of giants would decide everything). The values shown are typical ones (geometric averages).');
@@ -475,6 +476,8 @@
     lab.forEach(function (r) { var w = r.walls[0], e = n2(w.edge);
       out.push(hi ? '“' + r.name + '” शायद “' + yName + '” से तय होने वाला लेबल है: हर “' + w.label + '” पंक्ति में यह ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ' है, जबकि बाकी ' + Math.round(w.beyond * 100) + '% पंक्तियाँ इसके पार हैं। इसे कारण मानने से पहले जाँचें; निष्पक्ष तुलना इसे अपने-आप नहीं चुनती।' + ruleLine(r)
                   : '“' + r.name + '” may be a label given BY “' + yName + '”: every “' + w.label + '” row has it ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ', while ' + Math.round(w.beyond * 100) + '% of the other rows lie beyond. Check before treating it as a cause; Fair comparison does not pick it by itself.' + ruleLine(r)); });
+    var pairR = res.filter(function (r) { return r.derived.why === 'pair'; }); res = res.filter(function (r) { return r.derived.why !== 'pair'; });
+    pairR.forEach(function (r) { out.push(hi ? '“' + r.name + '” “' + yName + '” का शुरुआती स्तर है: अंतर का अधिकांश हिस्सा बस इतना है कि हर किसी ने कहाँ से शुरू किया। असली सवाल “बदलाव” है, ऊपर का बटन उसे जोड़ता है।' : '“' + r.name + '” is where “' + yName + '” started: most of the differences are only where each row began. The real question is the change: the green button at the top adds it as a column.'); });
     var after = res.filter(function (r) { return r.derived.why === 'result'; }); res = res.filter(function (r) { return r.derived.why !== 'result'; });
     if (after.length) out.push(hi ? after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' “' + yName + '” के बाद की गिनती है, इसलिए यह उसका परिणाम है, कारण नहीं; इसे क्रम से बाहर रखा गया है।' : after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' count' + (after.length > 1 ? '' : 's') + ' what happens after “' + yName + '”, so it is a result of it, not a cause. Left out of the ranking.');
     if (res.length) out.push(hi ? 'ये कॉलम “' + yName + '” से ही बने लगते हैं — इन्हें कारण न मानें: ' + res.map(function (r) { return r.name; }).join(', ') + '।' : 'These columns look calculated from “' + yName + '” itself — treat them as results, not causes: ' + res.map(function (r) { return r.name; }).join(', ') + '.');
@@ -492,6 +495,7 @@
   if (!root.document || !STL.ui) return;
   var U = STL.ui, CH = STL.charts, T = U.T, esc = U.esc;
   function $(id) { return document.getElementById(id); }
+  function s0(v) { return v == null ? '' : String(v); }
   function hi() { return typeof uiLanguage !== 'undefined' && uiLanguage === 'hi'; }
   function isBig() { return !!(root.BIG && BIG.active && BIG.ds); }
   function HD() { return isBig() ? BIG.headers : headers; }
@@ -504,42 +508,51 @@
     if (!isBig() && !U.hasData()) { toast(T('Open a file first, or try the sample data.', 'पहले फ़ाइल खोलें, या नमूना डेटा आज़माएँ।'), 'info'); return; }
     var go = function () {
       var prof = CH.profile(HD(), RD(), viewIdx()), nums = CH.rankMeasures(prof.filter(CH.isMeasure));
-      DS = { prof: prof, y: preset && preset.y >= 0 ? preset.y : (nums[0] ? nums[0].index : -1), noZero: false, seq: 0 };
+      DS = { prof: prof, y: preset && preset.y >= 0 ? preset.y : (nums[0] ? nums[0].index : -1), noZero: false, seq: 0, yCat: preset && preset.yCat || null, pairs: STL.derive ? STL.derive.pairs(HD(), prof) : [] };
       var p = prof[DS.y]; DS.noZero = preset && preset.noZero !== undefined ? !!preset.noZero : !!(p && p.score && p.zeroPct >= 0.01);
       render(); compute();
     };
     if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) STL.bigCharts.loadSample().then(go).catch(function (e) { toast(e.message, 'error'); }); else go();
   };
   function render() {
-    var numCols = DS.prof.filter(function (p) { return p.numeric; });
+    var numCols = DS.prof.filter(function (p) { return p.numeric && !p.unique && !p.serial && !p.idLike; }), catOpts = [];
+    if (!isBig()) DS.prof.forEach(function (p) {                                                       // a text column with a few values: explain "how often it is High"
+      if (p.numeric || p.date || p.list || p.unique || p.distinct < 2 || p.distinct > 8 || p.fill < 0.5 || !(p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name))) return;
+      var seen = {}, vs = [], rows = RD(), ix = viewIdx(); for (var k = 0; k < ix.length && vs.length < 9; k++) { var v = s0(rows[ix[k]][p.index]).trim(); if (v && !seen[v]) { seen[v] = 1; vs.push(v); } }
+      vs.forEach(function (v) { catOpts.push({ col: p.index, value: v, label: p.name + ' = ' + v }); });
+    });
     var html = '<div class="prj-h"><b>🔍 ' + T('What explains this?', 'इसे क्या समझाता है?') + '</b><button id="drX" aria-label="close">×</button></div>' +
       '<div class="big-note">' + T('Every column is ranked by how much of the differences in the chosen number it goes with. Number columns take part in five equal bands.', 'हर कॉलम को इस आधार पर क्रम दिया जाता है कि चुनी संख्या के अंतर उससे कितने जुड़े हैं। संख्या कॉलम पाँच बराबर समूहों में शामिल होते हैं।') + '</div>' +
-      '<div class="fr-form"><label class="rp-field"><span>' + T('The number to explain', 'समझाने वाली संख्या') + '</span><select id="drY" class="big-select">' + numCols.map(function (p) { return '<option value="' + p.index + '"' + (p.index === DS.y ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="fr-form"><label class="rp-field"><span>' + T('The number to explain', 'समझाने वाली संख्या') + '</span><select id="drY" class="big-select">' + numCols.map(function (p) { return '<option value="n' + p.index + '"' + (p.index === DS.y && !DS.yCat ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join('') + (catOpts.length ? '<optgroup label="' + esc(T('How often …', 'कितनी बार …')) + '">' + catOpts.map(function (c) { return '<option value="c' + c.col + ':' + esc(encodeURIComponent(c.value)) + '"' + (DS.yCat && DS.yCat.col === c.col && DS.yCat.value === c.value ? ' selected' : '') + '>' + esc(T('How often ', 'कितनी बार ') + c.label) + '</option>'; }).join('') + '</optgroup>' : '') + '</select></label>' +
       '<label class="rp-inline" style="align-self:end;margin-bottom:8px"><input type="checkbox" id="drZ"' + (DS.noZero ? ' checked' : '') + '> ' + T('Ignore zeros', 'शून्य छोड़ें') + '</label></div><div id="drOut"><div class="big-note">…</div></div>';
     var o = U.overlay('driversDialog', html, true); o.querySelector('.stl-box').classList.add('fr-box');
     $('drX').onclick = function () { dispose(); o.remove(); };
-    $('drY').onchange = function () { DS.y = +this.value; var p = DS.prof[DS.y]; DS.noZero = !!(p && p.score && p.zeroPct >= 0.01); $('drZ').checked = DS.noZero; compute(); };
+    $('drY').onchange = function () { var v = this.value, m = /^c(\d+):(.*)$/.exec(v); if (m) { DS.y = +m[1]; DS.yCat = { col: +m[1], value: decodeURIComponent(m[2]) }; } else { DS.y = +v.slice(1); DS.yCat = null; } var p = DS.prof[DS.y]; DS.noZero = !DS.yCat && !!(p && p.score && p.zeroPct >= 0.01); $('drZ').checked = DS.noZero; compute(); };
     $('drZ').onchange = function () { DS.noZero = this.checked; compute(); };
   }
   function compute() {
     var out = $('drOut'); if (!out) return; if (DS.y < 0) { out.innerHTML = '<div class="big-err">' + T('This file has no number column.', 'इस फ़ाइल में कोई संख्या वाला कॉलम नहीं।') + '</div>'; return; }
     var seq = ++DS.seq, H = HD(), y = DS.y; out.innerHTML = '<div class="big-note">' + T('Calculating…', 'गणना हो रही है…') + '</div>';
     var done = function (ranked, note) {
-      if (seq !== DS.seq || !$('drOut')) return; DS.ranked = ranked; show(ranked, H[y], note);
+      if (seq !== DS.seq || !$('drOut')) return;
+      (DS.pairs || []).forEach(function (pr) { var other = pr.after === y ? pr.before : (pr.before === y ? pr.after : -1); ranked.forEach(function (r) { if (r.col === other) { r.derived = { why: 'pair', pair: pr }; delete r.standIn; } }); });
+      DS.ranked = ranked; show(ranked, yName, note);
       if (!STL.colChecks) return;
       // formulas and caps: a column calculated FROM the number is a result; then the section at the bottom
       STL.colChecks.run().then(function (res) {
         if (seq !== DS.seq || !$('drOut')) return;
         var moved = false;
         res.formulas.forEach(function (f) { var r = ranked.filter(function (q) { return q.col === f.t; })[0]; if (!r) return; r.formula = f.text;
-          if ((f.a === y || f.b === y) && !r.derived) { r.derived = { why: 'formula', text: f.text }; delete r.standIn; delete r.partly; moved = true; } });
-        DS.checks = res; if (moved) show(ranked, H[y], note); else fillChecks();
+          if ((f.a === y || f.b === y) && !r.derived && !DS.yCat) { r.derived = { why: 'formula', text: f.text }; delete r.standIn; delete r.partly; moved = true; } });
+        DS.checks = res; if (moved) show(ranked, yName, note); else fillChecks();
       }).catch(function () {});
     };
     var fail = function (e) { if ($('drOut')) $('drOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; };
-    D.logY = !isBig() && !!(DS.prof[y] && DS.prof[y].heavy);
+    D.logY = !isBig() && !DS.yCat && !!(DS.prof[y] && DS.prof[y].heavy);
+    var yFn = DS.yCat ? function (cell) { var q = s0(cell).trim(); return q === '' ? null : (q === DS.yCat.value ? 1 : 0); } : null; D.yFn = yFn;
+    var yName = DS.yCat ? H[y] + ' = ' + DS.yCat.value : H[y];
     var cands = D.candidates(H, DS.prof, y);
-    if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero, logY: D.logY }); done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
+    if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero, logY: D.logY, yFn: yFn }); done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
     // large file: the engine sums every row, per column (number columns in bands made from the sample's quintiles)
     var sc = STL.bigCharts.scope(), S = STL.bigCharts.sample;
     Promise.all(cands.map(function (c) {
@@ -581,10 +594,12 @@
   function show(ranked, yName, note) {
     var out = $('drOut'); if (!out) return; dispose();
     var lines = D.summary(ranked, yName, hi()), causes = ranked.filter(function (r) { return !r.derived; }), res = ranked.filter(function (r) { return r.derived; });
-    var pct = function (x) { return (Math.round(x * 1000) / 10).toFixed(1) + '%'; }, nv = function (v) { return Math.abs(v) >= 1000 ? CH.indian(Math.round(v)) : (Math.round(v * 100) / 100).toFixed(2); };
-    var row = function (r) { return '<tr><td><b>' + esc(r.name) + '</b>' + (r.walls ? ' <span title="' + esc(T('May be a label given by the number', 'शायद संख्या से तय लेबल')) + '">⚠</span>' : '') + (r.kind === 'num' ? ' <em>(' + T('5 bands', '5 समूह') + ')</em>' : '') + (r.formula && !(r.derived && r.derived.why === 'formula') ? '<div class="dr-via">= ' + esc(r.formula.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.derived && r.derived.why === 'formula' ? '<div class="dr-via">= ' + esc(r.derived.text.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.standIn && r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('made of ', 'इनसे बना: ')) + '<b>' + esc(r.standIn.name.split(' + ').join(T(' and ', ' और '))) + '</b>' + esc(T(': inside their combinations only ', ': इनके संयोजनों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.standIn && !r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('mostly through ', 'मुख्यतः ')) + '<b>' + esc(r.standIn.name) + '</b>' + esc(T(': inside its groups only ', ' के कारण: उसके समूहों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.partly ? '<div class="dr-via">↳ ' + esc(T('partly through ', 'आंशिक रूप से ')) + '<b>' + esc(r.partly.name) + '</b>' + esc(T(': inside its groups ', ' के कारण: उसके समूहों के भीतर ')) + pct(r.partly.omega2) + '</div>' : '') + '</td><td class="num"><b>' + pct(r.omega2) + '</b></td><td>' + (r.low && r.high ? esc(r.low.label) + ' <em>' + nv(r.low.mean) + '</em> → ' + esc(r.high.label) + ' <em>' + nv(r.high.mean) + '</em>' : '–') + '</td><td><button class="cs-link" data-ch="' + r.col + '">📊 ' + T('Chart', 'चार्ट') + '</button>' + (r.kind === 'cat' && !r.derived ? ' · <button class="cs-link" data-fr="' + r.col + '">⚖ ' + T('Fair check', 'निष्पक्ष जाँच') + '</button>' : '') + '</td></tr>'; };
+    var pct = function (x) { return (Math.round(x * 1000) / 10).toFixed(1) + '%'; }, nv = function (v) { return D.yFn ? pct(v) : Math.abs(v) >=1000 ? CH.indian(Math.round(v)) : (Math.round(v * 100) / 100).toFixed(2); };
+    var row = function (r) { return '<tr><td><b>' + esc(r.name) + '</b>' + (r.walls ? ' <span title="' + esc(T('May be a label given by the number', 'शायद संख्या से तय लेबल')) + '">⚠</span>' : '') + (r.kind === 'num' ? ' <em>(' + T('5 bands', '5 समूह') + ')</em>' : '') + (r.formula && !(r.derived && r.derived.why === 'formula') ? '<div class="dr-via">= ' + esc(r.formula.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.derived && r.derived.why === 'formula' ? '<div class="dr-via">= ' + esc(r.derived.text.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.standIn && r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('made of ', 'इनसे बना: ')) + '<b>' + esc(r.standIn.name.split(' + ').join(T(' and ', ' और '))) + '</b>' + esc(T(': inside their combinations only ', ': इनके संयोजनों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.standIn && !r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('mostly through ', 'मुख्यतः ')) + '<b>' + esc(r.standIn.name) + '</b>' + esc(T(': inside its groups only ', ' के कारण: उसके समूहों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.partly ? '<div class="dr-via">↳ ' + esc(T('partly through ', 'आंशिक रूप से ')) + '<b>' + esc(r.partly.name) + '</b>' + esc(T(': inside its groups ', ' के कारण: उसके समूहों के भीतर ')) + pct(r.partly.omega2) + '</div>' : '') + '</td><td class="num"><b>' + pct(r.omega2) + '</b></td><td>' + (r.low && r.high ? esc(r.low.label) + ' <em>' + nv(r.low.mean) + '</em> → ' + esc(r.high.label) + ' <em>' + nv(r.high.mean) + '</em>' : '–') + '</td><td><button class="cs-link" data-ch="' + r.col + '">📊 ' + T('Chart', 'चार्ट') + '</button>' + (r.kind === 'cat' && !r.derived && !DS.yCat ? ' · <button class="cs-link" data-fr="' + r.col + '">⚖ ' + T('Fair check', 'निष्पक्ष जाँच') + '</button>' : '') + '</td></tr>'; };
     var head = '<tr><th>' + T('Column', 'कॉलम') + '</th><th>' + T('Explains', 'समझाता है') + '</th><th>' + T('Lowest → highest average', 'न्यूनतम → अधिकतम औसत') + '</th><th></th></tr>';
-    var html = '<div class="fr-verdict" style="border-color:#6d5bd0"><b><span class="fr-ic" style="background:#6d5bd0">🔍</span>' + T('What goes with ', 'किससे जुड़ा है: ') + esc(yName) + '</b>' + lines.map(function (l) { return '<p>' + esc(l) + '</p>'; }).join('') + '</div>' +
+    var bn = ''; (DS.pairs || []).forEach(function (pr) { if (bn || DS.yCat || (pr.before !== DS.y && pr.after !== DS.y) || HD().indexOf(pr.name) >= 0) return; var H2 = HD();
+      bn = '<div class="big-note" style="border-color:#14a38b"><b>💡 ' + esc(T('Before and after', 'पहले और बाद')) + '</b> — ' + esc(T('“' + H2[pr.before] + '” and “' + H2[pr.after] + '” look like a before and an after. Most of the difference between rows is where they started. To see what changed:', '“' + H2[pr.before] + '” और “' + H2[pr.after] + '” पहले और बाद जैसे लगते हैं। पंक्तियों के बीच अंतर का अधिकांश हिस्सा यह है कि उन्होंने कहाँ से शुरू किया। बदलाव देखने के लिए:')) + ' <button class="tb-btn primary" data-chg="' + pr.after + '|' + pr.before + '|' + esc(pr.name) + '">' + esc(T('Add “' + pr.name + '” and explain it', '“' + pr.name + '” जोड़ें और समझाएँ')) + '</button></div>'; });
+    var html = bn + '<div class="fr-verdict" style="border-color:#6d5bd0"><b><span class="fr-ic" style="background:#6d5bd0">🔍</span>' + T('What goes with ', 'किससे जुड़ा है: ') + esc(yName) + '</b>' + lines.map(function (l) { return '<p>' + esc(l) + '</p>'; }).join('') + '</div>' +
       '<div id="drChart" class="fr-chart" style="height:' + Math.max(180, Math.min(causes.length, 12) * 26 + 50) + 'px"></div>' +
       '<table class="big-tbl fr-tbl">' + head + causes.slice(0, 15).map(row).join('') + '</table>' +
       ranked.filter(function (r) { return r.rule && r.rule.accuracy >= 0.8; }).map(function (r) { var q = r.rule, lines = D.ruleLines(q);
@@ -598,7 +613,8 @@
       '<div id="drCols"></div>' +
       '<div class="fr-how">' + T('“Explains” is ω² (omega squared): the share of the variation in the number that lies between the groups of a column, corrected for chance. It shows which factors go together with the number, not what causes it. ', '“समझाता है” = ω² (ओमेगा स्क्वेयर्ड): संख्या की भिन्नता का वह भाग जो किसी कॉलम के समूहों के बीच है, संयोग के लिए सुधारा हुआ। यह बताता है कि कौन-से कारक संख्या के साथ चलते हैं, कारण नहीं। ') + (note ? esc(note) : '') + '</div>';
     out.innerHTML = html; fillChecks();
-    out.querySelectorAll('[data-ch]').forEach(function (b) { b.onclick = function () { var c = +b.dataset.ch, r = ranked.filter(function (q) { return q.col === c; })[0], spec = { x: c, ys: [{ col: DS.y, fn: 'avg' }], noZero: DS.noZero, sort: r && r.kind === 'num' ? 'natural' : 'desc' }; if (r && r.kind === 'num') spec.bands = 6; dispose(); $('driversDialog').remove(); STL.openChartStudio({ type: 'column', spec: spec }); }; });
+    out.querySelectorAll('[data-chg]').forEach(function (b) { b.onclick = function () { var q = b.dataset.chg.split('|'); STL.addColumn({ a: +q[0], op: 'minus', b: +q[1], name: q.slice(2).join('|') }, function (ni) { dispose(); var d = $('driversDialog'); if (d) d.remove(); STL.openDrivers({ y: ni }); }); }; });
+    out.querySelectorAll('[data-ch]').forEach(function (b) { b.onclick = function () { var c = +b.dataset.ch, r = ranked.filter(function (q) { return q.col === c; })[0], spec = { x: c, ys: [DS.yCat ? { col: DS.y, fn: 'pct', op: '=', value: DS.yCat.value } : { col: DS.y, fn: 'avg' }], noZero: DS.noZero, sort: r && r.kind === 'num' ? 'natural' : 'desc' }; if (r && r.kind === 'num') spec.bands = 6; dispose(); $('driversDialog').remove(); STL.openChartStudio({ type: 'column', spec: spec }); }; });
     out.querySelectorAll('[data-fr]').forEach(function (b) { b.onclick = function () { var c = +b.dataset.fr, others = causes.filter(function (r) { return r.col !== c && !r.walls && !r.standIn && r.omega2 >= 0.005; }).slice(0, 3).map(function (r) { return r.col; }); dispose(); $('driversDialog').remove(); STL.openFair({ y: DS.y, f: c, adj: others, noZero: DS.noZero }); }; });
     STL.ensureECharts(function () {
       var el = $('drChart'); if (!el) return; var top = causes.slice(0, 12).reverse(), names = top.map(function (r) { return r.name + (r.walls ? ' ⚠' : r.standIn ? ' ↳' : ''); }), env = CH.kit.envOf({ hi: hi() }), K = CH.kit, o = K.base({ toolbox: false }, env);

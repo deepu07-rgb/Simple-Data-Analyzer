@@ -177,15 +177,33 @@
     $('fbReview').onclick = function () { hideBanner(); STL.openFixer(); };
     $('fbLater').onclick = hideBanner;
   }
+  // ---- "what do you want to know?" after a clean file opens: four plain choices
+  function hideNext() { var b = $('nextBanner'); if (b) b.style.display = 'none'; }
+  function showNext() {
+    var b = $('nextBanner');
+    if (!b) { b = document.createElement('div'); b.id = 'nextBanner'; b.className = 'stl-banner'; b.style.flexWrap = 'wrap'; var stage = $('workspace-stage'); if (stage && stage.parentNode) stage.parentNode.insertBefore(b, stage); else document.body.appendChild(b); }
+    b.innerHTML = '<span class="stl-banner-t"><b>' + T('Your file is ready: ', 'आपकी फ़ाइल तैयार है: ') + fmt(rawData.length) + T(' rows, ', ' पंक्तियाँ, ') + headers.length + T(' columns. What would you like to do?', ' कॉलम। आप क्या करना चाहेंगे?') + '</b></span>' +
+      '<button class="tb-btn primary" id="nbCharts">📊 ' + T('Show me the best charts', 'सबसे अच्छे चार्ट दिखाएँ') + '</button>' +
+      '<button class="tb-btn" id="nbWhy">🔍 ' + T('What affects a number?', 'किसी संख्या को क्या प्रभावित करता है?') + '</button>' +
+      '<button class="tb-btn" id="nbFair">⚖ ' + T('Is a difference real?', 'क्या अंतर असली है?') + '</button>' +
+      '<button class="tb-btn" id="nbAdd">➕ ' + T('Add a column (like the change)', 'नया कॉलम जोड़ें (जैसे बदलाव)') + '</button>' +
+      '<button class="tb-btn" id="nbX" aria-label="close">×</button>';
+    b.style.display = 'flex';
+    $('nbCharts').onclick = function () { hideNext(); if (STL.openChartStudio) STL.openChartStudio(); };
+    $('nbWhy').onclick = function () { hideNext(); if (STL.openDrivers) STL.openDrivers(); };
+    $('nbFair').onclick = function () { hideNext(); if (STL.openFair) STL.openFair(); };
+    $('nbAdd').onclick = function () { hideNext(); if (STL.openAddColumn) STL.openAddColumn(); };
+    $('nbX').onclick = hideNext;
+  }
   function checkFile() {
-    hideBanner();
+    hideBanner(); hideNext();
     if (STL._openFixerAfterImport) { STL._openFixerAfterImport = false; setTimeout(STL.openFixer, 300); return; }
     if (!hasData()) return;
     setTimeout(function () {
       try {
         var res = F.analyze(F.prepare(headers, rawData.slice(0, 3000)));
         var found = res.steps.filter(function (s) { return s.banner; });
-        if (found.length) showBanner(found);
+        if (found.length) showBanner(found); else if (rawData.length >= 20 && headers.length >= 2) showNext();
       } catch (e) { /* the banner is a convenience only */ }
     }, 600);
   }
