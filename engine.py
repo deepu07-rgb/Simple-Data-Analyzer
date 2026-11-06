@@ -1002,7 +1002,7 @@ class Engine:
                 "alone": [result(f) for f in fits[1:]], "adjusters": [int(c) for c in cats] + [int(c) for c in lins]}
 
     FORMULA_SQL = {
-        "add": "({a} + {b})", "sub": "({a} - {b})", "mul": "({a} * {b})", "div": "({a} / NULLIF({b}, 0))",
+        "mulsub": "({a} * {b} - {c3})", "add": "({a} + {b})", "sub": "({a} - {b})", "mul": "({a} * {b})", "div": "({a} / NULLIF({b}, 0))",
         "pctof": "({a} * {b} / 100)", "less": "({a} * (1 - {b} / 100))", "more": "({a} * (1 + {b} / 100))",
         "divless": "({a} / NULLIF(1 - {b} / 100, 0))", "share": "({a} / NULLIF({b}, 0) * 100)",
         "cdiv": "((? - {a}) / NULLIF({b}, 0))", "divc": "(({a} - ?) / NULLIF({b}, 0))", "lin": "(? * {a} + ?)",
@@ -1023,7 +1023,8 @@ class Engine:
             t = _num(self._check_col(d, f.get("t")))
             a = _num(self._check_col(d, f.get("a")))
             b = _num(self._check_col(d, f.get("b"))) if op != "lin" else "NULL"
-            expr = self.FORMULA_SQL[op].format(a=a, b=b)
+            c3 = _num(self._check_col(d, f.get("c3"))) if op == "mulsub" else "NULL"
+            expr = self.FORMULA_SQL[op].format(a=a, b=b, c3=c3)
             ep = [float(f.get("c") or 0)] if op in ("cdiv", "divc", "kdiv") else ([float(f.get("k", 1)), float(f.get("c") or 0)] if op == "lin" else [])
             dec = max(0, min(int(f.get("d", 6)), 6))
             tol = f"(0.5 * {10.0 ** -dec!r} * 1.01 + 0.002 * abs(t) + 1e-9)"
@@ -1088,6 +1089,8 @@ class Engine:
             if op == "contains":                                            # the text contains these letters (capitals ignored)
                 extra.append(f"contains(lower({_col(i)}), lower(?))")
                 params = list(params) + [str(c.get("value")).strip()]
+            elif op == "empty":                                             # the cell is empty
+                extra.append(f"({_col(i)} IS NULL OR trim({_col(i)}) = '')")
             elif op == "word":                                              # the text contains this whole word
                 extra.append(f"list_contains({self.WORDS_SQL.format(c=_col(i))}, lower(?))")
                 params = list(params) + [str(c.get("value")).strip()]

@@ -21,3 +21,12 @@ const rows2 = Array.from({ length: 900 }, (_, i) => ['Song ' + i, AR[i % AR.leng
 const cat2 = A.catalog(H2, rows2), ask2 = q => A.parse(q, H2, rows2, cat2);
 test('total streams by artist(s)_name uses the artist column, not artist_count', () => { const r = ask2('total streams by artist(s)_name'); assert.equal(r.intent, 'agg_by'); assert.equal(r.x, 1); assert.equal(r.fn, 'sum'); });
 test('average streams by released_year uses the year, not the month', () => { const r = ask2('average streams by released_year'); assert.equal(r.intent, 'agg_by'); assert.equal(r.x, 3); });
+// Hindi sales sheet: inflected words (जिले = जिला), “X का Y पर असर”, “कितने … खाली”
+const HH = ['बिल संख्या', 'बिल दिनांक', 'जिला', 'ग्राहक प्रकार', 'सामान', 'मात्रा (किलो)', 'दर (₹ प्रति किलो)', 'छूट (₹)', 'बिल राशि (₹)'];
+const HD = ['अजमेर', 'जयपुर', 'पाली', 'नागौर', 'बीकानेर'], HT = ['थोक', 'खुदरा', 'होटल'], HI = ['चीनी', 'मसाले', 'नमक', 'चाय पत्ती'];
+const hrows = Array.from({ length: 900 }, (_, i) => ['RJ-' + (100000 + i), '2024-0' + (1 + i % 9) + '-10', HD[i % 5], HT[i % 3], HI[i % 4], (5 + (i * 7) % 190) + '.5', i % 23 === 0 ? '' : String(20 + (i * 13) % 300), String((i % 4) * 50), String(1000 + (i * 997) % 60000)]);
+const hcat = A.catalog(HH, hrows), hask = q => A.parse(q, HH, hrows, hcat);
+test('जिले के अनुसार कुल बिल राशि groups by the district (जिले = जिला)', () => { const r = hask('जिले के अनुसार कुल बिल राशि'); assert.equal(r.intent, 'agg_by'); assert.equal(r.x, 2); assert.equal(r.y, 8); assert.equal(r.fn, 'sum'); });
+test('छूट का बिल राशि पर क्या असर है: the discount is the group, the bill amount the measure', () => { const r = hask('छूट का बिल राशि पर क्या असर है'); assert.equal(r.intent, 'fair'); assert.equal(r.y, 8); assert.equal(r.f, 7); });
+test('कितने बिल में दर खाली है counts the empty rates, not the empty bill numbers', () => { const r = hask('कितने बिल में दर खाली है'); assert.equal(r.intent, 'count'); assert.deepEqual(conds(r), [{ col: 6, op: 'empty', value: '' }]); });
+test('कितने बिल थोक के हैं counts the wholesale bills', () => { const r = hask('कितने बिल थोक के हैं'); assert.equal(r.intent, 'count'); assert.deepEqual(conds(r), [{ col: 3, value: 'थोक' }]); });

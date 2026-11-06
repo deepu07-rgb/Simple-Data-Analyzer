@@ -101,7 +101,8 @@
     var dmg = H.map(function (_, c) { var n = 0; for (var k = 0; k < idx.length; k++) { if (s(rows[idx[k]][c]).indexOf('\uFFFD') >= 0) n++; } return n; }), guess = R.guess(H, prof, avg, dmg), cur = R.rolesFor(H, guess), caps = [];
     try { if (STL.colChecks) caps = STL.colChecks.caps(rows, idx, H, prof).filter(function (c) { return c.placeholder; }); } catch (e) { /* optional */ }
     var ex = H.map(function (_, c) { var seen = {}, out = []; for (var k = 0; k < idx.length && out.length < 3; k++) { var v = s(rows[idx[k]][c]).trim(); if (v && !seen[v]) { seen[v] = 1; out.push(v.length > 30 ? v.slice(0, 30) + '…' : v); } } return out; });
-    return { H: H, prof: prof, guess: guess, cur: cur, caps: caps, ex: ex, remembered: !!R.stored(H) };
+    var miss = H.map(function (_, c) { if (big() && BIG.profile && BIG.profile.columns[c]) return { n: BIG.profile.columns[c].empty, of: BIG.profile.rows }; var n = 0; for (var k = 0; k < idx.length; k++) { if (s(rows[idx[k]][c]).trim() === '') n++; } return { n: n, of: idx.length }; });
+    return { H: H, prof: prof, guess: guess, cur: cur, caps: caps, ex: ex, miss: miss, remembered: !!R.stored(H) };
   }
   function s(v) { return v == null ? '' : String(v); }
   // "What this used": the columns an answer is built from, in the roles the app is using for them, and how many rows were read
@@ -133,7 +134,7 @@
       order.map(function (i) {
         var g = I.guess[i], c = capOf[i], doubt = g.doubt || c, sel = '<select class="big-select rc-sel" data-i="' + i + '">' + R.ROLES.map(function (r) { return '<option value="' + r[0] + '"' + (st.roles[i] === r[0] ? ' selected' : '') + '>' + esc(T(r[1], r[2])) + '</option>'; }).join('') + '</select>';
         var note = (g.why && (doubt || st.roles[i] !== g.role) ? '<div><small>' + esc(g.why) + '</small></div>' : '') + (c ? '<label class="rp-inline" style="margin-top:4px"><input type="checkbox" class="rc-blank" data-i="' + i + '"' + (st.blank[i] ? ' checked' : '') + '> ' + T('The value <b>' + esc(String(c.value)) + '</b> (' + (Math.round(c.share * 1000) / 10) + '% of rows) is far from every other value: treat it as <b>empty</b> (“not applicable”)', 'मान <b>' + esc(String(c.value)) + '</b> (' + (Math.round(c.share * 1000) / 10) + '% पंक्तियाँ) बाकी सभी मानों से बहुत दूर है: इसे <b>खाली</b> (“लागू नहीं”) मानें') + '</label>' : '');
-        return '<tr' + (doubt ? ' style="background:#fff7e6"' : '') + '><td><b>' + esc(H[i]) + '</b></td><td><small>' + esc(I.ex[i].join(' · ')) + '</small></td><td>' + sel + note + '</td></tr>';
+        return '<tr' + (doubt ? ' style="background:#fff7e6"' : '') + '><td><b>' + esc(H[i]) + '</b></td><td><small>' + esc(I.ex[i].join(' · ')) + '</small>' + (I.miss[i].n > 0 ? '<div><small style="color:#b45309">' + esc(T(fmtN(I.miss[i].n) + ' empty (' + (Math.round(I.miss[i].n / Math.max(I.miss[i].of, 1) * 1000) / 10) + '%)', fmtN(I.miss[i].n) + ' खाली (' + (Math.round(I.miss[i].n / Math.max(I.miss[i].of, 1) * 1000) / 10) + '%)')) + '</small></div>' : '') + '</td><td>' + sel + note + '</td></tr>';
       }).join('') + '</table></div>' +
       '<div class="prj-row" style="justify-content:flex-end;margin-top:12px;gap:8px"><button class="tb-btn" id="rcReset">' + T('Forget my choices for these columns', 'इन कॉलमों के मेरे चुनाव भूलें') + '</button><button class="tb-btn" id="rcCancel">' + T('Not now', 'अभी नहीं') + '</button><button class="tb-btn primary" id="rcOk">✔ ' + T('Looks right', 'सही है') + '</button></div>';
     var o = U.overlay('colRolesDialog', html, true); o.querySelector('.stl-box').classList.add('fr-box');

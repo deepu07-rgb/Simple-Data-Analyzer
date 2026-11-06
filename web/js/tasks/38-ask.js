@@ -15,7 +15,7 @@
   var STOP = {}; ('a an the of in on at to for from by with and or is are was were be been do does did can could will would should it its this that these those my our your their me we you they them i what which who whom how why when where whether any some all each every per than then there here as about into over under between among if not no yes please show tell give find me us get want need like using use used also more most much many very just only own words ' +
     'का की के है हैं था थे थी को से में पर और या क्या कौन कैसे कितना कितने कितनी क्यों यह वह ये वे मेरे हमारे ने भी तो ही कि जो').split(' ').forEach(function (w) { if (w) STOP[w] = 1; });
   var KEEP = { 'no': 1, 'yes': 1 };
-  function stem(w) { if (w.length > 5 && /ies$/.test(w)) return w.slice(0, -3) + 'y'; if (w.length > 5 && /(ing|ed)$/.test(w)) return w.replace(/(ing|ed)$/, ''); if (w.length > 3 && /s$/.test(w) && !/ss$/.test(w)) return w.slice(0, -1); return w; }
+  function stem(w) { if (w.length > 3 && /[ऀ-ॿ]/.test(w)) return w.replace(/[ािीुूेैोौंँ]+$/, ''); if (w.length > 5 && /ies$/.test(w)) return w.slice(0, -3) + 'y'; if (w.length > 5 && /(ing|ed)$/.test(w)) return w.replace(/(ing|ed)$/, ''); if (w.length > 3 && /s$/.test(w) && !/ss$/.test(w)) return w.slice(0, -1); return w; }
   A.words = function (t) { return s(t).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9ऀ-ॿ]+/).filter(Boolean); };
   var SYN = [['gpa', 'grade', 'marks', 'अंक'], ['hour', 'hr', 'time', 'duration', 'usage', 'घंटे', 'घंटा'], ['burnout', 'burn', 'exhaustion', 'exhausted', 'tired', 'stress', 'थकान', 'बर्नआउट'], ['skill', 'ability', 'competence', 'कौशल'], ['paid', 'premium', 'subscription', 'pay', 'भुगतान'],
     ['major', 'course', 'subject', 'stream', 'branch', 'विषय'], ['year', 'class', 'वर्ष'], ['salary', 'pay', 'income', 'wage', 'वेतन'], ['age', 'आयु', 'उम्र'], ['price', 'cost', 'rate', 'कीमत'], ['sale', 'revenue', 'turnover', 'बिक्री'], ['rating', 'review', 'stars', 'रेटिंग'], ['city', 'town', 'शहर'], ['gender', 'sex', 'लिंग'], ['loudness', 'loud', 'louder', 'loudest', 'volume'], ['duration', 'length', 'long', 'longer'], ['tempo', 'speed', 'bpm', 'faster', 'slower'], ['energy', 'energetic'], ['dance', 'danceability', 'danceable']];
@@ -44,7 +44,7 @@
   function prefix(a, b) { var i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; }
   function nameScore(col, qw, df, rareMax) {
     if (!col.words.length) return { sc: 0, pos: 99 }; var hit = 0, pos = 99, rare = 0, toks = [];
-    col.words.forEach(function (w) { var best = 0, at = 99; if (/^\d+$/.test(w) && col.words.length > 1) return; qw.forEach(function (q, k) { var sc = q === w ? 1 : (syn(q, w) ? 0.85 : ((q.length >= 4 && w.length >= 4 && (q.indexOf(w) === 0 || w.indexOf(q) === 0)) ? 0.7 : (prefix(q, w) >= 4 && prefix(q, w) >= 0.6 * Math.min(q.length, w.length) ? 0.65 : 0))); if (sc > best) { best = sc; at = k; } }); if (best) { hit += best; toks.push(at); if (at < pos) pos = at; if ((df[w] || 1) <= (rareMax || 2) && w.length >= 3 && best >= 0.85) rare = Math.max(rare, best); } });
+    col.words.forEach(function (w) { var best = 0, at = 99; if (/^\d+$/.test(w) && col.words.length > 1) return; qw.forEach(function (q, k) { var sc = q === w ? 1 : (syn(q, w) ? 0.85 : ((q.length >= 4 && w.length >= 4 && (q.indexOf(w) === 0 || w.indexOf(q) === 0)) ? 0.7 : (prefix(q, w) >= 4 && prefix(q, w) >= 0.6 * Math.min(q.length, w.length) ? 0.65 : 0))); if (sc > best) { best = sc; at = k; } }); if (best) { hit += best; toks.push(at); if (at < pos) pos = at; if ((df[w] || 1) <= (rareMax || 2) && (w.length >= 3 || (w.length >= 2 && /[ऀ-ॿ]/.test(w))) && best >= 0.85) rare = Math.max(rare, best); } });
     var cover = hit / col.words.length;
     return { sc: rare ? Math.max(cover, 0.6 + 0.4 * cover) : cover, pos: pos, cover: cover, toks: toks };                  // one distinctive word of the name (burnout, gpa) is enough; common words (level, score) need most of the name
   }
@@ -142,6 +142,11 @@
       return res;
     }
     // ---- quick routes to existing tools
+    // ---- how many are empty / missing in a column
+    if (RX.missing.test(q) && (RX.count.test(q) || /\bhow many\b/i.test(q)) && cols.length) {
+      var mc = (named.slice().sort(function (a, b) { return b.sc - a.sc || a.pos - b.pos; })[0] || { c: cols.slice().sort(byPos)[0] }).c;                  // the column the question names best
+      return done({ intent: 'count', conds: [{ col: mc.i, op: 'empty', value: '' }], conf: 0.85, say: 'You want to count the rows where “' + mc.name + '” is empty.' });
+    }
     if (RX.words.test(q) && !RX.count.test(q)) return done({ intent: 'tool', tool: 'words', conf: 0.9, say: 'You want to see which words a text column uses.' });
     if (RX.summary.test(q)) return done({ intent: 'tool', tool: 'summary', conf: 0.9, say: 'You want one row for each person or ID.' });
     if (RX.link.test(q) && !RX.merge.test(q)) return done({ intent: 'tool', tool: 'link', conf: 0.9, say: 'You want to bring columns from another file, matched by a shared column.' });
@@ -175,6 +180,11 @@
         var other = ordered.filter(function (c) { return c !== oc; })[0];
         if (oc && other) { var ov = pickValue(oc, valOf(oc)); return done({ intent: 'fair', y: oc.i, yCat: { col: oc.i, value: ov }, f: other.i, conf: 0.8, say: 'You want to know whether “' + other.name + '” really makes a difference to how often “' + oc.name + '” is “' + ov + '” (compared fairly).' }); }
       }
+      // Hindi: “X का Y पर असर” = the effect of X on Y (X is the group, Y the measure)
+      var hiP = /(\S.*?)\s+(?:का|की|के)\s+(.+?)\s+पर\s+(?:क्या\s+)?(?:असर|प्रभाव)/.exec(q);
+      if (hiP) { var g1 = A.words(hiP[1]).map(stem), g2 = A.words(hiP[2]).map(stem), hit = function (c, g) { return c.words.some(function (w) { return g.indexOf(w) >= 0; }); };
+        var cy = cat.filter(function (c) { return hit(c, g2) && !hit(c, g1) && (c.measure || c.numeric); })[0] || cat.filter(function (c) { return hit(c, g2); })[0], cx = cat.filter(function (c) { return hit(c, g1) && c !== cy; })[0];
+        if (cy && cx) { fy = cy; ff = cx; } }
       if (fy && ff) return done({ intent: 'fair', y: fy.i, f: ff.i, conf: 0.85, say: 'You want to know whether “' + ff.name + '” really makes a difference to “' + fy.name + '” (compared fairly).' });
       if (fy) return done({ intent: 'ask_f', y: fy.i, conf: 0.4, say: 'What do you want to compare “' + fy.name + '” across?' });
     }
@@ -288,7 +298,7 @@
   function nums(col) { var C = STL.charts, out = []; S.R.forEach(function (r) { var x = C.num(r[col]); if (x !== null) out.push(x); }); return out; }
   function rowsWhere(conds) {
     return S.R.filter(function (r) { return (conds || []).every(function (c) {
-      var v = String(r[c.col] == null ? '' : r[c.col]); if (c.op === 'word') return v.toLowerCase().replace(/[^a-z0-9ऀ-ॿ']+/g, ' ').split(' ').indexOf(c.value) >= 0; if (c.op === 'contains') return v.toLowerCase().indexOf(c.value) >= 0; return v.trim() === c.value;
+      var v = String(r[c.col] == null ? '' : r[c.col]); if (c.op === 'empty') return v.trim() === ''; if (c.op === 'word') return v.toLowerCase().replace(/[^a-z0-9ऀ-ॿ']+/g, ' ').split(' ').indexOf(c.value) >= 0; if (c.op === 'contains') return v.toLowerCase().indexOf(c.value) >= 0; return v.trim() === c.value;
     }); });
   }
   function mean(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; }

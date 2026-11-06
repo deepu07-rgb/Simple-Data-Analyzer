@@ -31,6 +31,7 @@
     kdiv: { f: function (a, b, c) { return b === 0 ? NaN : c * a / b; }, fitC: function (a, b, t) { return a === 0 ? NaN : t * b / a; }, txt: function (A, B, c) { return A + ' × ' + c + ' ÷ ' + B; } },          // a rate per thousand: dwell ÷ (price ÷ 1,000)
     divp1: { f: function (a, b) { return a / (b + 1); }, txt: function (A, B) { return A + ' ÷ (' + B + ' + 1)'; } },                                                                       // revenue ÷ (competitors + 1): no division by zero
     divc: { f: function (a, b, c) { return b === 0 ? NaN : (a - c) / b; }, fitC: function (a, b, t) { return a - t * b; }, txt: function (A, B, c) { return '(' + A + ' − ' + c + ') ÷ ' + B; } },
+    mulsub: { three: true, f: function (a, b, c) { return a * b - c; }, txt: function (A, B, c) { return A + ' × ' + B + ' − ' + c; } },
     lin: { one: true, txt: function (A, B, c, k) { return (k === 1 ? A : A + ' × ' + num(k)) + (c ? (c > 0 ? ' + ' : ' − ') + num(Math.abs(c)) : ''); } }
   };
   CC.OPS = OPS;
@@ -72,7 +73,7 @@
         vcols.forEach(function (B) {
           var b = B.index; if (b === t || b === a) return;
           Object.keys(OPS).forEach(function (op) {
-            var O = OPS[op]; if (O.one || (O.sym && a > b)) return;
+            var O = OPS[op]; if (O.one || O.three || (O.sym && a > b)) return;
             var c = 0;
             if (O.fitC) { var cs = []; for (var i2 = 0; i2 < Math.min(nS, 200); i2++) if (isFinite(V[a][i2]) && isFinite(V[b][i2]) && isFinite(V[t][i2])) cs.push(O.fitC(V[a][i2], V[b][i2], V[t][i2])); c = roundC(median(cs)); if (!isFinite(c)) return; }
             var r = test(t, function (i) { return O.f(V[a][i], V[b][i], c); });
@@ -81,13 +82,21 @@
         });
       });
     });
+    // a product less a third column (bill = quantity × rate − discount)
+    vcols.forEach(function (T) { var t = T.index;
+      if (found.some(function (f) { return f.t === t; })) return;
+      vcols.forEach(function (A) { var a = A.index; if (a === t) return; vcols.forEach(function (B) { var b = B.index; if (b === t || b <= a) return; vcols.forEach(function (Cc) { var c3 = Cc.index; if (c3 === t || c3 === a || c3 === b) return;
+        var r = test(t, function (i) { return V[a][i] * V[b][i] - V[c3][i]; });
+        if (r && r.share >= 0.95) found.push({ t: t, a: a, b: b, c3: c3, op: 'mulsub', c: 0, share: r.share, n: r.n, d: D[t] });
+      }); }); });
+    });
     // one relation per set of columns, said with the column that looks calculated on the left
     // which column of a relation is the calculated one: its name says so (estimate, ratio, adjusted ...); on a tie the
     // relation written as a product or a sum (revenue = price × cups) rather than as a quotient
     var DER = /adjusted|effective|ratio|per[_ ]|rate|index|share|pct|percent|score|multiplier|total|estimate|revenue|sales|margin/i, FORWARD = { add: 1, mul: 1, pctof: 1, less: 1, more: 1 };
     function sideScore(f) { return (DER.test(s(headers[f.t])) ? 2 : 0) + (FORWARD[f.op] ? 0.5 : 0) + f.t / 1000 - (f.op === 'lin' ? 0.5 : 0) - (f.op === 'kdiv' && f.c === 1 ? 0.3 : 0) + f.share; }
     var bySet = {};
-    found.forEach(function (f) { var key = [f.t, f.a, f.b].filter(function (x) { return x >= 0; }).sort(function (x, y) { return x - y; }).join(','); if (!bySet[key] || sideScore(f) > sideScore(bySet[key])) bySet[key] = f; });
+    found.forEach(function (f) { var key = [f.t, f.a, f.b, f.c3 === undefined ? -1 : f.c3].filter(function (x) { return x >= 0; }).sort(function (x, y) { return x - y; }).join(','); if (!bySet[key] || sideScore(f) > sideScore(bySet[key])) bySet[key] = f; });
     var out = Object.keys(bySet).map(function (k) { return bySet[k]; });
     // a column already explained by a formula with fewer columns is not listed again with more
     out = out.filter(function (f) { return !(f.b >= 0 && out.some(function (g) { return g !== f && g.t === f.t && g.b < 0 && (g.a === f.a || g.a === f.b); })); });
@@ -96,7 +105,7 @@
   };
   CC.formulaText = function (f, headers) {
     var A = s(headers[f.a]), B = f.b >= 0 ? s(headers[f.b]) : '', O = OPS[f.op];
-    return s(headers[f.t]) + ' = ' + (f.op === 'lin' ? O.txt(A, B, f.c, f.k) : O.txt(A, B, num(f.c)));
+    return s(headers[f.t]) + ' = ' + (f.op === 'lin' ? O.txt(A, B, f.c, f.k) : (f.op === 'mulsub' ? O.txt(A, B, s(headers[f.c3])) : O.txt(A, B, num(f.c))));
   };
 
   // caps and floors: many rows exactly on the end value, few just inside it
@@ -140,7 +149,7 @@
     return { formulas: found.filter(function (f) { return f.share >= 0.95; }), caps: caps.filter(function (c) { return c.count >= 10; }) };
   };
   CC.engineBody = function (found, caps) {
-    return { formulas: found.map(function (f) { return { t: f.t, a: f.a, b: f.b, op: f.op, c: f.c || 0, k: f.k === undefined ? 1 : f.k, d: f.d === undefined ? 6 : f.d }; }), caps: caps.map(function (c) { return { col: c.col, value: c.value }; }) };
+    return { formulas: found.map(function (f) { return { t: f.t, a: f.a, b: f.b, c3: f.c3, op: f.op, c: f.c || 0, k: f.k === undefined ? 1 : f.k, d: f.d === undefined ? 6 : f.d }; }), caps: caps.map(function (c) { return { col: c.col, value: c.value }; }) };
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -166,11 +175,23 @@
     return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'column_checks' }, CC.engineBody(f, c), STL.bigCharts.scope())).then(function (res) { var r = CC.applyCheck(f, c, res); r.headers = H; return r; });
   };
   CC.html = function (res) {
+    CC.lastFormulas = res.formulas;
     if (!res.formulas.length && !res.caps.length) return '<div class="big-note">' + esc(T('No column looks calculated from others, and no column stops at a cap.', 'कोई कॉलम दूसरों से गणना किया हुआ नहीं लगता, और किसी कॉलम पर सीमा नहीं दिखती।')) + '</div>';
-    return (res.formulas.length ? '<div class="prj-sub dr-rule-h">🧮 ' + esc(T('Columns calculated from others (results, not causes)', 'दूसरे कॉलमों से गणना किए गए कॉलम (परिणाम, कारण नहीं)')) + '</div><ul class="cc-list">' + res.formulas.map(function (f) { return '<li>' + esc(CC.formulaLine(f, hi())) + '</li>'; }).join('') + '</ul>' : '') +
+    return (res.formulas.length ? '<div class="prj-sub dr-rule-h">🧮 ' + esc(T('Columns calculated from others (results, not causes)', 'दूसरे कॉलमों से गणना किए गए कॉलम (परिणाम, कारण नहीं)')) + '</div><ul class="cc-list">' + res.formulas.map(function (f, fi) { var n = CC.fillCount(f); return '<li>' + esc(CC.formulaLine(f, hi())) + (n > 0 ? ' <button class="tb-btn cc-fill" data-fi="' + fi + '">' + esc(T('Fill the ' + n + ' empty cells from this formula', 'इस सूत्र से ' + n + ' खाली कोशिकाएँ भरें')) + '</button>' : '') + '</li>'; }).join('') + '</ul>' : '') +
       (res.caps.length ? '<div class="prj-sub dr-rule-h">⛔ ' + esc(T('Caps and floors', 'ऊपरी और निचली सीमाएँ')) + '</div><ul class="cc-list">' + res.caps.map(function (c) { return '<li>' + esc(CC.capText(c, hi())) + (c.placeholder ? ' <button class="tb-btn cc-blank" data-col="' + c.col + '" data-val="' + esc(String(c.value)) + '">' + esc(T('Make them empty', 'इन्हें खाली करें')) + '</button>' : '') + '</li>'; }).join('') + '</ul>' : '');
   };
-  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('.cc-blank'); if (!b) return; ['driversDialog', 'colChecksDialog'].forEach(function (id) { var d = document.getElementById(id); if (d) d.remove(); }); if (STL.blankValue) STL.blankValue(+b.dataset.col, b.dataset.val); });
+  document.addEventListener('click', function (e) { var fb = e.target.closest && e.target.closest('.cc-fill'); if (fb && CC.lastFormulas) { ['driversDialog', 'colChecksDialog'].forEach(function (id) { var d = document.getElementById(id); if (d) d.remove(); }); CC.fill(CC.lastFormulas[+fb.dataset.fi]); return; }
+    var b = e.target.closest && e.target.closest('.cc-blank'); if (!b) return; ['driversDialog', 'colChecksDialog'].forEach(function (id) { var d = document.getElementById(id); if (d) d.remove(); }); if (STL.blankValue) STL.blankValue(+b.dataset.col, b.dataset.val); });
+  // a calculated column with empty cells whose inputs are all there: the formula can fill them (editor files)
+  function fcell(f, r) { var C = STL.charts, a = C.num(r[f.a]), b = f.b >= 0 ? C.num(r[f.b]) : null; if (a === null || (f.b >= 0 && b === null)) return null; var c3 = null; if (f.op === 'mulsub') { c3 = C.num(r[f.c3]); if (c3 === null) return null; }
+    var v = f.op === 'mulsub' ? a * b - c3 : (f.op === 'lin' ? f.k * a + f.c : CC.OPS[f.op].f(a, b, f.c)); return isFinite(v) ? v : null; }
+  CC.fillCount = function (f) { if (isBig() || !rawData || !f || f.share < 0.98 || f.t < 0) return 0; var n = 0; rawData.forEach(function (r) { if (String(r[f.t] == null ? '' : r[f.t]).trim() === '' && fcell(f, r) !== null) n++; }); return n; };
+  CC.fill = function (f) {
+    var n = 0, d = Math.max(0, Math.min(f.d === undefined ? 2 : f.d, 6)), k = Math.pow(10, d); if (typeof pushUndo === 'function') pushUndo();
+    rawData.forEach(function (r) { if (String(r[f.t] == null ? '' : r[f.t]).trim() === '') { var v = fcell(f, r); if (v !== null) { r[f.t] = String(Math.round(v * k) / k); n++; } } });
+    if (typeof showTable === 'function') showTable(); if (STL.logStep) STL.logStep('fill', { en: 'Filled empty cells from a formula', hi: 'सूत्र से खाली कोशिकाएँ भरीं' }, { en: CC.formulaText(f, headers) + ': ' + n + ' cells', hi: String(n) }, { n: n });
+    toast(T('Filled ' + n + ' empty cells: ' + CC.formulaText(f, headers), n + ' खाली कोशिकाएँ भरी गईं'), 'success'); return n;
+  };
   STL.openColumnChecks = function () {
     if (!isBig() && !U.hasData()) { toast(T('Open a file first, or try the sample data.', 'पहले फ़ाइल खोलें, या नमूना डेटा आज़माएँ।'), 'info'); return; }
     var o = U.overlay('colChecksDialog', '<div class="prj-h"><b>🧮 ' + T('How are the columns built?', 'कॉलम कैसे बने हैं?') + '</b><button id="ccX" aria-label="close">×</button></div><div class="big-note">' + T('Formulas between columns, and values where a column stops (a cap or a floor).', 'कॉलमों के बीच सूत्र, और वे मान जहाँ कोई कॉलम रुक जाता है (ऊपरी या निचली सीमा)।') + '</div><div id="ccOut"><div class="big-note">' + T('Checking…', 'जाँच हो रही है…') + '</div></div>', true);
