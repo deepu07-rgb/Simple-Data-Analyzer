@@ -54,6 +54,8 @@ console.log('text file', (fs.statSync(TXT).size / 1e6).toFixed(1), 'MB');
   await page.click('#rcOk'); await wait(800);
   await ev(() => STL.openAsk()); await page.waitForSelector('#akQ'); await page.fill('#akQ', 'average label'); await page.press('#akQ', 'Enter'); await wait(2500);
   const ans = await ev(() => document.getElementById('akOut').innerText.replace(/\s+/g, ' ')); ok(/looks like a code/.test(ans), 'the answer still warns that label is a code', ans);
+  await ev(() => STL.openDrivers({})); await page.waitForFunction(() => document.querySelector('#drUsed'), null, { timeout: 90000 });
+  const used = await ev(() => document.getElementById('drUsed').innerText); ok(/What this used: .*label.*code.*125,?000? rows|What this used: .*label.* rows/.test(used.replace(/,/g, '')) && /your column check applied/.test(used), 'an answer says what it used: columns, their roles, rows read, and that the column check applied', used);
   ok(errors.length === 0, 'No JavaScript errors', errors); ok(external.length === 0, 'No request left the computer', external);
   await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); console.log(failures ? failures + ' FAILED' : 'ALL PASSED'); process.exit(failures ? 1 : 0);
 })().catch(x => { console.error(x); process.exit(1); });

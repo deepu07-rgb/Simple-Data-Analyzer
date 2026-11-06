@@ -98,6 +98,15 @@
     return { H: H, prof: prof, guess: guess, cur: cur, caps: caps, ex: ex, remembered: !!R.stored(H) };
   }
   function s(v) { return v == null ? '' : String(v); }
+  // "What this used": the columns an answer is built from, in the roles the app is using for them, and how many rows were read
+  var ROLEW = { rowno: ['row number', 'पंक्ति क्रमांक'], id: ['ID', 'आईडी'], category: ['category', 'श्रेणी'], code: ['code', 'कोड'], amount: ['amount, added up', 'राशि, जोड़ी गई'], measure: ['measurement, averaged', 'माप, औसत'], date: ['date', 'दिनांक'], text: ['text', 'टेक्स्ट'], ignore: ['ignored', 'छोड़ा गया'] };
+  R.usedLine = function (cols, rowsRead) {
+    try {
+      var H = HD(), I = inspect(), st = R.stored(H), parts = cols.filter(function (c) { return c >= 0 && c < H.length; }).map(function (c) { var r = I.cur[c], w = ROLEW[r] || [r, r]; return '“' + H[c] + '” (' + T(w[0], w[1]) + ')'; });
+      var n = rowsRead != null ? rowsRead : (big() ? BIG.matched : rawData.length);
+      return T('What this used: ', 'इसमें क्या उपयोग हुआ: ') + parts.join(', ') + ' · ' + fmtN(n) + T(' rows', ' पंक्तियाँ') + (st ? T(' · your column check applied', ' · आपकी कॉलम जाँच लागू') : '');
+    } catch (e) { return ''; }
+  };
   R.doubts = function () { try { var I = inspect(); return I.guess.filter(function (g, i) { return g.doubt; }).length + I.caps.length; } catch (e) { return 0; } };
 
   STL.openColumnCheck = function () {

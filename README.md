@@ -92,6 +92,8 @@ BASE=http://127.0.0.1:5000 node tests/e2e/novice.e2e.js  # a first-time user: ty
 BASE=http://127.0.0.1:5000 node tests/e2e/dashboard.e2e.js  # Dashboard: layout, edits, PowerPoint, PDF, print, saved with the project (needs python-pptx and pypdf)
 ```
 
+**Real-file regression** (the files are not in the repository): `REAL_DIR=/folder/with/the/files BASE=http://127.0.0.1:5000 tools/run_real_checks.sh` compares the engine with pandas on the credit, text and student files and re-runs the Zomato, school-meals and coffee checks; a missing file is skipped. Charts, *What explains this?* and *Is it real?* now end with a line “What this used: columns (their roles) · rows read”.
+
 Every push also runs all of the above on **Windows and Linux** in GitHub Actions (`.github/workflows/tests.yml`).
 
 The browser test needs Node.js and Playwright. It fails if any request leaves the PC.
