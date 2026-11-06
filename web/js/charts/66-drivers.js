@@ -101,8 +101,34 @@
   // Two columns can matter only TOGETHER: more AI hours cost grades only for people who use AI to get direct answers. Ranking one column at a time
   // cannot see this. For the strongest pairs, the cell averages (A × B) are compared with the best "A plus B" model; what is left over is the interaction.
   //   returns [{ a, b, nameA, nameB, share, extra, F, cells, odd }]  share = all of A and B together, extra = the part that is more than A and B added up
+  // the maths for one pair, from the cells (A level x B level): rows, sum and sum of squares of the outcome in each
+  D.pairInteraction = function (ka, kb, N, S, Q, labA, labB, relax) {
+    var nc = ka * kb, tot = 0, SY = 0, SYQ = 0, present = 0, q, x, z, cq, sn, sw;
+    for (q = 0; q < nc; q++) { tot += N[q]; SY += S[q]; SYQ += Q[q]; if (N[q] > 0) present++; }
+    if (tot < 200) return null;
+    var M = SY / tot, SST = SYQ - SY * SY / tot, SSC = 0, SSW = 0;
+    for (q = 0; q < nc; q++) if (N[q] > 0) { var mq = S[q] / N[q]; SSC += N[q] * (mq - M) * (mq - M); SSW += Math.max(Q[q] - N[q] * mq * mq, 0); }
+    if (!(SST > 0)) return null;
+    // the best "A plus B": alternate between the row effects and the column effects (weighted by the rows in each cell)
+    var ea = new Float64Array(ka), eb = new Float64Array(kb);
+    for (var it = 0; it < 40; it++) {
+      for (x = 0; x < ka; x++) { sn = 0; sw = 0; for (z = 0; z < kb; z++) { cq = x * kb + z; if (N[cq] > 0) { sn += N[cq] * (S[cq] / N[cq] - M - eb[z]); sw += N[cq]; } } ea[x] = sw ? sn / sw : 0; }
+      for (z = 0; z < kb; z++) { sn = 0; sw = 0; for (x = 0; x < ka; x++) { cq = x * kb + z; if (N[cq] > 0) { sn += N[cq] * (S[cq] / N[cq] - M - ea[x]); sw += N[cq]; } } eb[z] = sw ? sn / sw : 0; }
+    }
+    var fm = 0; for (q = 0; q < nc; q++) if (N[q] > 0) fm += N[q] * (ea[Math.floor(q / kb)] + eb[q % kb]); fm /= tot;
+    var SSA = 0, odd = null, oddScore = 0;
+    for (q = 0; q < nc; q++) if (N[q] > 0) { var f1 = ea[Math.floor(q / kb)] + eb[q % kb] - fm, dev = S[q] / N[q] - M - f1; SSA += N[q] * f1 * f1; if (N[q] >= 100 && N[q] * dev * dev > oddScore) { oddScore = N[q] * dev * dev; odd = { a: labA[Math.floor(q / kb)], b: labB[q % kb], n: N[q], mean: S[q] / N[q], expected: M + f1 }; } }
+    var SSI = Math.max(SSC - SSA, 0), dfi = present - (ka + kb - 1), dfe = tot - present; if (dfi < 1 || dfe < 1) return null;
+    var MSE = SSW / dfe, F = (SSI / dfi) / (MSE || 1e-300), extra = Math.max(0, (SSI - dfi * MSE) / (SST + MSE)), share = Math.max(0, (SSC - (present - 1) * MSE) / (SST + MSE));
+    var sd = Math.sqrt(SST / Math.max(tot - 1, 1)), local = odd && extra >= 0.004 && odd.n >= 200 && Math.abs(odd.mean - odd.expected) >= 0.3 * sd && F > 10;      // a small group can change a lot without moving the overall share much
+    if (relax) return (extra >= 0.003 && F > 5) ? { share: share, extra: extra, F: F, odd: odd, local: !(extra >= 0.01) } : null;                      // a first look on a sample
+    return ((extra >= 0.01 && F > 10) || local) ? { share: share, extra: extra, F: F, odd: odd, local: !(extra >= 0.01) } : null;
+  };
+  // which columns take part: the strongest ones, and weaker ones too (a column can matter only together with another one)
+  D.interCandidates = function (ranked) { return ranked.filter(function (r) { return !r.derived && !r.walls && r.omega2 >= 0.001 && r.levels && r.levels.length >= 2 && r.levels.length <= 14; }).slice(0, 14); };
+  D.interFinish = function (out) { out.sort(function (p, q) { return q.extra - p.extra; }); return out.slice(0, 3); };
   D.interactions = function (rows, idx, y, ranked, opt) {
-    opt = opt || {}; var C = CH(), cand = ranked.filter(function (r) { return !r.derived && !r.walls && r.omega2 >= 0.001 && r.levels && r.levels.length >= 2 && r.levels.length <= 14; }).slice(0, 14);       // a column can matter only together with another one, so weak columns take part too (paired with one of the six strongest)
+    opt = opt || {}; var C = CH(), cand = D.interCandidates(ranked);
     if (cand.length < 2) return [];
     cand = cand.map(function (r) {                                                                       // a number is cut into 8 bands here (5 would blur a narrow stretch such as 10-15 hours)
       if (r.kind !== 'num') return r; var vals = idx.map(function (i) { return C.num(rows[i][r.col]); }), b8 = C.quantileBands(vals, 8); if (!b8 || b8.n < 3) return r;
@@ -117,29 +143,12 @@
     var out = [];
     for (var i = 0; i < cand.length; i++) for (var j = i + 1; j < cand.length; j++) {
       if (i >= 6) continue;
-      var ka = cand[i].levels.length, kb = cand[j].levels.length, nc = ka * kb, N = new Float64Array(nc), S = new Float64Array(nc), Q = new Float64Array(nc), tot = 0;
-      for (k = 0; k < n; k++) { if (!ok[k]) continue; var a = codes[i][k], b = codes[j][k]; if (a < 0 || b < 0) continue; var cell = a * kb + b, y1 = ys[k]; N[cell]++; S[cell] += y1; Q[cell] += y1 * y1; tot++; }
-      if (tot < 200) continue;
-      var SY = 0, SYQ = 0, present = 0; for (var q = 0; q < nc; q++) { SY += S[q]; SYQ += Q[q]; if (N[q] > 0) present++; }
-      var M = SY / tot, SST = SYQ - SY * SY / tot, SSC = 0, SSW = 0;
-      for (q = 0; q < nc; q++) if (N[q] > 0) { var mq = S[q] / N[q]; SSC += N[q] * (mq - M) * (mq - M); SSW += Math.max(Q[q] - N[q] * mq * mq, 0); }
-      if (!(SST > 0)) continue;
-      // the best "A plus B": alternate between the row effects and the column effects (weighted by the rows in each cell)
-      var ea = new Float64Array(ka), eb = new Float64Array(kb);
-      for (var it = 0; it < 40; it++) {
-        for (var x = 0; x < ka; x++) { var sn = 0, sw = 0; for (var z = 0; z < kb; z++) { var cq = x * kb + z; if (N[cq] > 0) { sn += N[cq] * (S[cq] / N[cq] - M - eb[z]); sw += N[cq]; } } ea[x] = sw ? sn / sw : 0; }
-        for (z = 0; z < kb; z++) { sn = 0; sw = 0; for (x = 0; x < ka; x++) { cq = x * kb + z; if (N[cq] > 0) { sn += N[cq] * (S[cq] / N[cq] - M - ea[x]); sw += N[cq]; } } eb[z] = sw ? sn / sw : 0; }
-      }
-      var fm = 0; for (q = 0; q < nc; q++) if (N[q] > 0) fm += N[q] * (ea[Math.floor(q / kb)] + eb[q % kb]); fm /= tot;
-      var SSA = 0, odd = null, oddScore = 0;
-      for (q = 0; q < nc; q++) if (N[q] > 0) { var f1 = ea[Math.floor(q / kb)] + eb[q % kb] - fm, mq2 = S[q] / N[q] - M, dev = mq2 - f1; SSA += N[q] * f1 * f1; if (N[q] >= 100 && N[q] * dev * dev > oddScore) { oddScore = N[q] * dev * dev; odd = { a: cand[i].levels[Math.floor(q / kb)].label, b: cand[j].levels[q % kb].label, n: N[q], mean: S[q] / N[q], expected: M + f1 }; } }
-      var SSI = Math.max(SSC - SSA, 0), dfi = present - (ka + kb - 1), dfe = tot - present; if (dfi < 1 || dfe < 1) continue;
-      var MSE = SSW / dfe, F = (SSI / dfi) / (MSE || 1e-300), extra = Math.max(0, (SSI - dfi * MSE) / (SST + MSE)), share = Math.max(0, (SSC - (present - 1) * MSE) / (SST + MSE));
-      var sd = Math.sqrt(SST / Math.max(tot - 1, 1)), local = odd && extra >= 0.004 && odd.n >= 200 && Math.abs(odd.mean - odd.expected) >= 0.3 * sd && F > 10;      // a small group can change a lot without moving the overall share much
-      if ((extra >= 0.01 && F > 10) || local) out.push({ a: cand[i].col, b: cand[j].col, nameA: cand[i].name, nameB: cand[j].name, kindA: cand[i].kind, kindB: cand[j].kind, share: share, extra: extra, F: F, odd: odd, local: !(extra >= 0.01) });
+      var ka = cand[i].levels.length, kb = cand[j].levels.length, nc = ka * kb, N = new Float64Array(nc), S = new Float64Array(nc), Q = new Float64Array(nc);
+      for (k = 0; k < n; k++) { if (!ok[k]) continue; var a = codes[i][k], b = codes[j][k]; if (a < 0 || b < 0) continue; var cell = a * kb + b, y1 = ys[k]; N[cell]++; S[cell] += y1; Q[cell] += y1 * y1; }
+      var r = D.pairInteraction(ka, kb, N, S, Q, cand[i].levels.map(function (l) { return l.label; }), cand[j].levels.map(function (l) { return l.label; }));
+      if (r) out.push(Object.assign(r, { a: cand[i].col, b: cand[j].col, nameA: cand[i].name, nameB: cand[j].name, kindA: cand[i].kind, kindB: cand[j].kind }));
     }
-    out.sort(function (p, q) { return q.extra - p.extra; });
-    return out.slice(0, 3);
+    return D.interFinish(out);
   };
   D.interText = function (it, yName, hi) {
     var f = function (x) { return (Math.round(x * 1000) / 10) + '%'; }, n2 = function (v) { return D.yFn ? f(v) : (Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 100) / 100)); }, o = it.odd;
@@ -564,15 +573,18 @@
       var prof = CH.profile(HD(), RD(), viewIdx()), nums = CH.rankMeasures(prof.filter(CH.isMeasure));
       DS = { prof: prof, y: preset && preset.y >= 0 ? preset.y : (nums[0] ? nums[0].index : -1), noZero: false, seq: 0, yCat: preset && preset.yCat || null, pairs: STL.derive ? STL.derive.pairs(HD(), prof) : [] };
       var p = prof[DS.y]; DS.noZero = preset && preset.noZero !== undefined ? !!preset.noZero : !!(p && p.score && p.zeroPct >= 0.01);
-      render(); compute();
+      var after = function () { render(); compute(); };
+      if (!isBig()) { after(); return; }
+      var oc = prof.filter(function (p) { return !p.numeric && !p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 40 && p.fill >= 0.5 && (p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name)); }).map(function (p) { return p.index; });
+      STL.bigCharts.values(oc).then(function (V) { DS.catVals = {}; oc.forEach(function (c) { var v = V[c]; if (v && v.distinct >= 2 && v.distinct <= 8) DS.catVals[c] = v.values.map(function (x) { return x[0]; }); }); after(); }).catch(after);
     };
     if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) STL.bigCharts.loadSample().then(go).catch(function (e) { toast(e.message, 'error'); }); else go();
   };
   function render() {
     var numCols = DS.prof.filter(function (p) { return p.numeric && !p.unique && !p.serial && !p.idLike; }), catOpts = [];
-    if (!isBig()) DS.prof.forEach(function (p) {                                                       // a text column with a few values: explain "how often it is High"
+    DS.prof.forEach(function (p) {                                                       // a text column with a few values: explain "how often it is High"
       if (p.numeric || p.date || p.list || p.unique || p.distinct < 2 || p.distinct > 8 || p.fill < 0.5 || !(p.distinct === 2 || D.NAME_OUTCOMECAT.test(p.name))) return;
-      var seen = {}, vs = [], rows = RD(), ix = viewIdx(); for (var k = 0; k < ix.length && vs.length < 9; k++) { var v = s0(rows[ix[k]][p.index]).trim(); if (v && !seen[v]) { seen[v] = 1; vs.push(v); } }
+      var seen = {}, vs = [], rows = RD(), ix = viewIdx(); if (isBig()) { vs = ((DS.catVals || {})[p.index] || []).slice(0, 9); } else for (var k = 0; k < ix.length && vs.length < 9; k++) { var v = s0(rows[ix[k]][p.index]).trim(); if (v && !seen[v]) { seen[v] = 1; vs.push(v); } }
       vs.forEach(function (v) { catOpts.push({ col: p.index, value: v, label: p.name + ' = ' + v }); });
     });
     var html = '<div class="prj-h"><b>🔍 ' + T('What explains this?', 'इसे क्या समझाता है?') + '</b><button id="drX" aria-label="close">×</button></div>' +
@@ -602,34 +614,61 @@
       }).catch(function () {});
     };
     var fail = function (e) { if ($('drOut')) $('drOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; };
-    D.logY = !isBig() && !DS.yCat && !!(DS.prof[y] && DS.prof[y].heavy);
+    D.logY = !DS.yCat && !!(DS.prof[y] && DS.prof[y].heavy);
     var yFn = DS.yCat ? function (cell) { var q = s0(cell).trim(); return q === '' ? null : (q === DS.yCat.value ? 1 : 0); } : null; D.yFn = yFn;
     var yName = DS.yCat ? H[y] + ' = ' + DS.yCat.value : H[y];
     var cands = D.candidates(H, DS.prof, y);
     if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero, logY: D.logY, yFn: yFn }); try { DS.inter = D.interactions(RD(), viewIdx(), y, R, { noZero: DS.noZero }); } catch (e2) { DS.inter = []; } done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
-    // large file: the engine sums every row, per column (number columns in bands made from the sample's quintiles)
-    var sc = STL.bigCharts.scope(), S = STL.bigCharts.sample;
-    Promise.all(cands.map(function (c) {
-      var b = c.kind === 'num' ? CH.quantileBands(S.idx.map(function (i) { return CH.num(S.rows[i][c.col]); }), 5) : null, body = Object.assign({ kind: 'fair', y: y, factor: c.col, adjusters: [], nozero: DS.noZero }, sc);
-      if (b) { body.bands = {}; body.bands[c.col] = b.edges; }
-      return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', body).then(function (r) {
-        return { col: c.col, name: c.name, kind: c.kind, bands: b, levels: r.cells.map(function (cell) { var key = cell.k[0], m = /^b(\d+)$/.exec(key); return { label: b && m ? b.labels[+m[1]] : key, n: cell.n, sy: cell.sy, syy: cell.syy }; }) };
+    // large file: the engine sums EVERY row, per column; number columns are cut with the exact quantiles of every row; the outcome may be a text
+    // value ("how often High") or on a log scale, as in the browser
+    var sc = STL.bigCharts.scope(), S = STL.bigCharts.sample, BCs = STL.bigCharts, yspec = DS.yCat ? { is: DS.yCat.value } : (D.logY ? { log: true } : null);
+    var numC = cands.filter(function (c) { return c.kind === 'num'; }).map(function (c) { return c.col; });
+    BCs.edges(numC, 5).then(function (E) {
+      var bd = {}, bandOf = {}; cands.forEach(function (c) { if (c.kind === 'num') { var bb = E[c.col] || CH.quantileBands(S.idx.map(function (i) { return CH.num(S.rows[i][c.col]); }), 5); bandOf[c.col] = bb; bd[c.col] = bb.edges; } });
+      // every column against the outcome in ONE pass over the rows
+      return BCs.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'pair_grid', y: y, nozero: DS.noZero, yspec: yspec, bands: bd, pairs: cands.map(function (c) { return { x: c.col }; }) }, sc)).then(function (r) {
+        return cands.map(function (c, k) {
+          var b = bandOf[c.col] || null;
+          return { col: c.col, name: c.name, kind: c.kind, bands: b, levels: r.pairs[k].cells.map(function (cell) { var key = cell.k[0], m = /^b(\d+)$/.exec(key); return { label: b && m ? b.labels[+m[1]] : key, n: cell.n, sy: cell.sy, syy: cell.syy }; }) };
+        });
       });
-    })).then(function (list) {
+    }).then(function (list) {
       var ranked = D.findComposites(D.markWalls(D.finish(list, H[y], { flagY: !!(DS.prof[y] && DS.prof[y].flag) }), S.rows, S.idx, y, DS.noZero), S.rows, S.idx, y, DS.noZero), pairs = D.standInPairs(ranked);
-      // stand-ins: the engine adds up every (column, stronger column) pair
       // stand-ins: the engine adds up every (column, stronger column) pair, in one request
       var b = {}; ranked.forEach(function (c) { if (c.bands) b[c.col] = c.bands.edges; });
-      var pairsReq = pairs.length ? STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair_pairs', y: y, nozero: DS.noZero, bands: b, pairs: pairs.map(function (p) { return { x: p.x.col, z: p.z.col }; }) }, sc)) : Promise.resolve({ pairs: [] });
+      var pairsReq = pairs.length ? BCs.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair_pairs', y: y, nozero: DS.noZero, bands: b, yspec: yspec, pairs: pairs.map(function (p) { return { x: p.x.col, z: p.z.col }; }) }, sc)) : Promise.resolve({ pairs: [] });
       return pairsReq.then(function (r) {
         D.markStandIns(ranked, r.pairs.map(function (q, k) { return { x: pairs[k].x, z: pairs[k].z, within: D.within(q.cells.map(function (c) { return { x: c.k[0], z: c.k[1], n: c.n, sy: c.sy, syy: c.syy }; })).omega2 }; }));
-            }).then(function () {
-        return Promise.all(ranked.filter(function (r) { return r.walls; }).map(function (r) { return bigRule(r, y, H, cands, sc, ranked); }));
       }).then(function () {
-        try { DS.inter = D.interactions(S.rows, S.idx, y, ranked, { noZero: DS.noZero }); } catch (e2) { DS.inter = []; }          // from the sample the charts use
+        return Promise.all(ranked.filter(function (r) { return r.walls; }).map(function (r) { return bigRule(r, y, H, cands, sc, ranked); }));
+      }).then(function () { return bigInter(ranked, y, yspec, sc).catch(function () { return []; }); }).then(function (inter) {
+        DS.inter = inter;
         done(ranked, T('Calculated by the engine from all rows of the file', 'इंजन ने फ़ाइल की सभी पंक्तियों से गणना की') + (ranked.some(function (r) { return r.rule; }) ? T('; the label rule was learned from a sample that keeps every label and then checked on all rows.', '; लेबल का नियम हर लेबल वाले नमूने से सीखा गया और फिर सभी पंक्तियों पर जाँचा गया।') : '.'));
       });
     }).catch(fail);
+  }
+  // large file: "It depends on …" from the engine's cell sums of every pair (numbers cut into 8 exact bands)
+  function bigInter(ranked, y, yspec, sc) {
+    var cand = D.interCandidates(ranked); if (cand.length < 2) return Promise.resolve([]);
+    var numC = cand.filter(function (r) { return r.kind === 'num'; }).map(function (r) { return r.col; });
+    return STL.bigCharts.edges(numC, 8).then(function (E8) {
+      var cc = cand.map(function (r) { var e = r.kind === 'num' && E8[r.col]; return e && e.n >= 3 ? Object.assign({}, r, { bands: e, levels: e.labels.map(function (l) { return { label: l }; }) }) : r; }), pairs = [], meta = [], bd = {};
+      cc.forEach(function (r) { if (r.kind === 'num' && r.bands) bd[r.col] = r.bands.edges; });
+      for (var i = 0; i < cc.length && i < 6; i++) for (var j = i + 1; j < cc.length; j++) { pairs.push({ x: cc[i].col, z: cc[j].col }); meta.push([i, j]); }
+      var req = function (list) { return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'pair_grid', y: y, nozero: DS.noZero, bands: bd, yspec: yspec, pairs: list }, sc)); };
+      var at = function (R, key) { var m = /^b(\d+)$/.exec(key); if (R.kind === 'num' && R.bands && m) return +m[1]; for (var q = 0; q < R.levels.length; q++) if (R.levels[q].label === key) return q; return -1; };
+      var stat = function (pr, mt, relax) {
+        var A = cc[mt[0]], B = cc[mt[1]], ka = A.levels.length, kb = B.levels.length, N = new Float64Array(ka * kb), Sm = new Float64Array(ka * kb), Qm = new Float64Array(ka * kb);
+        pr.cells.forEach(function (c) { var a = at(A, c.k[0]), b = at(B, c.k[1]); if (a < 0 || b < 0) return; N[a * kb + b] += c.n; Sm[a * kb + b] += c.sy; Qm[a * kb + b] += c.syy; });
+        var res = D.pairInteraction(ka, kb, N, Sm, Qm, A.levels.map(function (l) { return l.label; }), B.levels.map(function (l) { return l.label; }), relax);
+        return res ? Object.assign(res, { a: A.col, b: B.col, nameA: A.name, nameB: B.name, kindA: A.kind, kindB: B.kind, k: mt }) : null;
+      };
+      // every pair, exact, from ONE pass over every row (grouping sets)
+      return req(pairs).then(function (r) {
+        var out = []; r.pairs.forEach(function (pr, k) { var s = stat(pr, meta[k], false); if (s) out.push(s); });
+        return D.interFinish(out);
+      });
+    });
   }
   // large file: learn the rule from a sample that keeps every label (weighed back), then check it on every row
   function bigRule(r, y, H, cands, sc, ranked) {

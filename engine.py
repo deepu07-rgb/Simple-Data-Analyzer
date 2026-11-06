@@ -483,6 +483,16 @@ class Engine:
         """The column as a number; with `nozero`, 0 becomes empty (a rating of 0 usually means 'not rated')."""
         return f"NULLIF({_num(i)}, 0)" if nozero else _num(i)
 
+    def _yx(self, yi, nozero, yspec=None):
+        """The outcome of a comparison as a number: the column itself, its log (a few huge values), or 1/0 for "how often it is <value>"."""
+        yspec = yspec or {}
+        if yspec.get("is") is not None:
+            c = _col(yi)
+            v = str(yspec["is"]).replace("'", "''")
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN NULL WHEN trim({c}) = '{v}' THEN CAST(1 AS DOUBLE) ELSE CAST(0 AS DOUBLE) END"
+        x = self._numz(yi, nozero)
+        return f"ln(1 + greatest({x}, 0))" if yspec.get("log") else x
+
     PCT_OPS = {"<": "<", "<=": "<=", ">": ">", ">=": ">=", "=": "=", "!=": "<>"}
 
     @staticmethod
@@ -722,7 +732,7 @@ class Engine:
         return {"n": n, "points": pts, "zeroSkipped": zs, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
                 "reg": {"slope": slope, "intercept": icpt, "r": r, "n": n, "xmin": xmin, "xmax": xmax} if n >= 3 else None}
 
-    def fair_cells(self, ds_id, y, factor, adjusters=None, nozero=False, search=None, filters=None, max_levels=40, bands=None):
+    def fair_cells(self, ds_id, y, factor, adjusters=None, nozero=False, search=None, filters=None, max_levels=40, bands=None, yspec=None, sample_rows=None):
         """For a fair comparison: rows grouped by (group, adjuster levels ...) with the count, sum and sum of squares of the
         outcome. The browser fits the regression from these few cells, so the whole file is used, not a sample."""
         d = self._ds(ds_id)
@@ -743,7 +753,8 @@ class Engine:
             c = _col(i)
             return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
         sel = ", ".join(f"{text(i)} AS d{n}" for n, i in enumerate(dims))
-        cte = [f"s AS (SELECT {sel}, {self._numz(yi, nozero)} AS y FROM {d['table']}{where})", "k AS (SELECT * FROM s WHERE y IS NOT NULL)"]
+        src = f"(SELECT * FROM {d['table']}{where}) USING SAMPLE reservoir({int(sample_rows)} ROWS) REPEATABLE (42)" if sample_rows else f"{d['table']}{where}"
+        cte = [f"s AS (SELECT {sel}, {self._yx(yi, nozero, yspec)} AS y FROM {src})", "k AS (SELECT * FROM s WHERE y IS NOT NULL)"]
         fold = []
         for n in range(len(dims)):
             cte.append(f"t{n} AS (SELECT d{n} FROM k GROUP BY d{n} ORDER BY count(*) DESC, d{n} LIMIT {lim[n]})")
@@ -759,11 +770,11 @@ class Engine:
         zeros = 0
         if nozero:
             zeros = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(yi)} = 0", params).fetchone()[0]
-        matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(yi)} IS NOT NULL", params).fetchone()[0]
+        matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {self._yx(yi, False, yspec)} IS NOT NULL", params).fetchone()[0]
         return {"cells": [{"k": list(r[:len(dims)]), "n": r[len(dims)], "sy": r[len(dims) + 1], "syy": r[len(dims) + 2]} for r in data],
                 "matched": matched, "zeroSkipped": zeros}
 
-    def fair_pairs(self, ds_id, y, pairs, nozero=False, search=None, filters=None, bands=None):
+    def fair_pairs(self, ds_id, y, pairs, nozero=False, search=None, filters=None, bands=None, yspec=None, sample_rows=None):
         """Cells for many (column, stronger column) pairs in one request: is a column still linked to the outcome
         INSIDE the groups of a stronger one? Each pair is one grouped scan."""
         out = []
@@ -771,8 +782,54 @@ class Engine:
             zs = p.get("z") if isinstance(p.get("z"), list) else [p.get("z")]      # one stronger column, or several together
             used = {int(p.get("x"))} | {int(z) for z in zs}
             r = self.fair_cells(ds_id, y, p.get("x"), zs[:3], nozero, search, filters,
-                                bands={k: v for k, v in (bands or {}).items() if int(k) in used})
+                                bands={k: v for k, v in (bands or {}).items() if int(k) in used}, yspec=yspec, sample_rows=sample_rows)
             out.append({"x": p.get("x"), "z": p.get("z"), "cells": r["cells"]})
+        return {"pairs": out}
+
+    def pair_grid(self, ds_id, y, pairs, nozero=False, search=None, filters=None, bands=None, yspec=None):
+        """The cells (count, sum, sum of squares of the outcome) of MANY pairs of columns from ONE pass over the rows
+        (grouping sets). Same answer as fair_pairs, for when every pair of a dozen columns is wanted (the 'it depends on' check)."""
+        d = self._ds(ds_id)
+        yi = self._check_col(d, y)
+        pl = [(self._check_col(d, p.get("x")), self._check_col(d, p.get("z")) if p.get("z") is not None else None) for p in (pairs or [])[:200]]      # z empty: that column alone
+        cols = sorted({c for pr in pl for c in pr if c is not None})
+        if yi in cols or not pl or any(a == b for a, b in pl):
+            raise EngineError("Choose different columns for the outcome and the pairs.")
+        where, params = self._where(d, search, filters)
+        bands = {int(k): v for k, v in (bands or {}).items()}
+
+        def text(i):
+            if i in bands:
+                return f"coalesce({self._band_sql(_num(i), bands[i])}, '(blank)')"
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+        names = {c: f"c{n}" for n, c in enumerate(cols)}
+        sel = ", ".join(f"{text(c)} AS {names[c]}" for c in cols)
+        sets = ", ".join(f"({names[a]}, {names[b]})" if b is not None else f"({names[a]})" for a, b in pl)
+        allc = ", ".join(names[c] for c in cols)
+        sql = (f"WITH s AS (SELECT {sel}, {self._yx(yi, nozero, yspec)} AS y FROM {d['table']}{where}), k AS (SELECT * FROM s WHERE y IS NOT NULL) "
+               f"SELECT {allc}, grouping_id({allc}) AS gid, count(*), sum(y), sum(y * y) FROM k GROUP BY GROUPING SETS ({sets})")
+        try:
+            data = self.db.cursor().execute(sql, params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not calculate these pairs: {exc}")
+        nc = len(cols)
+        # grouping_id: the first listed column is the highest bit; a set bit means the column is NOT in that grouping set
+        gid_of = {}
+        for k, (a, b) in enumerate(pl):
+            g = 0
+            for n, c in enumerate(cols):
+                if c != a and c != b:
+                    g |= 1 << (nc - 1 - n)
+            gid_of[g] = k
+        out = [{"x": pairs[k].get("x"), "z": pairs[k].get("z"), "cells": []} for k in range(len(pl))]
+        pos = {c: n for n, c in enumerate(cols)}
+        for r in data:
+            k = gid_of.get(r[nc])
+            if k is None:
+                continue
+            a, b = pl[k]
+            out[k]["cells"].append({"k": [r[pos[a]]] + ([r[pos[b]]] if b is not None else []), "n": r[nc + 1], "sy": r[nc + 2], "syy": r[nc + 3]})
         return {"pairs": out}
 
     def label_sample(self, ds_id, label, cols, per_class=1500, total=20000, search=None, filters=None):
@@ -837,7 +894,7 @@ class Engine:
                 st["right"] += n; right += n
         return {"rules": stats, "otherwise": other, "n": total, "right": right}
 
-    def fair_linear(self, ds_id, y, factor, cat_adj=None, lin_adj=None, nozero=False, search=None, filters=None, ref=None, curve=False):
+    def fair_linear(self, ds_id, y, factor, cat_adj=None, lin_adj=None, nozero=False, search=None, filters=None, ref=None, curve=False, yspec=None):
         """Fair comparison with NUMBER adjusters as straight lines: an exact row-level linear regression of y on the
         group (0/1 columns), text adjusters (0/1 columns) and number adjusters (one slope each), with HC3 robust errors
         - streamed in two passes over the rows, so every row is used. Also the fit with each adjuster alone (for
@@ -855,7 +912,7 @@ class Engine:
         def text(i):
             c = _col(i)
             return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
-        conds = [f"{self._numz(yi, nozero)} IS NOT NULL"] + [f"{_num(i)} IS NOT NULL" for i in lins]
+        conds = [f"{self._yx(yi, nozero, yspec)} IS NOT NULL"] + [f"{_num(i)} IS NOT NULL" for i in lins]
         base = f"FROM {d['table']}{where}{' AND' if where else ' WHERE'} " + " AND ".join(conds)
         cur = self.db.cursor()
         dims, levels = [fi] + cats, []
@@ -883,7 +940,7 @@ class Engine:
             other = (keep.index("(Others)") + 1) if "(Others)" in keep else 0
             codes.append(f"CASE WHEN {text(i)} = ? THEN 0 ELSE coalesce(list_position(?::VARCHAR[], {text(i)}), {other}) END")
             cparams += [refs[n], known]
-        sel = ", ".join(codes + [_num(i) for i in lins] + [self._numz(yi, nozero)])
+        sel = ", ".join(codes + [_num(i) for i in lins] + [self._yx(yi, nozero, yspec)])
         sql = f"SELECT {sel} {base}"
         qparams = cparams + params
         subsets = [list(range(p))]                                                 # the full fit, then group + one adjuster
@@ -979,6 +1036,65 @@ class Engine:
                                  [float(c.get("value"))] + params).fetchone()
             out_c.append({"n": n, "count": cnt})
         return {"formulas": out_f, "caps": out_c}
+
+    def band_edges(self, ds_id, cols, k=5, search=None, filters=None):
+        """Exact quantile edges of number columns over EVERY row (the browser cuts a number into equal-count bands with them)."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        cur, out = self.db.cursor(), {}
+        k = max(2, min(int(k), 20))
+        qs = [i / k for i in range(1, k)]
+        for c in (cols or [])[:40]:
+            i = self._check_col(d, c)
+            x = _num(i)
+            row = cur.execute(f"SELECT min({x}), max({x}), quantile_cont({x}, {qs}) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {x} IS NOT NULL", params).fetchone()
+            if row[0] is None:
+                continue
+            lo, hi, quant = row[0], row[1], row[2] or []
+            e = [lo]
+            for q in quant:
+                if q > e[-1]:
+                    e.append(q)
+            if hi > e[-1]:
+                e.append(hi)
+            elif len(e) == 1:
+                e.append(lo + 1)
+            out[str(i)] = e
+        return {"edges": out}
+
+    def column_values(self, ds_id, cols, limit=41, search=None, filters=None):
+        """The exact number of different values and the commonest ones of text columns, over every row."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        cur, out = self.db.cursor(), {}
+        for c in (cols or [])[:60]:
+            i = self._check_col(d, c)
+            t = f"trim({_col(i)})"
+            cond = f"{_col(i)} IS NOT NULL AND {t} <> ''"
+            nd = cur.execute(f"SELECT count(DISTINCT {t}) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {cond}", params).fetchone()[0]
+            top = cur.execute(f"SELECT {t} AS v, count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {cond} GROUP BY v ORDER BY count(*) DESC, v LIMIT {int(limit)}", params).fetchall()
+            out[str(i)] = {"distinct": nd, "values": [[r[0], r[1]] for r in top]}
+        return {"values": out}
+
+    def scalar(self, ds_id, y=None, fn="count", conds=None, search=None, filters=None):
+        """One number over every row that meets the conditions (column = value): count, sum, average or median."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        extra = []
+        for c in (conds or [])[:6]:
+            i = self._check_col(d, c.get("col"))
+            extra.append(f"trim({_col(i)}) = ?")
+            params = list(params) + [str(c.get("value")).strip()]
+        w = where + ((" AND " if where else " WHERE ") + " AND ".join(extra) if extra else "")
+        cur = self.db.cursor()
+        if fn == "count" or y in (None, -1):
+            return {"n": cur.execute(f"SELECT count(*) FROM {d['table']}{w}", params).fetchone()[0], "value": None, "total": d["rows"]}
+        x = _num(self._check_col(d, y))
+        expr = {"sum": f"sum({x})", "avg": f"avg({x})", "median": f"quantile_cont({x}, 0.5)"}.get(fn)
+        if not expr:
+            raise EngineError("Unknown calculation.")
+        n, v = cur.execute(f"SELECT count({x}), {expr} FROM {d['table']}{w}", params).fetchone()
+        return {"n": n, "value": v, "total": d["rows"]}
 
     def sample(self, ds_id, n=4000):
         """An evenly random handful of rows (always the same ones) so the browser can tell which columns are

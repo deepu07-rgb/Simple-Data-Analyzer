@@ -30,6 +30,20 @@
     return { search: big.search || '', filters: big.filters.filter(function (f) { return !f._chart; }).map(function (f) { return { col: f.col, op: f.op, value: f.value, value2: f.value2 }; }) };
   }
   BC.scope = scope;
+  // exact answers over EVERY row: band edges (equal-count bands), the commonest values of text columns, one number for a question
+  var cache = {};
+  function ckey(x) { return B().ds + '|' + JSON.stringify(scope()) + '|' + x; }
+  BC.edges = function (cols, k) {
+    var need = cols.filter(function (c) { return cache[ckey('e' + c + ':' + k)] === undefined; });
+    var p = need.length ? api('/api/engine/' + B().ds + '/chart', Object.assign({ kind: 'band_edges', cols: need, k: k }, scope())).then(function (r) { need.forEach(function (c) { var e = r.edges[String(c)]; cache[ckey('e' + c + ':' + k)] = e ? CH.bandsFromEdges(e) : null; }); }) : Promise.resolve();
+    return p.then(function () { var o = {}; cols.forEach(function (c) { o[c] = cache[ckey('e' + c + ':' + k)]; }); return o; });
+  };
+  BC.values = function (cols) {
+    var need = cols.filter(function (c) { return cache[ckey('v' + c)] === undefined; });
+    var p = need.length ? api('/api/engine/' + B().ds + '/chart', Object.assign({ kind: 'values', cols: need }, scope())).then(function (r) { need.forEach(function (c) { cache[ckey('v' + c)] = r.values[String(c)] || { distinct: 0, values: [] }; }); }) : Promise.resolve();
+    return p.then(function () { var o = {}; cols.forEach(function (c) { o[c] = cache[ckey('v' + c)]; }); return o; });
+  };
+  BC.scalar = function (y, fn, conds) { return api('/api/engine/' + B().ds + '/chart', Object.assign({ kind: 'scalar', y: y, fn: fn, conds: conds || [] }, scope())); };
   BC.loadSample = function () {
     var big = B(), ds = big.ds;
     if (BC.sample.ds === ds) return Promise.resolve(BC.sample);

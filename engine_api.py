@@ -138,13 +138,21 @@ def chart(ds):
         return jsonify(json_safe(eng.chart_points(ds, b.get("xnum"), b.get("ynum"), b.get("size"), b.get("g"),
                                                   b.get("limit", 5000), s, f, b.get("maxGroups", 8), bool(b.get("nozero")))))
     if kind == "fair":
-        return jsonify(json_safe(eng.fair_cells(ds, b.get("y"), b.get("factor"), b.get("adjusters"), bool(b.get("nozero")), s, f, bands=b.get("bands"))))
+        return jsonify(json_safe(eng.fair_cells(ds, b.get("y"), b.get("factor"), b.get("adjusters"), bool(b.get("nozero")), s, f, bands=b.get("bands"), yspec=b.get("yspec"))))
     if kind == "fair_pairs":
-        return jsonify(json_safe(eng.fair_pairs(ds, b.get("y"), b.get("pairs"), bool(b.get("nozero")), s, f, b.get("bands"))))
+        return jsonify(json_safe(eng.fair_pairs(ds, b.get("y"), b.get("pairs"), bool(b.get("nozero")), s, f, b.get("bands"), b.get("yspec"), b.get("sampleRows"))))
+    if kind == "pair_grid":
+        return jsonify(json_safe(eng.pair_grid(ds, b.get("y"), b.get("pairs"), bool(b.get("nozero")), s, f, b.get("bands"), b.get("yspec"))))
     if kind == "label_sample":
         return jsonify(json_safe(eng.label_sample(ds, b.get("label"), b.get("cols"), b.get("perClass", 1500), b.get("total", 20000), s, f)))
     if kind == "fair_linear":
-        return jsonify(json_safe(eng.fair_linear(ds, b.get("y"), b.get("factor"), b.get("catAdj"), b.get("linAdj"), bool(b.get("nozero")), s, f, b.get("ref"), bool(b.get("curve")))))
+        return jsonify(json_safe(eng.fair_linear(ds, b.get("y"), b.get("factor"), b.get("catAdj"), b.get("linAdj"), bool(b.get("nozero")), s, f, b.get("ref"), bool(b.get("curve")), b.get("yspec"))))
+    if kind == "band_edges":
+        return jsonify(json_safe(eng.band_edges(ds, b.get("cols"), b.get("k", 5), s, f)))
+    if kind == "values":
+        return jsonify(json_safe(eng.column_values(ds, b.get("cols"), b.get("limit", 41), s, f)))
+    if kind == "scalar":
+        return jsonify(json_safe(eng.scalar(ds, b.get("y"), b.get("fn", "count"), b.get("conds"), s, f)))
     if kind == "column_checks":
         return jsonify(json_safe(eng.column_checks(ds, b.get("formulas"), b.get("caps"), s, f)))
     if kind == "rule_check":

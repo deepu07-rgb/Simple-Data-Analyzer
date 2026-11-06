@@ -29,10 +29,15 @@
     headers.forEach(function (h, i) {
       var p = prof[i], ws = A.words(h).map(stem).filter(function (w) { return !STOP[w]; }), vals = null;
       if (!p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 40 && (!p.numeric || p.lowInt || p.flag)) { var seen = {}, k = 0; vals = []; for (var r = 0; r < idx.length && vals.length < 41; r++) { var v = s(idx[r][i]).trim(); if (v && !seen[v]) { seen[v] = 1; vals.push(v); } } }
-      cols.push({ i: i, name: h, words: ws, p: p, measure: !!(p.numeric && !p.unique && !p.serial && !p.idLike && !p.lowInt && !p.code), numeric: !!p.numeric && !p.unique && !p.serial && !p.idLike, cat: !!vals, vals: vals, date: !!p.date });
+      var catOk = !p.date && !p.list && !p.unique && (!p.numeric || p.lowInt || p.flag); cols.push({ i: i, name: h, catOk: catOk, words: ws, p: p, measure: !!(p.numeric && !p.unique && !p.serial && !p.idLike && !p.lowInt && !p.code), numeric: !!p.numeric && !p.unique && !p.serial && !p.idLike, cat: !!vals, vals: vals, date: !!p.date });
     });
     var df = {}; cols.forEach(function (c) { var seen = {}; c.words.forEach(function (w) { if (!seen[w]) { seen[w] = 1; df[w] = (df[w] || 0) + 1; } }); }); cols.df = df;
     return cols;
+  };
+  // large file: the real values (and how many there are) of every column the sample took for a category, counted over EVERY row
+  A.refine = function (cat, V) {
+    cat.forEach(function (c) { var v = V && V[c.i]; if (!v) return; c.vals = (v.distinct >= 2 && v.distinct <= 40 && c.catOk) ? v.values.map(function (x) { return x[0]; }) : null; c.cat = !!c.vals; });
+    return cat;
   };
   // how well does the question talk about this column?  0 .. 1
   function prefix(a, b) { var i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; }
@@ -202,7 +207,13 @@
   STL.openAsk = function (preset) {
     if (!U.hasData() && !(root.BIG && BIG.active)) { toast(T('Open a file first', 'पहले फ़ाइल खोलें'), 'info'); return; }
     var big = !!(root.BIG && BIG.active), H = big ? BIG.headers : headers, R = big ? (STL.bigCharts && STL.bigCharts.sample ? STL.bigCharts.sample.rows : []) : rawData;
-    var go = function () { S = { H: H, R: R, big: big, cat: A.catalog(H, R), q: preset || '', res: null }; S.ex = A.examples(H, R, S.cat); draw(); if (S.q) run(S.q); };
+    var go = function () {
+      if (big) R = STL.bigCharts.sample.rows;                                                              // the sample is read only after it has been loaded
+      var cat = A.catalog(H, R), fin = function () { S = { H: H, R: R, big: big, cat: cat, q: preset || '', res: null }; S.ex = A.examples(H, R, S.cat); draw(); if (S.q) run(S.q); };
+      if (!big) { fin(); return; }
+      var ids = cat.filter(function (c) { return c.catOk && c.p.distinct >= 2; }).map(function (c) { return c.i; }).slice(0, 60);
+      STL.bigCharts.values(ids).then(function (V) { A.refine(cat, V); fin(); }).catch(fin);
+    };
     if (big && STL.bigCharts && STL.bigCharts.sample.ds !== BIG.ds) STL.bigCharts.loadSample().then(go).catch(function (e) { toast(e.message, 'error'); }); else go();
   };
   function draw() {
@@ -238,6 +249,13 @@
         var pr = I.pair, d = []; S.R.forEach(function (r) { var a = C.num(r[pr.after]), b = C.num(r[pr.before]); if (a !== null && b !== null) d.push(a - b); });
         if (d.length && !S.big) body = '<div class="fr-verdict" style="border-color:#14a38b"><b>' + esc(T('On average ' + colName(pr.after) + ' is ' + f2(Math.abs(mean(d))) + (mean(d) >= 0 ? ' higher' : ' lower') + ' than ' + colName(pr.before) + '. ', 'औसतन ' + colName(pr.after) + ', ' + colName(pr.before) + ' से ' + f2(Math.abs(mean(d))) + (mean(d) >= 0 ? ' अधिक' : ' कम') + ' है। ')) + fmt(Math.round(d.filter(function (x) { return x > 0; }).length / d.length * 1000) / 10) + esc(T('% of rows went up.', '% पंक्तियों में बढ़ोतरी हुई।')) + '</b></div>';
         open(T('Add the change as a column', 'बदलाव को कॉलम बनाएँ'), function () { close(); STL.addColumn({ a: pr.after, op: 'minus', b: pr.before, name: pr.name }, function (ni) { STL.openDrivers({ y: ni }); }); });
+      } else if ((I.intent === 'agg' || I.intent === 'count') && S.big) {
+        var conds = (I.conds || []).filter(function (c) { return c.col !== I.y; }); out.innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + esc(res.say) + '</div><div class="big-note">' + T('Counting every row…', 'हर पंक्ति गिनी जा रही है…') + '</div>';
+        STL.bigCharts.scalar(I.intent === 'count' ? -1 : I.y, I.intent === 'count' ? 'count' : I.fn, conds).then(function (r) {
+          var txt = I.intent === 'count' ? fmt(r.n) + T(' of ' + fmt(r.total) + ' rows', ' / ' + fmt(r.total) + ' पंक्तियाँ') + (r.total ? ' (' + (r.n / r.total < 0.01 ? Math.round(r.n / r.total * 10000) / 100 : Math.round(r.n / r.total * 1000) / 10) + '%)' : '') : (I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ' + (r.value === null ? '–' : f2(r.value)) + '<p>' + esc(T('from ' + fmt(r.n) + ' rows, every row of the file counted', fmt(r.n) + ' पंक्तियों से, फ़ाइल की हर पंक्ति गिनी गई')) + '</p>';
+          if ($('akOut') && S.q === q) $('akOut').innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + esc(res.say) + '</div><div class="fr-verdict" style="border-color:#14a38b"><b>' + txt + '</b></div>';
+        }).catch(function (e) { if ($('akOut')) $('akOut').innerHTML += '<div class="big-err">' + esc(e.message) + '</div>'; });
+        return;
       } else if (I.intent === 'agg' && !S.big) {
         var rows = rowsWhere(I.conds), v = []; rows.forEach(function (r) { var x = C.num(r[I.y]); if (x !== null) v.push(x); }); var val = I.fn === 'sum' ? v.reduce(function (a, b) { return a + b; }, 0) : (I.fn === 'median' ? (v.sort(function (a, b) { return a - b; }), v.length ? (v[(v.length - 1) >> 1] + v[v.length >> 1]) / 2 : null) : mean(v));
         body = '<div class="fr-verdict" style="border-color:#14a38b"><b>' + esc((I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ') + (val === null ? '–' : f2(val)) + '</b><p>' + esc(T('from ' + fmt(v.length) + ' rows', fmt(v.length) + ' पंक्तियों से')) + '</p></div>';

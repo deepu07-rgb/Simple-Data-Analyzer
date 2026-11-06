@@ -503,3 +503,70 @@ def test_column_checks_rate_per_thousand_and_divide_by_b_plus_one(eng):
     assert res["formulas"][0] == {"n": 2000, "ok": 2000}
     assert res["formulas"][1] == {"n": 2000, "ok": 2000}
     assert res["formulas"][2]["ok"] < 600, "dividing by the count itself is not the formula (and a count of 0 is skipped)"
+
+
+# ------------------------------------------------------------------ exact answers over every row (large files)
+def _big(eng, n=6000):
+    r = random.Random(3)
+    rows = []
+    for k in range(n):
+        grp = r.choice(["A", "B", "C"]) if k % 997 else "Rare"            # a value only ~6 rows have: a 4,000-row sample would miss it
+        x = round(r.expovariate(1 / 20), 2)
+        lvl = "High" if r.random() < (0.2 + 0.4 * (grp == "B")) else ("Low" if r.random() < 0.5 else "")
+        rows.append([grp, str(x), lvl, str(round(r.lognormvariate(8, 2)))])
+    return eng.load_rows(["Grp", "X", "Level", "Streams"], rows, "x")["id"], rows
+
+
+def test_band_edges_are_exact_quantiles_of_every_row(eng):
+    i, rows = _big(eng)
+    e = eng.band_edges(i, [1], 5)["edges"]["1"]
+    xs = sorted(float(r[1]) for r in rows)
+    want = [xs[0]] + [float(np.quantile(xs, q)) for q in (0.2, 0.4, 0.6, 0.8)] + [xs[-1]]
+    assert len(e) == len(want) and all(abs(a - b) < 1e-9 for a, b in zip(e, want))
+
+
+def test_column_values_count_every_row_and_find_the_rare_value(eng):
+    i, rows = _big(eng)
+    v = eng.column_values(i, [0, 2])["values"]
+    assert v["0"]["distinct"] == 4 and ["Rare", sum(r[0] == "Rare" for r in rows)] in v["0"]["values"]
+    assert v["2"]["distinct"] == 2                                               # blanks are not a value
+
+
+def test_scalar_answers_equal_python(eng):
+    i, rows = _big(eng)
+    assert eng.scalar(i, None, "count", [{"col": 0, "value": "B"}])["n"] == sum(r[0] == "B" for r in rows)
+    xs = [float(r[1]) for r in rows if r[0] == "B"]
+    a = eng.scalar(i, 1, "avg", [{"col": 0, "value": "B"}]); assert abs(a["value"] - sum(xs) / len(xs)) < 1e-9
+    m = eng.scalar(i, 1, "median", [{"col": 0, "value": "B"}]); assert abs(m["value"] - statistics.median(xs)) < 1e-9
+    assert abs(eng.scalar(i, 1, "sum", [])["value"] - sum(float(r[1]) for r in rows)) < 1e-6
+
+
+def test_the_outcome_may_be_how_often_a_value_or_a_log(eng):
+    i, rows = _big(eng)
+    c = eng.fair_cells(i, 2, 0, yspec={"is": "High"})["cells"]
+    by = {x["k"][0]: x for x in c}
+    for g in "ABC":
+        ys = [1.0 if r[2] == "High" else 0.0 for r in rows if r[0] == g and r[2] != ""]
+        assert by[g]["n"] == len(ys) and abs(by[g]["sy"] - sum(ys)) < 1e-9 and abs(by[g]["syy"] - sum(ys)) < 1e-9     # blanks are skipped, not counted as "not High"
+    lg = eng.fair_cells(i, 3, 0, yspec={"log": True})["cells"]
+    for x in lg:
+        ys = [np.log1p(float(r[3])) for r in rows if r[0] == x["k"][0]]
+        assert abs(x["sy"] - sum(ys)) < 1e-6 and abs(x["syy"] - sum(y * y for y in ys)) < 1e-4
+
+
+def test_pair_grid_equals_pair_by_pair(eng):
+    i, rows = _big(eng)
+    pairs = [{"x": 0, "z": 2}, {"x": 0, "z": 1}, {"x": 2, "z": 1}]
+    bd = {1: [0, 10, 20, 40, 400]}
+    one = eng.fair_pairs(i, 3, pairs, bands=bd, yspec={"log": True})["pairs"]
+    grid = eng.pair_grid(i, 3, pairs, bands=bd, yspec={"log": True})["pairs"]
+    key = lambda cs: sorted((tuple(c["k"]), c["n"], round(c["sy"], 6), round(c["syy"], 4)) for c in cs)
+    assert all(key(a["cells"]) == key(b["cells"]) for a, b in zip(one, grid))
+
+
+def test_pair_grid_single_columns_equal_fair_cells(eng):
+    i, rows = _big(eng)
+    g = eng.pair_grid(i, 3, [{"x": 0}, {"x": 1}], bands={1: [0, 10, 20, 40, 400]})["pairs"]
+    f0 = eng.fair_cells(i, 3, 0)["cells"]
+    key = lambda cs: sorted((tuple(c["k"]), c["n"], round(c["sy"], 6)) for c in cs)
+    assert key(g[0]["cells"]) == key(f0) and all(len(c["k"]) == 1 for c in g[1]["cells"])

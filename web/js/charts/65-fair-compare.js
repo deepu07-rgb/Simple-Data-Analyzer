@@ -311,9 +311,11 @@
     var pt = partner(); if (pt >= 0 && pt !== FS.f && cands.some(function (c) { return c.col === pt; })) FS.adj = [pt].concat(FS.adj.filter(function (c) { return c !== pt; })).slice(0, 3);
   }
   function numFactor() { var p = FS.prof[FS.f]; return !!(p && p.numeric && !p.lowInt); }
-  function factorBands() { return numFactor() ? CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][FS.f]); }), 4) : null; }
+  // on a large file the band edges come from EVERY row (the engine), not from the sample
+  function exactOr(col, k, sampled) { var b = FS.ex && FS.ex[col + ':' + k]; return b || sampled(); }
+  function factorBands() { return numFactor() ? exactOr(FS.f, 4, function () { return CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][FS.f]); }), 4); }) : null; }
   function allBands(fb) { var b = bandsFor(FS.adj); if (fb) b[FS.f] = fb; return b; }
-  function bandsFor(cols) { var b = {}; cols.forEach(function (c) { var p = FS.prof[c]; if (p && p.numeric && !p.lowInt) b[c] = CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][c]); }), 5); }); return b; }
+  function bandsFor(cols) { var b = {}; cols.forEach(function (c) { var p = FS.prof[c]; if (p && p.numeric && !p.lowInt) b[c] = exactOr(c, 5, function () { return CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][c]); }), 5); }); }); return b; }
 
   function render() {
     var H = HD(), numCols = FS.prof.filter(function (p) { return p.numeric; }), groupCols = FS.prof.filter(function (p) { return !p.numeric || p.lowInt || (!p.idLike && !p.coord && p.distinct >= 8); }).filter(function (p) { return p.distinct >= 2 && !p.unique && (p.numeric && !p.lowInt ? true : p.distinct <= 200); }).map(function (p) { return p.numeric && !p.lowInt ? Object.assign({}, p, { name: p.name + T('  (a number, in 4 bands)', '  (संख्या, 4 समूहों में)') }) : p; });
@@ -341,6 +343,11 @@
   var chart = null;
   function disposeChart() { if (chart) { try { chart.dispose(); } catch (e) {} chart = null; } }
   function compute() {
+    if (!isBig() || !STL.bigCharts.edges) { compute0(); return; }
+    var fe = numFactor() ? [FS.f] : [], le = FS.adj.filter(function (c) { var p = FS.prof[c]; return p && p.numeric && !p.lowInt; }); FS.ex = FS.ex || {}; var seq0 = FS.seq;
+    Promise.all([fe.length ? STL.bigCharts.edges(fe, 4) : {}, le.length ? STL.bigCharts.edges(le, 5) : {}]).then(function (r) { fe.forEach(function (c) { if (r[0][c]) FS.ex[c + ':4'] = r[0][c]; }); le.forEach(function (c) { if (r[1][c]) FS.ex[c + ':5'] = r[1][c]; }); compute0(); }).catch(function () { compute0(); });
+  }
+  function compute0() {
     var out = $('frOut'); if (!out) return;
     if (FS.y < 0 || FS.f < 0) { out.innerHTML = '<div class="big-err">' + T('This file needs a number column and a column of groups.', 'इस फ़ाइल में एक संख्या वाला कॉलम और समूहों का कॉलम चाहिए।') + '</div>'; return; }
     var fBands = factorBands(), H = HD(), names = [H[FS.f] + (fBands ? T(' (bands)', ' (समूह)') : '')].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? T(' (bands)', ' (समूह)') : ''); })),
