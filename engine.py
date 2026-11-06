@@ -1089,12 +1089,151 @@ class Engine:
         cur = self.db.cursor()
         if fn == "count" or y in (None, -1):
             return {"n": cur.execute(f"SELECT count(*) FROM {d['table']}{w}", params).fetchone()[0], "value": None, "total": d["rows"]}
+        if fn == "distinct":
+            c = _col(self._check_col(d, y))
+            n, v = cur.execute(f"SELECT count(NULLIF(trim({c}), '')), count(DISTINCT NULLIF(trim({c}), '')) FROM {d['table']}{w}", params).fetchone()
+            return {"n": n, "value": v, "total": d["rows"]}
         x = _num(self._check_col(d, y))
         expr = {"sum": f"sum({x})", "avg": f"avg({x})", "median": f"quantile_cont({x}, 0.5)"}.get(fn)
         if not expr:
             raise EngineError("Unknown calculation.")
         n, v = cur.execute(f"SELECT count({x}), {expr} FROM {d['table']}{w}", params).fetchone()
         return {"n": n, "value": v, "total": d["rows"]}
+
+    # ------------------------------------------------------------------ new tables from old ones
+    # "Link two files" and "One row per …" build a NEW dataset inside the engine (all columns as text, like a loaded file); nothing is guessed:
+    # a key that is repeated in the file being looked up is left blank (or the first row is taken, if asked), and every count is reported.
+    @staticmethod
+    def _keyx(c):
+        """The text of a key column made comparable: spaces, capitals and a trailing .0 (5008804.0 = 5008804) do not matter."""
+        return f"lower(regexp_replace(trim({c}), '\\.0+$', ''))"
+
+    def _register_select(self, select_sql, params, headers, name):
+        """select_sql yields one text column per header (in order); stored as a dataset with the usual c0, c1 … names."""
+        n = len(headers)
+        ds_id = uuid.uuid4().hex[:12]
+        table = f"d_{ds_id}"
+        cols = ", ".join(f"COALESCE(CAST(s{i} AS VARCHAR), '') AS {_col(i)}" for i in range(n))
+        with self.lock:
+            cur = self.db.cursor()
+            cur.execute(f"CREATE TABLE {table} AS SELECT (row_number() OVER ()) - 1 AS __rid, {cols} FROM ({select_sql}) q", params)
+            rows = cur.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            self.datasets[ds_id] = {"table": table, "headers": headers, "name": name, "rows": rows}
+            while len(self.datasets) > MAX_DATASETS:
+                _, old = self.datasets.popitem(last=False)
+                self._drop_tables(cur, old)
+        return self.describe(ds_id)
+
+    def link_check(self, ds_id, other_id, key, other_key):
+        """How well two files fit together on a key column, before anything is built."""
+        d, o = self._ds(ds_id), self._ds(other_id)
+        lk, ok = self._keyx(_col(self._check_col(d, key))), self._keyx(_col(self._check_col(o, other_key)))
+        cur = self.db.cursor()
+        rk = cur.execute(f"SELECT count(*) FILTER (WHERE k <> ''), count(DISTINCT k) FILTER (WHERE k <> ''), "
+                         f"count(DISTINCT k) FILTER (WHERE k <> '' AND n > 1), count(*) FILTER (WHERE k <> '' AND n > 1) "
+                         f"FROM (SELECT {ok} AS k, count(*) OVER (PARTITION BY {ok}) AS n FROM {o['table']})").fetchone()
+        lres = cur.execute(
+            f"SELECT count(*), count(*) FILTER (WHERE k <> ''), count(DISTINCT k) FILTER (WHERE k <> ''), "
+            f"count(*) FILTER (WHERE k <> '' AND m), count(DISTINCT k) FILTER (WHERE k <> '' AND m), "
+            f"count(*) FILTER (WHERE k <> '' AND m AND rep), count(DISTINCT k) FILTER (WHERE k <> '' AND m AND rep) "
+            f"FROM (SELECT {lk} AS k, {lk} IN (SELECT {ok} FROM {o['table']} WHERE {ok} <> '') AS m, "
+            f"{lk} IN (SELECT {ok} FROM {o['table']} GROUP BY {ok} HAVING count(*) > 1) AS rep FROM {d['table']})").fetchone()
+        return {"left_rows": lres[0], "left_filled": lres[1], "left_keys": lres[2], "matched_rows": lres[3], "matched_keys": lres[4],
+                "ambiguous_rows": lres[5], "ambiguous_keys": lres[6],
+                "other_rows": o["rows"], "other_filled": rk[0], "other_keys": rk[1], "other_repeated_keys": rk[2], "other_repeated_rows": rk[3]}
+
+    def link(self, ds_id, other_id, key, other_key, cols, how="left", on_repeat="blank", name=None):
+        """Add columns of another file to this one by a key column (like VLOOKUP, but every row is checked).
+        on_repeat: what to do when the key is repeated in the other file ('blank' = leave empty, 'first' = take its first row)."""
+        d, o = self._ds(ds_id), self._ds(other_id)
+        key, other_key = self._check_col(d, key), self._check_col(o, other_key)
+        cols = [self._check_col(o, c) for c in (cols or []) if int(c) != other_key] if cols else [i for i in range(len(o["headers"])) if i != other_key]
+        if not cols:
+            raise EngineError("Choose at least one column to bring in.")
+        if how not in ("left", "inner") or on_repeat not in ("blank", "first"):
+            raise EngineError("Unknown option.")
+        lk, ok = self._keyx(_col(key)), self._keyx(_col(other_key))
+        have = list(d["headers"])
+        new_names = []
+        for c in cols:
+            nm = o["headers"][c]
+            if nm in have or nm in new_names:
+                nm = f"{nm} ({o['name']})"
+            while nm in have or nm in new_names:
+                nm += " "
+            new_names.append(nm)
+        headers = have + new_names
+        keep = "n = 1" if on_repeat == "blank" else "rn = 1"
+        ocols = ", ".join(f"{_col(c)} AS o{j}" for j, c in enumerate(cols))
+        sel = ", ".join([f"l.{_col(i)} AS s{i}" for i in range(len(have))] + [f"r.o{j} AS s{len(have) + j}" for j in range(len(cols))])
+        sql = (f"SELECT {sel} FROM {d['table']} l LEFT JOIN (SELECT k, {', '.join(f'o{j}' for j in range(len(cols)))} FROM ("
+               f"SELECT {ok} AS k, {ocols}, count(*) OVER (PARTITION BY {ok}) AS n, row_number() OVER (PARTITION BY {ok} ORDER BY __rid) AS rn "
+               f"FROM {o['table']}) WHERE k <> '' AND {keep}) r ON {lk} = r.k"
+               + (" WHERE r.k IS NOT NULL" if how == "inner" else "") + " ORDER BY l.__rid")
+        return self._register_select(sql, [], headers, name or d["name"])
+
+    SUMMARY_FNS = ("count", "sum", "avg", "min", "max", "first", "last", "distinct", "countif", "shareif", "anyif")
+
+    def summarize(self, ds_id, key, outs, name=None, search=None, filters=None):
+        """One row for each value of the key column (a person, a case, a month …). Each output is
+        {"fn": count|sum|avg|min|max|first|last|distinct|countif|shareif|anyif, "col": column, "values": [..] (for the *if ones), "name": heading}."""
+        d = self._ds(ds_id)
+        key = self._check_col(d, key)
+        if not outs:
+            raise EngineError("Choose what to work out for each row of the new table.")
+        where, params = self._where(d, search, filters)
+        kc = _col(key)
+        sel, headers, params2 = [], [d["headers"][key]], []
+        for o in outs[:60]:
+            fn = o.get("fn")
+            if fn not in self.SUMMARY_FNS:
+                raise EngineError("Unknown calculation.")
+            if fn == "count":
+                x, nm = "count(*)", o.get("name") or "Rows"
+            else:
+                i = self._check_col(d, o.get("col"))
+                c, num = _col(i), _num(i)
+                nm = o.get("name") or f"{fn} {d['headers'][i]}"
+                if fn in ("sum", "avg", "min", "max"):
+                    x = f"{fn}({num})" if fn != "avg" else f"avg({num})"
+                    x = f"round({x}, 6)"
+                elif fn == "first":
+                    x = f"arg_min(trim({c}), __rid) FILTER (WHERE trim({c}) <> '')"
+                elif fn == "last":
+                    x = f"arg_max(trim({c}), __rid) FILTER (WHERE trim({c}) <> '')"
+                elif fn == "distinct":
+                    x = f"count(DISTINCT NULLIF(trim({c}), ''))"
+                else:
+                    vals = [str(v).strip() for v in (o.get("values") or [])][:50]
+                    if not vals:
+                        raise EngineError("Choose at least one value to look for.")
+                    ph = ", ".join("?" for _ in vals)
+                    cnt = f"count(*) FILTER (WHERE trim({c}) IN ({ph}))"
+                    params2 += vals
+                    if fn == "countif":
+                        x = cnt
+                    elif fn == "shareif":
+                        x = f"round(100.0 * {cnt} / count(*), 2)"
+                    else:
+                        x = f"CASE WHEN {cnt} > 0 THEN 'Yes' ELSE 'No' END"
+            sel.append(x)
+            headers.append(nm)
+        headers = unique_headers(headers)
+        w = (where + " AND " if where else " WHERE ") + f"trim({kc}) <> ''"
+        cols = ", ".join([f"trim({kc}) AS s0"] + [f"{x} AS s{j + 1}" for j, x in enumerate(sel)])
+        sql = f"SELECT {cols} FROM {d['table']}{w} GROUP BY trim({kc}) ORDER BY min(__rid)"
+        return self._register_select(sql, list(params2) + list(params), headers, name or d["name"])
+
+    def replace_value(self, ds_id, col, old, new="", name=None):
+        """A copy of the dataset in which every cell of one column that equals `old` becomes `new` (e.g. a placeholder code → blank)."""
+        d = self._ds(ds_id)
+        col = self._check_col(d, col)
+        n = len(d["headers"])
+        sel = ", ".join((f"CASE WHEN trim({_col(i)}) = ? THEN ? ELSE {_col(i)} END AS s{i}" if i == col else f"{_col(i)} AS s{i}") for i in range(n))
+        info = self._register_select(f"SELECT {sel} FROM {d['table']} ORDER BY __rid", [str(old).strip(), str(new)], list(d["headers"]), name or d["name"])
+        hit = self.db.cursor().execute(f"SELECT count(*) FROM {d['table']} WHERE trim({_col(col)}) = ?", [str(old).strip()]).fetchone()[0]
+        info["changed"] = hit
+        return info
 
     def sample(self, ds_id, n=4000):
         """An evenly random handful of rows (always the same ones) so the browser can tell which columns are

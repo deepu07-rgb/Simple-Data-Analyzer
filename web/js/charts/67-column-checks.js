@@ -111,7 +111,10 @@
         var avg = m ? near5 / m : 0;
         if (c >= Math.max(10, 0.005 * n) && c >= 5 * Math.max(avg, 1)) {
           var pctName = /percent|pct|%|rate|प्रतिशत/i.test(s(p.name));
-          out.push({ col: p.index, name: s(headers[p.index]), side: sd[0], value: v, count: c, n: n, share: c / n, natural: (pctName && (v === 100 || v === 0)) || (v === 0 && sd[0] === 'min') });
+          var nx = vals[at + sd[2]], rng = nx === undefined ? 0 : (sd[0] === 'max' ? nx - vals[0] : vals[vals.length - 1] - nx);
+          // a code far outside every other value (365243 days employed, 9999, -999): not a limit that hides real values, but "not applicable" typed as a number
+          var placeholder = !((pctName && (v === 100 || v === 0)) || (v === 0 && sd[0] === 'min')) && nx !== undefined && Math.abs(v - nx) > 3 * Math.max(rng, 1);
+          out.push({ col: p.index, name: s(headers[p.index]), side: sd[0], value: v, count: c, n: n, share: c / n, natural: (pctName && (v === 100 || v === 0)) || (v === 0 && sd[0] === 'min'), placeholder: placeholder });
         }
       });
     });
@@ -121,6 +124,8 @@
     var C = CH(), v = num(cp.value), pc = (Math.round(cp.share * 1000) / 10) + '%';
     if (cp.natural) return hi ? '“' + cp.name + '”: ' + C.indian(cp.count) + ' पंक्तियाँ (' + pc + ') ठीक ' + v + ' पर हैं — इसका ' + (cp.side === 'max' ? 'उच्चतम' : 'न्यूनतम') + ' संभव मान।'
                                 : '“' + cp.name + '”: ' + C.indian(cp.count) + ' rows (' + pc + ') sit exactly at ' + v + ', its ' + (cp.side === 'max' ? 'highest' : 'lowest') + ' possible value.';
+    if (cp.placeholder) return hi ? '“' + cp.name + '”: ' + C.indian(cp.count) + ' पंक्तियाँ (' + pc + ') में ' + v + ' है, जो बाकी सभी मानों से बहुत दूर है। यह कोड लगता है (“लागू नहीं”), असली संख्या नहीं; औसत और तुलना बिगाड़ता है।'
+                                  : '“' + cp.name + '”: ' + C.indian(cp.count) + ' rows (' + pc + ') hold ' + v + ', far away from every other value. This looks like a code for “not applicable”, not a real number; it spoils averages and comparisons.';
     return hi ? '“' + cp.name + '” ' + v + ' पर ' + (cp.side === 'max' ? 'रुक जाता है' : 'से शुरू होता है') + ': ' + C.indian(cp.count) + ' पंक्तियाँ (' + pc + ') ठीक इसी मान पर हैं — एक ' + (cp.side === 'max' ? 'ऊपरी सीमा' : 'निचली सीमा') + '; इसके ' + (cp.side === 'max' ? 'ऊपर' : 'नीचे') + ' के असली मान छिपे हैं।'
               : '“' + cp.name + '” stops at ' + v + ': ' + C.indian(cp.count) + ' rows (' + pc + ') sit exactly on it — a ' + (cp.side === 'max' ? 'cap' : 'floor') + '; the real values ' + (cp.side === 'max' ? 'above' : 'below') + ' it are hidden.';
   };
@@ -163,8 +168,9 @@
   CC.html = function (res) {
     if (!res.formulas.length && !res.caps.length) return '<div class="big-note">' + esc(T('No column looks calculated from others, and no column stops at a cap.', 'कोई कॉलम दूसरों से गणना किया हुआ नहीं लगता, और किसी कॉलम पर सीमा नहीं दिखती।')) + '</div>';
     return (res.formulas.length ? '<div class="prj-sub dr-rule-h">🧮 ' + esc(T('Columns calculated from others (results, not causes)', 'दूसरे कॉलमों से गणना किए गए कॉलम (परिणाम, कारण नहीं)')) + '</div><ul class="cc-list">' + res.formulas.map(function (f) { return '<li>' + esc(CC.formulaLine(f, hi())) + '</li>'; }).join('') + '</ul>' : '') +
-      (res.caps.length ? '<div class="prj-sub dr-rule-h">⛔ ' + esc(T('Caps and floors', 'ऊपरी और निचली सीमाएँ')) + '</div><ul class="cc-list">' + res.caps.map(function (c) { return '<li>' + esc(CC.capText(c, hi())) + '</li>'; }).join('') + '</ul>' : '');
+      (res.caps.length ? '<div class="prj-sub dr-rule-h">⛔ ' + esc(T('Caps and floors', 'ऊपरी और निचली सीमाएँ')) + '</div><ul class="cc-list">' + res.caps.map(function (c) { return '<li>' + esc(CC.capText(c, hi())) + (c.placeholder ? ' <button class="tb-btn cc-blank" data-col="' + c.col + '" data-val="' + esc(String(c.value)) + '">' + esc(T('Make them empty', 'इन्हें खाली करें')) + '</button>' : '') + '</li>'; }).join('') + '</ul>' : '');
   };
+  document.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('.cc-blank'); if (!b) return; ['driversDialog', 'colChecksDialog'].forEach(function (id) { var d = document.getElementById(id); if (d) d.remove(); }); if (STL.blankValue) STL.blankValue(+b.dataset.col, b.dataset.val); });
   STL.openColumnChecks = function () {
     if (!isBig() && !U.hasData()) { toast(T('Open a file first, or try the sample data.', 'पहले फ़ाइल खोलें, या नमूना डेटा आज़माएँ।'), 'info'); return; }
     var o = U.overlay('colChecksDialog', '<div class="prj-h"><b>🧮 ' + T('How are the columns built?', 'कॉलम कैसे बने हैं?') + '</b><button id="ccX" aria-label="close">×</button></div><div class="big-note">' + T('Formulas between columns, and values where a column stops (a cap or a floor).', 'कॉलमों के बीच सूत्र, और वे मान जहाँ कोई कॉलम रुक जाता है (ऊपरी या निचली सीमा)।') + '</div><div id="ccOut"><div class="big-note">' + T('Checking…', 'जाँच हो रही है…') + '</div></div>', true);

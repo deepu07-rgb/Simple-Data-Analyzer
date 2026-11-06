@@ -84,6 +84,31 @@ def copy_rows(ds):
                     "truncated": truncated, "limit": limit})
 
 
+@bp.route("/api/engine/<ds>/link_check", methods=["POST"])
+def link_check(ds):
+    b = _body()
+    return jsonify(get_engine().link_check(ds, b.get("other"), b.get("key"), b.get("otherKey")))
+
+
+@bp.route("/api/engine/<ds>/link", methods=["POST"])
+def link(ds):
+    b = _body()
+    return jsonify(get_engine().link(ds, b.get("other"), b.get("key"), b.get("otherKey"), b.get("cols"), b.get("how", "left"),
+                                     b.get("onRepeat", "blank"), b.get("name")))
+
+
+@bp.route("/api/engine/<ds>/summarize", methods=["POST"])
+def summarize(ds):
+    b = _body()
+    return jsonify(get_engine().summarize(ds, b.get("key"), b.get("outs"), b.get("name"), b.get("search") or None, b.get("filters")))
+
+
+@bp.route("/api/engine/<ds>/replace", methods=["POST"])
+def replace_value(ds):
+    b = _body()
+    return jsonify(get_engine().replace_value(ds, b.get("col"), b.get("old"), b.get("new", ""), b.get("name")))
+
+
 @bp.route("/api/engine/<ds>/drop", methods=["POST"])
 def drop(ds):
     return jsonify({"dropped": get_engine().drop(ds)})

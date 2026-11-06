@@ -89,8 +89,11 @@
       var lv = d.levels.filter(function (l) { return l.n > 0; }), om = D.omega(lv), big = lv.filter(function (l) { return l.n >= 20; }).map(function (l) { return { label: l.label, n: l.n, mean: D.logY ? Math.expm1(l.sy / l.n) : l.sy / l.n }; });
       big.sort(function (a, b) { return b.mean - a.mean; });
       var shared = D.sharesName(d.name, yName);
+      // a yes/no column that fully decides the yes/no outcome in one of its two groups (everyone who is "Yes" here is "Yes" there) is the outcome again, not a cause
+      var tot = lv.reduce(function (a, l) { return a + l.n; }, 0), sy = lv.reduce(function (a, l) { return a + l.sy; }, 0), isInd = tot > 0 && lv.every(function (l) { return Math.abs(l.syy - l.sy) < 1e-9; }), implies = null;
+      if (isInd && d.kind === 'cat' && lv.length === 2 && sy / tot > 0.005 && sy / tot < 0.995) lv.forEach(function (l) { if (l.n >= 0.005 * tot && (l.sy === 0 || l.sy === l.n)) implies = { label: l.label, yes: l.sy === l.n }; });
       return { col: d.col, name: d.name, kind: d.kind, omega2: om.omega2, eta2: om.eta2, k: om.k, n: om.n, high: big[0] || null, low: big[big.length - 1] || null, levels: big, bands: d.bands || null,
-               derived: fopt && fopt.partner === d.col ? null : shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
+               derived: fopt && fopt.partner === d.col ? null : implies ? { why: 'implies', label: implies.label, yes: implies.yes } : shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
     });
     out.sort(function (a, b) { return b.omega2 - a.omega2; });
     return out;
@@ -540,6 +543,8 @@
                   : '“' + r.name + '” may be a label given BY “' + yName + '”: every “' + w.label + '” row has it ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ', while ' + Math.round(w.beyond * 100) + '% of the other rows lie beyond. Check before treating it as a cause; Fair comparison does not pick it by itself.' + ruleLine(r)); });
     var pairR = res.filter(function (r) { return r.derived.why === 'pair'; }); res = res.filter(function (r) { return r.derived.why !== 'pair'; });
     pairR.forEach(function (r) { out.push(hi ? '“' + r.name + '” “' + yName + '” का शुरुआती स्तर है: अंतर का अधिकांश हिस्सा बस इतना है कि हर किसी ने कहाँ से शुरू किया। असली सवाल “बदलाव” है, ऊपर का बटन उसे जोड़ता है।' : '“' + r.name + '” is where “' + yName + '” started: most of the differences are only where each row began. The real question is the change: the green button at the top adds it as a column.'); });
+    var imp = res.filter(function (r) { return r.derived.why === 'implies'; }); res = res.filter(function (r) { return r.derived.why !== 'implies'; });
+    imp.forEach(function (r) { out.push(hi ? '“' + r.name + '” = “' + r.derived.label + '” होने पर “' + yName + '” हमेशा ' + (r.derived.yes ? 'हाँ' : 'नहीं') + ' है: यह उसी परिणाम का दूसरा रूप है, कारण नहीं; इसे क्रम से बाहर रखा गया है।' : '“' + r.name + '” = “' + r.derived.label + '” always goes with the outcome being ' + (r.derived.yes ? 'yes' : 'no') + ': it is the same outcome in another form (a stricter or looser version), not a cause. It is left out of the ranking.'); });
     var after = res.filter(function (r) { return r.derived.why === 'result'; }); res = res.filter(function (r) { return r.derived.why !== 'result'; });
     if (after.length) out.push(hi ? after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' “' + yName + '” के बाद की गिनती है, इसलिए यह उसका परिणाम है, कारण नहीं; इसे क्रम से बाहर रखा गया है।' : after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' count' + (after.length > 1 ? '' : 's') + ' what happens after “' + yName + '”, so it is a result of it, not a cause. Left out of the ranking.');
     if (res.length) out.push(hi ? 'ये कॉलम “' + yName + '” से ही बने लगते हैं — इन्हें कारण न मानें: ' + res.map(function (r) { return r.name; }).join(', ') + '।' : 'These columns look calculated from “' + yName + '” itself — treat them as results, not causes: ' + res.map(function (r) { return r.name; }).join(', ') + '.');

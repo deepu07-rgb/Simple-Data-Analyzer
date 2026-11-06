@@ -56,17 +56,39 @@
     return out;
   }
 
+
+  // “STATUS 5”, “gender M”, “ID 5001711”: a short code or a number written right after the column's own name is that column's value
+  var FILL = { is: 1, are: 1, was: 1, were: 1, of: 1, equal: 1, equals: 1, to: 1, as: 1, being: 1, has: 1, have: 1, with: 1, code: 1, value: 1, the: 1, a: 1, an: 1, at: 1, in: 1, for: 1, 'है': 1, 'हैं': 1 };
+  function adjacentHits(cols, q) {
+    var tk = A.words(q), out = [];
+    cols.forEach(function (c) {
+      if (!c.words.length) return; var hw = A.words(c.name).map(stem).filter(function (w) { return !STOP[w]; }); if (!hw.length) return;
+      for (var k = 0; k < tk.length; k++) {
+        if (hw.indexOf(stem(tk[k])) < 0) continue;
+        var j = k + 1; while (j < tk.length && FILL[tk[j]]) j++; if (j >= tk.length) continue;
+        var tok = tk[j], hit = null;
+        if (c.vals) { var lc = tok.toLowerCase(); for (var m = 0; m < c.vals.length; m++) { if (String(c.vals[m]).trim().toLowerCase() === lc) { hit = c.vals[m]; break; } } }
+        else if (/^\d{3,}$/.test(tok) && !(c.p && c.p.date)) hit = tok;                        // an ID, a code, an amount named exactly
+        if (hit !== null) { out.push({ col: c.i, value: String(hit).trim(), pos: j, len: String(hit).length, adj: true }); break; }
+      }
+    });
+    return out;
+  }
+
   // ------------------------------------------------------------ intents
   var RX = {
     clean: /\b(clean (up )?(the )?(file|data|sheet)|tidy|messy|fix the (file|data)|साफ़|सफाई)/i,
     dups: /duplicate|entered twice|same (case|person|record) (twice|again)|दोहराव|डुप्लीकेट/i,
+    link: /\b(link|lookup|vlookup|match|attach|bring)\b.*\b(files?|sheets?|tables?|columns?)\b|\bvlookup\b|दो फ़ाइलें ID|आईडी से जोड़/i,
+    summary: /\bone row (for|per) (each|every)\b|\b(summari[sz]e|roll up)\b.*\b(per|by|for each)\b|\bper (person|customer|applicant|id)\b.*\b(summary|total|history)\b|हर (व्यक्ति|आईडी) की एक/i,
     merge: /\b(combine|merge|join|stack)\b.*\b(files?|sheets?|tables?)\b|फ़ाइलें जोड़/i,
     missing: /missing|blank|empty|null|कमी|खाली|रिक्त/i,
     why: /\b(what|which)\b.*\b(affect|influence|drive|decide|determine|cause|explain|matter|relate|lead to|go(es)? with|predict|behind)|\bwhy\b|\breasons?\b|\bfactors?\b|\bdepends?\b|\bwhat makes\b|\bdrivers?\b|कारण|क्यों|प्रभावित|निर्भर|तय करता|किससे जुड़ा/i,
     fair: /\b(does|do|did|is|are|will|can)\b.*\b(affect|impact|influence|change|improve|increase|reduce|raise|lower|decrease|differ|different|better|worse|higher|lower|matter|help|hurt)\b|\b(do|does|did|are|is)\b.*\b(get|have|make|earn|give|receive|score)\b.*\b(more|less|higher|lower|fewer|better|worse)\b|\beffect of\b|\bimpact of\b|\bdifference (between|in|of)\b|\bcompare|\bversus\b|\bvs\.?\b|\breal difference|\bsignificant|तुलना|अंतर|असर|प्रभाव डाल|बढ़ाता|घटाता/i,
     top: /\b(highest|lowest|biggest|smallest|largest|best|worst|top|bottom|most|least|maximum|minimum)\b|सबसे (अधिक|ज़्यादा|ज्यादा|कम|बड़ा|छोटा)|सर्वाधिक|न्यूनतम/i,
     agg: /\b(average|mean|typical|total|sum|median|avg)\b|औसत|कुल|योग|माध्यिका/i,
-    count: /\bhow many\b|\bnumber of\b|\bcount\b|कितने|कितनी|गिनती/i,
+    distinct: /\b(different|distinct|unique|separate)\b|अलग/i,
+    count: /\bhow many\b|\bnumber of\b|\bcount\b|\b(share|percentage|percent|proportion|fraction|%)\s+of\s+(the\s+)?(rows|records|entries|people|persons|cases|applicants|customers|students|employees|accounts|months)\b|कितने|कितनी|गिनती/i,
     trend: /\btrend|over time|monthly|per month|by month|over the years|timeline|रुझान|समय के साथ|ट्रेंड/i,
     dist: /\bspread\b|\bdistribution\b|\bhistogram\b|how are .* distributed|वितरण|फैलाव/i,
     corr: /\bcorrelat|\brelationship\b|\brelated\b|\bgo together\b|\bconnected\b|\blink between\b|सहसंबंध|संबंध/i,
@@ -90,7 +112,8 @@
     var hasPair = STL.derive ? STL.derive.pairs(headers, STL.charts.profile(headers, rows, rows.slice(0, 3000).map(function (_, i) { return i; }))) : [], alts = [];
     // "GPA" matches both Pre_ and Post_: unless the question says pre / before, the end of the pair is meant
     hasPair.forEach(function (pr) { var a = named.filter(function (x) { return x.c.i === pr.after; })[0], b = named.filter(function (x) { return x.c.i === pr.before; })[0]; if (a && b && a.sc >= b.sc) { named = named.filter(function (x) { return x !== b; }); alts.push({ col: b.c, word: qw[b.pos] }); } });
-    var vals = valueHits(cat, q, qw).filter(function (v) { return true; });
+    var vals = valueHits(cat, q, qw), adj = adjacentHits(cat, q);
+    adj.forEach(function (a) { vals = vals.filter(function (v) { return v.col !== a.col; }); vals.push(a); });
     vals.sort(function (a, b) { return b.len - a.len; });
     var byPos = function (a, b) { return a.pos - b.pos; };
     var cols = named.slice(0, 4).sort(byPos).map(function (x) { return x.c; });
@@ -112,6 +135,8 @@
       return res;
     }
     // ---- quick routes to existing tools
+    if (RX.summary.test(q)) return done({ intent: 'tool', tool: 'summary', conf: 0.9, say: 'You want one row for each person or ID.' });
+    if (RX.link.test(q) && !RX.merge.test(q)) return done({ intent: 'tool', tool: 'link', conf: 0.9, say: 'You want to bring columns from another file, matched by a shared column.' });
     if (RX.merge.test(q)) return done({ intent: 'tool', tool: 'merge', conf: 0.9, say: 'You want to combine files.' });
     if (RX.dups.test(q)) return done({ intent: 'tool', tool: 'dups', conf: 0.9, say: 'You want to find rows entered twice.' });
     if (RX.clean.test(q) && !cols.length) return done({ intent: 'tool', tool: 'clean', conf: 0.85, say: 'You want to tidy the file.' });
@@ -155,10 +180,26 @@
     if (RX.corr.test(q) && nums.length >= 2) return done({ intent: 'corr', x: nums[0].i, y: nums[1].i, conf: 0.8, say: 'You want to see whether “' + nums[0].name + '” and “' + nums[1].name + '” go together.' });
     // ---- distribution
     if (RX.dist.test(q) && nums.length) return done({ intent: 'dist', x: nums[0].i, conf: 0.85, say: 'You want to see how “' + nums[0].name + '” is spread.' });
+    // ---- how many different … (distinct values of a column)
+    if (RX.distinct.test(q) && RX.count.test(q)) {
+      var dcol = named.filter(function (x) { return !valOf(x.c); }).sort(byPos)[0];
+      if (!dcol) return done({ intent: 'none', conf: 0, say: 'I could not tell which column to count the different values of. Say its name, for example “how many different ' + (cat[0] ? cat[0].name : 'ID') + '”.' });
+      return done({ intent: 'distinct', y: dcol.c.i, conds: vcols.filter(function (v) { return v.col !== dcol.c.i; }).map(function (v) { return { col: v.col, value: v.value }; }), conf: 0.85, say: 'You want to count how many different values “' + dcol.c.name + '” has' + (vcols.length ? ' among the rows where ' + vcols.filter(function (v) { return v.col !== dcol.c.i; }).map(function (v) { return '“' + headers[v.col] + '” = “' + v.value + '”'; }).join(' and ') : '') + '.' });
+    }
+    // ---- never answer a different question: a number or a word that was not understood stops the answer
+    var used = {}; vcols.forEach(function (v) { A.words(v.value).forEach(function (w) { used[w] = 1; }); }); cols.forEach(function (c) { A.words(c.name).forEach(function (w) { used[w] = 1; }); });
+    var lost = A.words(q).filter(function (w) { return /^\d+$/.test(w) && !used[w]; });
+    if (lost.length && (RX.count.test(q) || RX.agg.test(q)) && !/\b(top|bottom|first|last|next|previous|past|worst|best)\b/i.test(q)) {
+      var homes = cat.filter(function (c) { return c.vals && c.vals.some(function (v) { return String(v).trim() === lost[0]; }); }).slice(0, 4);
+      return done({ intent: 'none', conf: 0, say: 'I could not tell which column “' + lost[0] + '” belongs to, so I did not count anything.' + (homes.length ? ' Put the column name before it' : ''), examples: homes.map(function (c) { return 'How many rows have ' + c.name.replace(/_/g, ' ') + ' ' + lost[0] + '?'; }) });
+    }
     // ---- counts
     if (RX.count.test(q)) {
       var gb = cats.filter(function (c) { return !valOf(c); })[0], fv = vcols;
       if (RX.by.test(q) && gb) return done({ intent: 'count_by', x: gb.i, conf: 0.85, say: 'You want to count rows for each “' + gb.name + '”.' });
+      var GEN = /^(row|record|entry|entrie|people|person|case|applic|applicant|application|total|number|count|file|data|line|item|there|exist|exists|tabl|sheet|column|one|everyone|everybody|customer|client|member|student|employee|worker)\w*$/;
+      var left = A.words(q).map(stem).filter(function (w) { return !STOP[w] && !GEN.test(w) && !/^\d+$/.test(w) && !used[w] && !named.some(function (x) { return x.c.words.indexOf(w) >= 0; }) && !/^(count|different|distinct|unique)$/.test(w); });
+      if (!fv.length && left.length) return done({ intent: 'none', conf: 0, say: 'I could not match “' + left.slice(0, 3).join(' ') + '” to a column or a value of this file, so I did not count anything.' });
       return done({ intent: 'count', conds: fv.map(function (v) { return { col: v.col, value: v.value }; }), conf: 0.85, say: fv.length ? 'You want to count the rows where ' + fv.map(function (v) { return '“' + headers[v.col] + '” = “' + v.value + '”'; }).join(' and ') + '.' : 'You want to count the rows.' });
     }
     // ---- highest / lowest
@@ -249,10 +290,10 @@
         var pr = I.pair, d = []; S.R.forEach(function (r) { var a = C.num(r[pr.after]), b = C.num(r[pr.before]); if (a !== null && b !== null) d.push(a - b); });
         if (d.length && !S.big) body = '<div class="fr-verdict" style="border-color:#14a38b"><b>' + esc(T('On average ' + colName(pr.after) + ' is ' + f2(Math.abs(mean(d))) + (mean(d) >= 0 ? ' higher' : ' lower') + ' than ' + colName(pr.before) + '. ', 'औसतन ' + colName(pr.after) + ', ' + colName(pr.before) + ' से ' + f2(Math.abs(mean(d))) + (mean(d) >= 0 ? ' अधिक' : ' कम') + ' है। ')) + fmt(Math.round(d.filter(function (x) { return x > 0; }).length / d.length * 1000) / 10) + esc(T('% of rows went up.', '% पंक्तियों में बढ़ोतरी हुई।')) + '</b></div>';
         open(T('Add the change as a column', 'बदलाव को कॉलम बनाएँ'), function () { close(); STL.addColumn({ a: pr.after, op: 'minus', b: pr.before, name: pr.name }, function (ni) { STL.openDrivers({ y: ni }); }); });
-      } else if ((I.intent === 'agg' || I.intent === 'count') && S.big) {
+      } else if ((I.intent === 'agg' || I.intent === 'count' || I.intent === 'distinct') && S.big) {
         var conds = (I.conds || []).filter(function (c) { return c.col !== I.y; }); out.innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + esc(res.say) + '</div><div class="big-note">' + T('Counting every row…', 'हर पंक्ति गिनी जा रही है…') + '</div>';
-        STL.bigCharts.scalar(I.intent === 'count' ? -1 : I.y, I.intent === 'count' ? 'count' : I.fn, conds).then(function (r) {
-          var txt = I.intent === 'count' ? fmt(r.n) + T(' of ' + fmt(r.total) + ' rows', ' / ' + fmt(r.total) + ' पंक्तियाँ') + (r.total ? ' (' + (r.n / r.total < 0.01 ? Math.round(r.n / r.total * 10000) / 100 : Math.round(r.n / r.total * 1000) / 10) + '%)' : '') : (I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ' + (r.value === null ? '–' : f2(r.value)) + '<p>' + esc(T('from ' + fmt(r.n) + ' rows, every row of the file counted', fmt(r.n) + ' पंक्तियों से, फ़ाइल की हर पंक्ति गिनी गई')) + '</p>';
+        STL.bigCharts.scalar(I.intent === 'count' ? -1 : I.y, I.intent === 'count' ? 'count' : (I.intent === 'distinct' ? 'distinct' : I.fn), conds).then(function (r) {
+          var txt = I.intent === 'distinct' ? fmt(r.value) + T(' different values of ', ' अलग-अलग मान: ') + colName(I.y) + '<p>' + esc(T('counted over ' + fmt(r.n) + ' filled rows, every row of the file', fmt(r.n) + ' भरी पंक्तियों में, फ़ाइल की हर पंक्ति')) + '</p>' : I.intent === 'count' ? fmt(r.n) + T(' of ' + fmt(r.total) + ' rows', ' / ' + fmt(r.total) + ' पंक्तियाँ') + (r.total ? ' (' + (r.n / r.total < 0.01 ? Math.round(r.n / r.total * 10000) / 100 : Math.round(r.n / r.total * 1000) / 10) + '%)' : '') : (I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ' + (r.value === null ? '–' : f2(r.value)) + '<p>' + esc(T('from ' + fmt(r.n) + ' rows, every row of the file counted', fmt(r.n) + ' पंक्तियों से, फ़ाइल की हर पंक्ति गिनी गई')) + '</p>';
           if ($('akOut') && S.q === q) $('akOut').innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + esc(res.say) + '</div><div class="fr-verdict" style="border-color:#14a38b"><b>' + txt + '</b></div>';
         }).catch(function (e) { if ($('akOut')) $('akOut').innerHTML += '<div class="big-err">' + esc(e.message) + '</div>'; });
         return;
@@ -260,6 +301,9 @@
         var rows = rowsWhere(I.conds), v = []; rows.forEach(function (r) { var x = C.num(r[I.y]); if (x !== null) v.push(x); }); var val = I.fn === 'sum' ? v.reduce(function (a, b) { return a + b; }, 0) : (I.fn === 'median' ? (v.sort(function (a, b) { return a - b; }), v.length ? (v[(v.length - 1) >> 1] + v[v.length >> 1]) / 2 : null) : mean(v));
         body = '<div class="fr-verdict" style="border-color:#14a38b"><b>' + esc((I.fn === 'sum' ? T('Total ', 'कुल ') : (I.fn === 'median' ? T('Median ', 'माध्यिका ') : T('Average ', 'औसत '))) + colName(I.y) + ': ') + (val === null ? '–' : f2(val)) + '</b><p>' + esc(T('from ' + fmt(v.length) + ' rows', fmt(v.length) + ' पंक्तियों से')) + '</p></div>';
         open(T('Show it by group', 'समूह के अनुसार दिखाएँ'), function () { close(); var g = S.cat.filter(function (c) { return c.cat && !c.numeric && c.i !== I.y; })[0]; STL.openChartStudio(g ? { type: 'column', spec: { x: g.i, ys: [{ col: I.y, fn: I.fn }], sort: 'desc' } } : undefined); });
+      } else if (I.intent === 'distinct' && !S.big) {
+        var seenD = {}, nD = 0, filled = 0; rowsWhere(I.conds).forEach(function (r) { var v = String(r[I.y] == null ? '' : r[I.y]).trim(); if (v === '') return; filled++; if (!seenD[v]) { seenD[v] = 1; nD++; } });
+        body = '<div class="fr-verdict" style="border-color:#14a38b"><b>' + fmt(nD) + esc(T(' different values of ', ' अलग-अलग मान: ') + colName(I.y)) + '</b><p>' + esc(T('counted over ' + fmt(filled) + ' filled rows', fmt(filled) + ' भरी पंक्तियों में')) + '</p></div>';
       } else if (I.intent === 'count' && !S.big) {
         var n = rowsWhere(I.conds).length; body = '<div class="fr-verdict" style="border-color:#14a38b"><b>' + fmt(n) + esc(T(' of ' + fmt(S.R.length) + ' rows', ' / ' + fmt(S.R.length) + ' पंक्तियाँ')) + (S.R.length ? ' (' + (Math.round(n / S.R.length * 1000) / 10) + '%)' : '') + '</b></div>';
       } else if (I.intent === 'count_by' || I.intent === 'agg_by' || I.intent === 'top') {
@@ -268,19 +312,20 @@
       } else if (I.intent === 'trend') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'line', spec: { x: I.x, ys: [{ col: I.y, fn: I.fn }], time: S.cat[I.x].date ? 'month' : undefined, sort: 'label' } }); });
       else if (I.intent === 'corr') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'scatter', spec: { xnum: I.x, ynum: I.y, trend: true } }); });
       else if (I.intent === 'dist') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'histogram', spec: { xnum: I.x } }); });
-      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: STL.openDuplicates, clean: STL.openFixer }[I.tool] || function () {})(); });
+      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: STL.openDuplicates, clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary }[I.tool] || function () {})(); });
       else if (I.intent === 'missing') open(T('Show the checks', 'जाँच दिखाएँ'), function () { close(); STL.openDrivers({}); });
       else if (I.intent === 'pick_value') (I.choices || []).forEach(function (v) { open(v, function () { run(q + ' ' + v); }); });
       else if (I.intent === 'ask_y' && I.choices) I.choices.forEach(function (c) { open(c, function () { run(q + ' ' + c); }); });
     } catch (e) { body = '<div class="big-err">' + esc(e.message) + '</div>'; }
     var alt = '';
     if (res.alts && res.alts.length) alt += '<div class="prj-sub">' + T('Did you mean a different column?', 'क्या आपका मतलब कोई और कॉलम था?') + '</div><div class="prj-row" style="flex-wrap:wrap;gap:6px">' + res.alts.map(function (a, i) { return '<button class="tb-btn" data-alt="' + i + '">' + esc(a.name) + '</button>'; }).join('') + '</div>';
-    if (res.intent === 'none' || res.conf < 0.6) alt = '<div class="prj-sub">' + T('Maybe one of these?', 'शायद इनमें से कोई?') + '</div><div class="prj-row" style="flex-wrap:wrap;gap:6px">' + S.ex.map(function (e, i) { return '<button class="tb-btn" data-ex="' + i + '">' + esc(e) + '</button>'; }).join('') + '</div>';
+    S.exShown = res.examples && res.examples.length ? res.examples : S.ex;
+    if (res.intent === 'none' || res.conf < 0.6) alt = '<div class="prj-sub">' + T('Maybe one of these?', 'शायद इनमें से कोई?') + '</div><div class="prj-row" style="flex-wrap:wrap;gap:6px">' + S.exShown.map(function (e, i) { return '<button class="tb-btn" data-ex="' + i + '">' + esc(e) + '</button>'; }).join('') + '</div>';
     out.innerHTML = '<div class="big-note" style="border-color:#6d5bd0"><b>' + T('I understood: ', 'मैं यह समझा: ') + '</b>' + (say || esc(T('I could not match your words to this file.', 'मैं आपके शब्द इस फ़ाइल से नहीं मिला सका।'))) + '</div>' + body + '<div class="prj-row" style="gap:8px;margin-top:8px;flex-wrap:wrap">' + btns + '</div>' + alt +
       (res.intent === 'none' ? '<div class="big-note">' + T('Tip: use the names of the columns, for example “average ' + (S.cat[0] ? S.cat[0].name : 'column') + ' by …”.', 'सुझाव: कॉलम के नाम का उपयोग करें, जैसे “… के अनुसार औसत …”।') + '</div>' : '');
     out.querySelectorAll('[data-alt]').forEach(function (b) { b.onclick = function () { var a = res.alts[+b.dataset.alt]; $('akQ').value = a.q; run(a.q); }; });
     out.querySelectorAll('[data-act]').forEach(function (b) { b.onclick = function () { S.acts[+b.dataset.act](); }; });
-    out.querySelectorAll('[data-ex]').forEach(function (b) { b.onclick = function () { $('akQ').value = S.ex[+b.dataset.ex]; run(S.ex[+b.dataset.ex]); }; });
+    out.querySelectorAll('[data-ex]').forEach(function (b) { b.onclick = function () { var e = S.exShown[+b.dataset.ex]; $('akQ').value = e; run(e); }; });
   }
   function hiSay(r) { return r.say; }
   function close() { var d = $('askDialog'); if (d) d.remove(); }

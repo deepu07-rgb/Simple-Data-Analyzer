@@ -114,7 +114,7 @@
     if (numeric && min >= 0 && xs.length > 200 && nd2 > 30) { xs.sort(function (a, b) { return a - b; }); var m50 = xs[xs.length >> 1], m99 = xs[Math.floor(xs.length * 0.99)]; heavy = m50 > 0 && m99 / m50 > 15 && xs[xs.length - 1] / m50 > 50; }
     if (nn >= 20 && nd2 === 2) { flagKeys = Object.keys(distinct); flag = true; }
     return { index: c, name: s(header), filled: nn, unit: unit, heavy: heavy, flag: flag, flagKeys: flagKeys, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
-             zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)) };
+             zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)), tidx: numeric && NAME_TIMEIDX.test(s(header)) };
   }
   CH.profile = function (headers, rows, idx) {
     var prof = headers.map(function (h, i) { return colFacts(rows, idx, i, h); });
@@ -761,6 +761,8 @@
 
   // ------------------------------------------------------------ recommendations
   var NAME_GROUP = /city|country|state|district|region|zone|type|categor|status|station|department|designation|gender|segment|class|brand|group|cuisine|ward|block|mode|source|channel|जिला|थाना|श्रेणी|स्थिति|विभाग|पद|शहर|राज्य|प्रकार/i;
+  // a position in time (MONTHS_BALANCE 0, -1, -2 …; DAYS_BIRTH; DAYS_EMPLOYED), not an amount: it is never added up and is no measure to explain
+  var NAME_TIMEIDX = /(month|day|week|year|quarter)s?[_ ]?(balance|ago|since|offset|before|after|on[_ ]?book)/i;
   var NAME_AMOUNT = /amount|cost|price|sales|revenue|salary|votes|total|qty|quantity|cups|volume|profit|margin|fee|value|income|expense|balance|राशि|कीमत|वेतन|मूल्य|वोट/i;
   // one column is just another way of writing a different one (Rating text / Rating colour from the rating)
   function derivedFrom(a, b, rows, idx) {                                            // does column a (few values) split the numbers of b into separate, non-overlapping ranges?
@@ -777,13 +779,13 @@
     return np <= Math.max(a.distinct, b.distinct) * 1.05;
   }
   // which columns are real measures (not IDs, codes, coordinates or short whole-number labels), best first, and how to combine them
-  CH.isMeasure = function (p) { return p.numeric && !p.serial && !p.code && !p.unique && !p.coord && !p.idLike && !p.lowInt; };
+  CH.isMeasure = function (p) { return p.numeric && !p.tidx && !p.serial && !p.code && !p.unique && !p.coord && !p.idLike && !p.lowInt; };
   // engineered figures (a ratio of two columns, an "adjusted" copy of another number) are rarely the headline
   // what a business wants to know (revenue, profit, cups sold) comes before a price or a cost, and a rating-like index never gets the amount bonus
   var NAME_OUTCOME = /revenue|sales|profit|margin|income|cups|volume|turnover|streams|plays|views|downloads|listens|clicks|likes|shares|orders|visits|installs|कमाई|बिक्री|मुनाफ़ा/i;
   function measScore(p) { return (p.score ? 3 : (NAME_OUTCOME.test(p.name) ? 5.5 : (NAME_AMOUNT.test(p.name) ? 3.5 : 0))) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b|(^|[_ ])per[_ ]/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
-  CH.avgy = function (p) { return p.score || p.unit || /gpa|cgpa|retention|dependency|anxiety|stress|satisfaction|percentile|average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
+  CH.avgy = function (p) { return p.score || p.unit || p.tidx || /income|earning|wage|salary per|\bage\b|_age|age_|birth|employed|tenure|seniority/i.test(p.name) || /gpa|cgpa|retention|dependency|anxiety|stress|satisfaction|percentile|average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
   // columns that make sense to group or compare by, best first (no IDs, no columns that only restate a number, no duplicates)
   CH.groupColumns = function (prof, nums, rows, idx) {
