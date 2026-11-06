@@ -77,6 +77,17 @@ console.log('credit file', (fs.statSync(CRED).size / 1e6).toFixed(1), 'MB;', tru
   const trueF = ids.filter(i => stat[i].g === 'F' && !amb.has(i)); ok(nF === trueF.length && lateF === trueF.filter(i => stat[i].late60 > 0).length, 'women: ' + nF + ', of them ever 60+ days late: ' + lateF);
   // ---- the question box on the linked table
   await ev(() => STL.openAsk()); await page.waitForSelector('#akQ'); const q2 = await ask('how many rows have CODE_GENDER F'); ok(q2.replace(/,/g, '').includes(String(nF)), 'asked: women = ' + nF, q2); await ev(() => document.getElementById('akX').click());
+  // ---- Fair comparison of a yes/no outcome: "how often Any STATUS = 2/5 is Yes", women vs men, among people with the same income
+  const fwl = (f1, f0, key, yes) => { const g = {}; rows2.forEach(r => { const f = r[ci('CODE_GENDER')]; if (f !== f1 && f !== f0) return; const k = r[ci(key)], o = g[k] || (g[k] = { n1: 0, s1: 0, n0: 0, s0: 0 }); if (f === f1) { o.n1++; o.s1 += yes(r) ? 100 : 0; } else { o.n0++; o.s0 += yes(r) ? 100 : 0; } });
+    let num = 0, den = 0; Object.values(g).forEach(o => { if (o.n1 && o.n0) { const w = o.n1 * o.n0 / (o.n1 + o.n0); num += w * (o.s1 / o.n1 - o.s0 / o.n0); den += w; } }); return num / den; };
+  await ev(a => STL.openFair({ y: a[0], f: a[1], adj: [a[2]], yCat: { col: a[0], value: 'Yes' } }), [cAny, ci('CODE_GENDER'), ci('AMT_INCOME_TOTAL')]);
+  await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict'), null, { timeout: 60000 }); await wait(600);
+  const FR = await ev(() => ({ R: { ref: STL.fair.last.ref, main: STL.fair.last.main.level, raw: STL.fair.last.main.raw.diff, adj: STL.fair.last.main.adj && STL.fair.last.main.adj.diff, pct: STL.fair.last.pct }, txt: document.getElementById('frOut').innerText.replace(/\s+/g, ' ') }));
+  const f1 = FR.R.main, f0 = FR.R.ref, rate = (f) => { const x = rows2.filter(r => r[ci('CODE_GENDER')] === f); return 100 * x.filter(r => r[cAny] === 'Yes').length / x.length; };
+  ok(FR.R.pct && Math.abs(FR.R.raw - (rate(f1) - rate(f0))) < 1e-6, 'Fair comparison, yes/no outcome: plain gap ' + FR.R.raw.toFixed(3) + ' points = ' + (rate(f1) - rate(f0)).toFixed(3), FR.R);
+  ok(Math.abs(FR.R.adj - fwl(f1, f0, 'AMT_INCOME_TOTAL', r => r[cAny] === 'Yes')) < 1e-6, 'gap among people with the same income ' + FR.R.adj.toFixed(3) + ' points equals an independent calculation ' + fwl(f1, f0, 'AMT_INCOME_TOTAL', r => r[cAny] === 'Yes').toFixed(3));
+  ok(/Measured as: Any STATUS = 2\/5 = Yes \(a percentage\)/.test(FR.txt) && /points/.test(FR.txt) && /How often Any STATUS/.test(FR.txt), 'the answer is written in percent and percentage points', FR.txt.slice(0, 400));
+  await ev(() => document.getElementById('frX').click());
   // ---- a placeholder code is made empty on request
   const nPl = rows2.filter(r => r[ci('DAYS_EMPLOYED')] === '365243').length;
   await ev(a => STL.blankValue(a, '365243'), ci('DAYS_EMPLOYED')); await wait(2500);

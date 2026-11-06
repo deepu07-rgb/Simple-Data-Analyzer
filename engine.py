@@ -489,7 +489,8 @@ class Engine:
         if yspec.get("is") is not None:
             c = _col(yi)
             v = str(yspec["is"]).replace("'", "''")
-            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN NULL WHEN trim({c}) = '{v}' THEN CAST(1 AS DOUBLE) ELSE CAST(0 AS DOUBLE) END"
+            one = float(yspec.get("scale") or 1)                                  # 100: the answer is read in percent, a gap in percentage points
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN NULL WHEN trim({c}) = '{v}' THEN CAST({one!r} AS DOUBLE) ELSE CAST(0 AS DOUBLE) END"
         x = self._numz(yi, nozero)
         return f"ln(1 + greatest({x}, 0))" if yspec.get("log") else x
 

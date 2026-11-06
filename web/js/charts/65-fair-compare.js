@@ -26,9 +26,9 @@
   F.cellsFromRows = function (rows, idx, spec) {
     var dims = [spec.factor].concat(spec.adjusters || []), map = {}, cells = [], zeroSkipped = 0, matched = 0, label = function (v) { var t = s(v).trim(); return t === '' ? '(blank)' : t; };
     for (var k = 0; k < idx.length; k++) {
-      var r = rows[idx[k]], y = num(r[spec.y]); if (y === null) continue;
+      var r = rows[idx[k]], y = spec.yFn ? spec.yFn(r[spec.y]) : num(r[spec.y]); if (y === null) continue;
       matched++;
-      if (spec.noZero && y === 0) { zeroSkipped++; continue; }
+      if (!spec.yFn && spec.noZero && y === 0) { zeroSkipped++; continue; }
       var key = [], i; for (i = 0; i < dims.length; i++) { var bd = spec.bands && spec.bands[dims[i]]; if (bd) { var bi = STL.charts.bandOf(bd, num(r[dims[i]])); key.push(bi < 0 ? '(blank)' : bd.labels[bi]); } else key.push(label(r[dims[i]])); }
       var kk = key.join('\u0001'), c = map[kk]; if (!c) { c = map[kk] = { k: key, n: 0, sy: 0, syy: 0 }; cells.push(c); }
       c.n++; c.sy += y; c.syy += y * y;
@@ -97,7 +97,7 @@
     var label = function (v) { var t = s(v).trim(); return t === '' ? '(blank)' : t; }, dims = [spec.factor].concat(spec.cats || []), lins = spec.lins || [];
     var data = [];
     for (var k = 0; k < idx.length; k++) {
-      var r = rows[idx[k]], y = num(r[spec.y]); if (y === null || (spec.noZero && y === 0)) continue;
+      var r = rows[idx[k]], y = spec.yFn ? spec.yFn(r[spec.y]) : num(r[spec.y]); if (y === null || (!spec.yFn && spec.noZero && y === 0)) continue;
       var z = lins.map(function (c) { return num(r[c]); }); if (z.some(function (v) { return v === null; })) continue;
       data.push({ d: dims.map(function (c) { return label(r[c]); }), z: z, y: y });
     }
@@ -222,18 +222,20 @@
   function sgd(x, d) { return (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(d); }
   function sg(x) { return (x > 0 ? '+' : x < 0 ? '−' : '') + r2(Math.abs(x)); }
   F.verdict = function (R, hi) {
+    var PT = R && R.pct ? (hi ? ' अंक' : ' points') : '', sgf = function (x) { return sg(x) + PT; };                  // a yes/no outcome is in percent: a gap is in percentage points
     if (!R || R.error) return { kind: 'error', title: hi ? 'तुलना संभव नहीं' : 'Cannot compare', text: hi ? 'तुलना के लिए कम से कम दो समूह और पर्याप्त पंक्तियाँ चाहिए।' : 'A comparison needs at least two groups and enough rows.' };
     var plainName = function (n) { return String(n).replace(/ \((curve|bands|straight line|वक्र|समूह|सीधी रेखा)\)$/, ''); };
     var m = R.main, A = m.adj, raw = m.raw, d = R.driver, drv = d ? plainName(d.name) : '', who = m.level + (hi ? ' बनाम ' : ' vs ') + R.ref, advs = R.adjusters.map(plainName);
-    if (!A || !R.nAdjust) return { kind: 'raw', title: hi ? 'केवल सीधा अंतर' : 'Plain difference only', text: (hi ? who + ': अंतर ' : who + ': difference ') + sg(raw.diff) + (hi ? ' (तुलना को निष्पक्ष बनाने के लिए कुछ नहीं चुना गया)।' : ' (nothing was chosen to make the comparison fair).') };
+    if (!A || !R.nAdjust) return { kind: 'raw', title: hi ? 'केवल सीधा अंतर' : 'Plain difference only', text: (hi ? who + ': अंतर ' : who + ': difference ') + sgf(raw.diff) + (hi ? ' (तुलना को निष्पक्ष बनाने के लिए कुछ नहीं चुना गया)।' : ' (nothing was chosen to make the comparison fair).') };
     var sigRaw = raw.p < 0.01, sigAdj = A.p < 0.01, notAdj = A.p > 0.05, flip = raw.diff * A.diff < 0;
     var tiny = sigRaw && Math.abs(A.diff) < 0.05 * Math.abs(raw.diff);                            // 13,000 rows make even +0.02 "significant": judge the size too
     var pctLeft = Math.max(0.1, Math.round(Math.abs(A.diff) / Math.abs(raw.diff) * 1000) / 10);
-    var tinyTxt = tiny ? (hi ? 'जो बचा (' + sg(A.diff) + ') वह पहले वाले अंतर का केवल ' + pctLeft + '% है। ' : 'What is left (' + sg(A.diff) + ') is only ' + pctLeft + '% of the first gap. ') : '';
+    var tinyTxt = tiny ? (hi ? 'जो बचा (' + sgf(A.diff) + ') वह पहले वाले अंतर का केवल ' + pctLeft + '% है। ' : 'What is left (' + sgf(A.diff) + ') is only ' + pctLeft + '% of the first gap. ') : '';
     if (tiny) { sigAdj = false; notAdj = true; flip = false; }
-    var narrow = A && Math.abs(A.hi - A.lo) < 0.02 && Math.abs(A.diff) < 1, sa = function (x) { return narrow ? sgd(x, 3) : sg(x); };
+    var narrow = !R.pct && A && Math.abs(A.hi - A.lo) < 0.02 && Math.abs(A.diff) < 1, sa = function (x) { return narrow ? sgd(x, 3) : sgf(x); };
     var ci = hi ? '(संभवतः ' + sa(A.lo) + ' से ' + sa(A.hi) + ' के बीच)' : '(most likely between ' + sa(A.lo) + ' and ' + sa(A.hi) + ')';
-    var head = hi ? 'जैसे हैं वैसे समूहों में अंतर ' + sg(raw.diff) + ' है। केवल उन पंक्तियों की तुलना करें जो ' + advs.join(', ') + ' में समान हैं, तो अंतर ' + sa(A.diff) + ' है ' + ci + '। ' : 'Comparing the groups as they are, the difference is ' + sg(raw.diff) + '. Comparing only rows that are alike in ' + advs.join(', ') + ', it is ' + sa(A.diff) + ' ' + ci + '. ';
+    var lead = R.pct && R.yLabel ? (hi ? 'माप: ' + R.yLabel + ' (प्रतिशत)। ' : 'Measured as: ' + R.yLabel + ' (a percentage). ') : '';
+    var head = lead + (hi ? 'जैसे हैं वैसे समूहों में अंतर ' + sgf(raw.diff) + ' है। केवल उन पंक्तियों की तुलना करें जो ' + advs.join(', ') + ' में समान हैं, तो अंतर ' + sa(A.diff) + ' है ' + ci + '। ' : 'Comparing the groups as they are, the difference is ' + sgf(raw.diff) + '. Comparing only rows that are alike in ' + advs.join(', ') + ', it is ' + sa(A.diff) + ' ' + ci + '. ');
     var mixTxt = '';
     if (R.mix && d) {
       var top = R.mix.rows.slice().sort(function (a, b) { return Math.abs(b.shareMain - b.shareRef) - Math.abs(a.shareMain - a.shareRef); })[0];
@@ -289,24 +291,43 @@
       var prof = CH.profile(HD(), RD(), viewIdx()), nums = CH.rankMeasures(prof.filter(CH.isMeasure));
       var cats = CH.groupColumns(prof, nums, RD(), viewIdx()).filter(function (p) { return p.distinct <= 60; });
       var yesNo = cats.filter(function (p) { return p.distinct === 2 && !p.numeric; });
-      FS = { prof: prof, nums: nums, cats: cats, y: -1, f: -1, adj: [], noZero: false, result: null };
+      FS = { prof: prof, nums: nums, cats: cats, y: -1, f: -1, adj: [], noZero: false, result: null, yCat: null, outs: [] };
       preset = preset || {};
       FS.y = preset.y >= 0 ? preset.y : (nums[0] ? nums[0].index : -1);
+      if (preset.yCat && preset.yCat.col >= 0) { FS.y = preset.yCat.col; FS.yCat = { col: preset.yCat.col, value: String(preset.yCat.value) }; }
       FS.f = preset.f >= 0 ? preset.f : (yesNo[0] ? yesNo[0].index : (cats[0] ? cats[0].index : -1));
-      suggestAdjust(); if (preset.adj) FS.adj = preset.adj.slice();
-      FS.noZero = preset.noZero !== undefined ? !!preset.noZero : autoZero();
-      render(); compute();
+      outcomeOptions().then(function () { if (FS.yCat && !FS.outs.some(function (o) { return o.col === FS.yCat.col && o.value === FS.yCat.value; })) FS.outs.push({ col: FS.yCat.col, value: FS.yCat.value });
+        if (!nums.length && !FS.yCat && FS.outs.length) { FS.yCat = { col: FS.outs[0].col, value: FS.outs[0].value }; FS.y = FS.yCat.col; }
+        if (FS.yCat && preset.f === undefined) { var fc = cats.filter(function (p) { return p.index !== FS.y; })[0]; FS.f = fc ? fc.index : -1; }
+        suggestAdjust(); if (preset.adj) FS.adj = preset.adj.slice();
+        FS.noZero = FS.yCat ? false : (preset.noZero !== undefined ? !!preset.noZero : autoZero());
+        render(); compute(); });
     };
     if (isBig() && STL.bigCharts.sample.ds !== BIG.ds) STL.bigCharts.loadSample().then(go).catch(function (e) { toast(e.message, 'error'); }); else go();
   };
+  // a yes/no (or few-valued text) column can be the outcome: "how often Late = Yes". On a large file the values come from every row.
+  function outcomeOptions() {
+    var cols = FS.prof.filter(function (p) { return !p.date && !p.list && !p.unique && p.distinct >= 2 && p.distinct <= 8 && (!p.numeric || p.flag || p.lowInt && p.distinct <= 3); }).map(function (p) { return p.index; });
+    var fromRows = function () { var o = {}; cols.forEach(function (c) { var cnt = {}; viewIdx().forEach(function (i) { var v = String(RD()[i][c] == null ? '' : RD()[i][c]).trim(); if (v) cnt[v] = (cnt[v] || 0) + 1; }); o[c] = { distinct: Object.keys(cnt).length, values: Object.keys(cnt).map(function (k) { return [k, cnt[k]]; }).sort(function (a, b) { return b[1] - a[1]; }) }; }); return o; };
+    var p = isBig() && STL.bigCharts.values && cols.length ? STL.bigCharts.values(cols).catch(fromRows) : Promise.resolve(fromRows());
+    return p.then(function (V) {
+      // the value worth asking about: the "bad" one (Yes, High, Late, Default…), else the rarer of two, else the two commonest; outcome-like columns first, 14 at most
+      var BADV = /^(yes|y|true|high|severe|bad|fail|failed|churn|churned|default|defaulted|positive|critical|poor|late|dropout|risk|1)$/i, list = [];
+      cols.forEach(function (c) { var v = V[c]; if (!v || v.distinct < 2 || v.distinct > 8) return; var vals = v.values.map(function (x) { return String(x[0]); }), bad = vals.filter(function (x) { return BADV.test(x); }), pick = bad.length ? bad.slice(0, 1) : (v.distinct === 2 ? [vals[vals.length - 1]] : vals.slice(0, 2)); list.push({ col: c, vals: pick, rank: bad.length ? 0 : 1 }); });
+      list.sort(function (a, b) { return a.rank - b.rank; }); FS.outs = []; list.forEach(function (o) { o.vals.forEach(function (x) { if (FS.outs.length < 14) FS.outs.push({ col: o.col, value: x }); }); });
+    });
+  }
+  function yFn() { return FS.yCat ? function (cell) { var q = String(cell == null ? '' : cell).trim(); return q === '' ? null : (q === FS.yCat.value ? 100 : 0); } : null; }
+  function yLabel() { return FS.yCat ? HD()[FS.yCat.col] + ' = ' + FS.yCat.value : HD()[FS.y]; }
+  function yspec() { return FS.yCat ? { is: FS.yCat.value, scale: 100 } : undefined; }
   function linCols() { return FS.adj.filter(function (c) { var p = FS.prof[c]; return p && p.numeric && !p.lowInt; }); }
-  function autoZero() { var p = FS.prof[FS.y]; return !!(p && p.score && p.zeroPct >= 0.01); }
+  function autoZero() { var p = FS.prof[FS.y]; return !FS.yCat && !!(p && p.score && p.zeroPct >= 0.01); }
   // the starting level of a before/after pair (Pre GPA for Post GPA, and for “Change in GPA”) is the first thing to hold equal
   function partner() { var P = STL.derive ? STL.derive.pairs(HD(), FS.prof) : [], y = FS.y, r = -1; P.forEach(function (p) { if (p.after === y || HD()[y] === p.name) r = p.before; }); return r; }
   function adjCandidates() { var D = STL.drivers, pt = partner(); return D.candidates(HD(), FS.prof, FS.y).filter(function (c) { return c.col !== FS.f && (c.col === pt || !D.sharesName(c.name, HD()[FS.y]).length); }); }
   function suggestAdjust() {                                                     // adjust for what goes most with the number (not for columns made from it)
     var D = STL.drivers, cands = adjCandidates();
-    try { FS.ranked = D.rank(RD(), viewIdx(), HD(), FS.y, { prof: FS.prof, candidates: cands, noZero: autoZero(), partner: partner() }); } catch (e) { FS.ranked = []; }
+    try { FS.ranked = D.rank(RD(), viewIdx(), HD(), FS.y, { prof: FS.prof, candidates: cands, noZero: autoZero(), partner: partner(), yFn: FS.yCat ? function (cell) { var q = String(cell == null ? '' : cell).trim(); return q === '' ? null : (q === FS.yCat.value ? 1 : 0); } : null }); } catch (e) { FS.ranked = []; }
     FS.adj = FS.ranked.filter(function (r) { return !r.derived && !r.walls && !r.standIn && r.omega2 >= 0.01; }).slice(0, 3).map(function (r) { return r.col; });
     var pt = partner(); if (pt >= 0 && pt !== FS.f && cands.some(function (c) { return c.col === pt; })) FS.adj = [pt].concat(FS.adj.filter(function (c) { return c !== pt; })).slice(0, 3);
   }
@@ -318,24 +339,24 @@
   function bandsFor(cols) { var b = {}; cols.forEach(function (c) { var p = FS.prof[c]; if (p && p.numeric && !p.lowInt) b[c] = exactOr(c, 5, function () { return CH.quantileBands(viewIdx().map(function (i) { return CH.num(RD()[i][c]); }), 5); }); }); return b; }
 
   function render() {
-    var H = HD(), numCols = FS.prof.filter(function (p) { return p.numeric; }), groupCols = FS.prof.filter(function (p) { return !p.numeric || p.lowInt || (!p.idLike && !p.coord && p.distinct >= 8); }).filter(function (p) { return p.distinct >= 2 && !p.unique && (p.numeric && !p.lowInt ? true : p.distinct <= 200); }).map(function (p) { return p.numeric && !p.lowInt ? Object.assign({}, p, { name: p.name + T('  (a number, in 4 bands)', '  (संख्या, 4 समूहों में)') }) : p; });
+    var H = HD(), numCols = FS.prof.filter(function (p) { return p.numeric; }), groupCols = FS.prof.filter(function (p) { return p.index !== FS.y; }).filter(function (p) { return !p.numeric || p.lowInt || (!p.idLike && !p.coord && p.distinct >= 8); }).filter(function (p) { return p.distinct >= 2 && !p.unique && (p.numeric && !p.lowInt ? true : p.distinct <= 200); }).map(function (p) { return p.numeric && !p.lowInt ? Object.assign({}, p, { name: p.name + T('  (a number, in 4 bands)', '  (संख्या, 4 समूहों में)') }) : p; });
     var omega = {}, wall = {}; (FS.ranked || []).forEach(function (r) { omega[r.col] = r.omega2; if (r.walls) wall[r.col] = 1; });
     var cand = adjCandidates().map(function (c) { return { index: c.col, name: c.name + (c.kind === 'num' ? T(' (grouped low to high)', ' (कम से अधिक समूहों में)') : '') + (wall[c.col] ? T(' ⚠ may be set by the number', ' ⚠ शायद संख्या से तय') : ''), w: omega[c.col] || 0 }; }).sort(function (a, b) { return b.w - a.w; }).slice(0, 12);
     FS.adj = FS.adj.filter(function (c) { return c !== FS.f && c !== FS.y; });
     var opt = function (list, val) { return list.map(function (p) { return '<option value="' + p.index + '"' + (p.index === val ? ' selected' : '') + '>' + esc(p.name) + '</option>'; }).join(''); };
     var html = '<div class="prj-h"><b>⚖ ' + T('Fair comparison', 'निष्पक्ष तुलना') + '</b><button id="frX" aria-label="close">×</button></div>' +
       '<div class="big-note">' + T('Is a difference between two groups real, or does it only come from the groups being made up differently? This compares them plainly and then between groups that are alike.', 'दो समूहों का अंतर असली है, या केवल इसलिए कि समूहों की बनावट अलग है? यह पहले सीधी तुलना करता है, फिर बराबर के समूहों में।') + '</div>' +
-      '<div class="fr-form"><label class="rp-field"><span>' + T('Measure to compare (a number)', 'तुलना का माप (संख्या)') + '</span><select id="frY" class="big-select">' + opt(numCols, FS.y) + '</select></label>' +
+      '<div class="fr-form"><label class="rp-field"><span>' + T('Measure to compare', 'तुलना का माप') + '</span><select id="frY" class="big-select"><optgroup label="' + esc(T('A number (its average)', 'एक संख्या (उसका औसत)')) + '">' + opt(numCols.filter(function (p) { return !p.unique && !p.serial && !p.idLike && (p.index === FS.y && !FS.yCat || !FS.outs.some(function (o) { return o.col === p.index; }) || CH.isMeasure(p)); }), FS.yCat ? -1 : FS.y) + '</optgroup>' + (FS.outs.length ? '<optgroup label="' + esc(T('How often … (a yes/no or a few values)', 'कितनी बार … (हाँ/नहीं या कुछ मान)')) + '">' + FS.outs.map(function (o) { return '<option value="c:' + o.col + ':' + esc(o.value) + '"' + (FS.yCat && FS.yCat.col === o.col && FS.yCat.value === o.value ? ' selected' : '') + '>' + esc(T('How often ', 'कितनी बार ') + H[o.col] + ' = ' + o.value) + '</option>'; }).join('') + '</optgroup>' : '') + '</select></label>' +
       '<label class="rp-field"><span>' + T('Compare groups by', 'समूह इसके अनुसार') + '</span><select id="frF" class="big-select">' + opt(groupCols, FS.f) + '</select></label></div>' +
       '<div class="prj-sub">' + T('To make it fair, compare only rows that are alike in:', 'निष्पक्ष बनाने के लिए केवल उन पंक्तियों की तुलना करें जो इनमें समान हैं:') + '</div><div class="rp-checks" id="frAdj">' + (cand.length ? cand.map(function (p) { return '<label class="rp-inline"><input type="checkbox" data-a="' + p.index + '"' + (FS.adj.indexOf(p.index) >= 0 ? ' checked' : '') + '> ' + esc(p.name) + (p.w >= 0.005 ? ' <em>' + (Math.round(p.w * 1000) / 10) + '%</em>' : '') + '</label>'; }).join('') : '<em>' + T('no suitable columns', 'कोई उपयुक्त कॉलम नहीं') + '</em>') + '</div>' +
-      '<label class="rp-inline" style="margin:8px 0"><input type="checkbox" id="frZ"' + (FS.noZero ? ' checked' : '') + '> ' + T('Ignore zeros (0 usually means “no value / not rated”)', 'शून्य छोड़ें (0 का अर्थ प्रायः “कोई मान नहीं / अंकित नहीं”)') + '</label>' +
+      (FS.yCat ? '' : '<label class="rp-inline" style="margin:8px 0"><input type="checkbox" id="frZ"' + (FS.noZero ? ' checked' : '') + '> ' + T('Ignore zeros (0 usually means “no value / not rated”)', 'शून्य छोड़ें (0 का अर्थ प्रायः “कोई मान नहीं / अंकित नहीं”)') + '</label>') +
       '<label class="rp-field" id="frLinW" style="max-width:420px' + (linCols().length ? '' : ';display:none') + '"><span>' + T('Number columns to adjust for, as', 'समायोजन के संख्या कॉलम, इस रूप में') + '</span><select id="frLin" class="big-select">' + [['auto', T('Automatic: the shape that fits best', 'स्वचालित: जो आकार सबसे अच्छा बैठे')], ['bands', T('5 bands (any shape, coarse)', '5 समूह (कोई भी आकार, मोटा)')], ['line', T('a straight line (one slope, exact values)', 'सीधी रेखा (एक ढलान, सटीक मान)')], ['curve', T('a curve (a slope and a bend)', 'वक्र (ढलान और मोड़)')]].map(function (o) { return '<option value="' + o[0] + '"' + ((FS.shape || 'auto') === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></label>' +
       '<div id="frOut"><div class="big-note">…</div></div>';
     var o = U.overlay('fairDialog', html, true); o.querySelector('.stl-box').classList.add('fr-box');
     $('frX').onclick = function () { disposeChart(); o.remove(); };
-    $('frY').onchange = function () { FS.y = +this.value; FS.noZero = autoZero(); suggestAdjust(); render(); compute(); };
+    $('frY').onchange = function () { var v = this.value, m = /^c:(\d+):([\s\S]*)$/.exec(v); if (m) { FS.yCat = { col: +m[1], value: m[2] }; FS.y = +m[1]; } else { FS.yCat = null; FS.y = +v; } if (FS.f === FS.y) { var g = FS.cats.filter(function (p) { return p.index !== FS.y; })[0]; FS.f = g ? g.index : -1; } FS.noZero = autoZero(); suggestAdjust(); render(); compute(); };
     $('frF').onchange = function () { FS.f = +this.value; suggestAdjust(); render(); compute(); };
-    $('frZ').onchange = function () { FS.noZero = this.checked; compute(); };
+    if ($('frZ')) $('frZ').onchange = function () { FS.noZero = this.checked; compute(); };
     $('frLin').onchange = function () { FS.shape = this.value; compute(); };
     o.querySelectorAll('[data-a]').forEach(function (b) { b.onchange = function () { var c = +b.dataset.a, i = FS.adj.indexOf(c); if (b.checked && i < 0 && FS.adj.length < 4) FS.adj.push(c); else if (!b.checked && i >= 0) FS.adj.splice(i, 1); else if (b.checked) b.checked = false; compute(); }; });
   }
@@ -349,13 +370,13 @@
   }
   function compute0() {
     var out = $('frOut'); if (!out) return;
-    if (FS.y < 0 || FS.f < 0) { out.innerHTML = '<div class="big-err">' + T('This file needs a number column and a column of groups.', 'इस फ़ाइल में एक संख्या वाला कॉलम और समूहों का कॉलम चाहिए।') + '</div>'; return; }
+    if (FS.y < 0 || FS.f < 0 || (FS.yCat && FS.f === FS.y)) { out.innerHTML = '<div class="big-err">' + T('This file needs a measure (a number, or a yes/no column) and a column of groups.', 'इस फ़ाइल में एक संख्या वाला कॉलम और समूहों का कॉलम चाहिए।') + '</div>'; return; }
     var fBands = factorBands(), H = HD(), names = [H[FS.f] + (fBands ? T(' (bands)', ' (समूह)') : '')].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? T(' (bands)', ' (समूह)') : ''); })),
         shapeNames = function (shape) { return [names[0]].concat(FS.adj.map(function (c) { var p = FS.prof[c]; return H[c] + (p && p.numeric && !p.lowInt ? (shape === 'curve' ? T(' (curve)', ' (वक्र)') : T(' (straight line)', ' (सीधी रेखा)')) : ''); })); }, seq = ++FS.seq || (FS.seq = 1);
     out.innerHTML = '<div class="big-note">' + T('Calculating…', 'गणना हो रही है…') + '</div>';
     var done = function (cellsRes) {
       if (seq !== FS.seq || !$('frOut')) return;
-      var R = F.analyse(cellsRes.cells, names, { ref: fBands ? fBands.labels[0] : undefined, order: fBands ? fBands.labels : undefined }); FS.meta = cellsRes;
+      var R = F.analyse(cellsRes.cells, names, { ref: fBands ? fBands.labels[0] : undefined, order: fBands ? fBands.labels : undefined }); FS.meta = cellsRes; if (R && !R.error && FS.yCat) { R.pct = true; R.yLabel = yLabel(); }
       var lins = linCols(), wLin = $('frLinW'); if (wLin) wLin.style.display = lins.length && !fBands ? '' : 'none';
       var shape = FS.shape || 'auto';
       if (shape === 'bands' || fBands || !lins.length || !R || R.error) { if (R && !R.error && lins.length) R.shapeNote = null; FS.result = R; show(R); return; }
@@ -363,8 +384,8 @@
       var cats = FS.adj.filter(function (c) { return lins.indexOf(c) < 0; }), order = cats.concat(lins);
       var fitOne = function (curve) {
         var back = function (lin) { if (lin) lin.alone = FS.adj.map(function (c) { return lin.alone[order.indexOf(c)]; }); return lin; };   // back to the order on screen
-        if (isBig()) return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair_linear', y: FS.y, factor: FS.f, catAdj: cats, linAdj: lins, curve: curve, nozero: FS.noZero, ref: R.ref }, STL.bigCharts.scope())).then(back);
-        return new Promise(function (ok) { setTimeout(function () { ok(back(F.linearFit(RD(), viewIdx(), { y: FS.y, factor: FS.f, cats: cats, lins: lins, curve: curve, noZero: FS.noZero, ref: R.ref }))); }, 10); });
+        if (isBig()) return STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair_linear', y: FS.y, factor: FS.f, catAdj: cats, linAdj: lins, curve: curve, nozero: FS.noZero, ref: R.ref, yspec: yspec() }, STL.bigCharts.scope())).then(back);
+        return new Promise(function (ok) { setTimeout(function () { ok(back(F.linearFit(RD(), viewIdx(), { y: FS.y, factor: FS.f, cats: cats, lins: lins, curve: curve, noZero: FS.noZero, ref: R.ref, yFn: yFn() }))); }, 10); });
       };
       var want = shape === 'auto' ? [false, true] : [shape === 'curve'];
       Promise.all(want.map(fitOne)).then(function (fits) {
@@ -385,35 +406,36 @@
       var sc = STL.bigCharts.scope();
       var bb = allBands(fBands), edges = {}; Object.keys(bb).forEach(function (c) { if (bb[c]) edges[c] = bb[c].edges; });
       var dimCols = [FS.f].concat(FS.adj);
-      STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair', y: FS.y, factor: FS.f, adjusters: FS.adj, nozero: FS.noZero, bands: edges }, sc)).then(function (r) { r.cells.forEach(function (c) { c.k = c.k.map(function (k, di) { var b = bb[dimCols[di]], m = /^b(\d+)$/.exec(k); return b && m ? b.labels[+m[1]] : k; }); }); done(r); }).catch(function (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; });
+      STL.bigCharts.api('/api/engine/' + BIG.ds + '/chart', Object.assign({ kind: 'fair', y: FS.y, factor: FS.f, adjusters: FS.adj, nozero: FS.noZero, bands: edges, yspec: yspec() }, sc)).then(function (r) { r.cells.forEach(function (c) { c.k = c.k.map(function (k, di) { var b = bb[dimCols[di]], m = /^b(\d+)$/.exec(k); return b && m ? b.labels[+m[1]] : k; }); }); done(r); }).catch(function (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; });
     } else {
-      setTimeout(function () { try { done(F.cellsFromRows(RD(), viewIdx(), { y: FS.y, factor: FS.f, adjusters: FS.adj, noZero: FS.noZero, bands: allBands(fBands) })); } catch (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; } }, 20);
+      setTimeout(function () { try { done(F.cellsFromRows(RD(), viewIdx(), { y: FS.y, factor: FS.f, adjusters: FS.adj, noZero: FS.noZero, bands: allBands(fBands), yFn: yFn() })); } catch (e) { if ($('frOut')) $('frOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; } }, 20);
     }
   }
   var KIND = { reversal: ['#d6456b', '⚠'], explained: ['#e8913a', 'ℹ'], masked: ['#3b82c4', '🔍'], shrinks: ['#e8913a', 'ℹ'], holds: ['#14a38b', '✔'], weak: ['#e8913a', '≈'], weak_explained: ['#e8913a', 'ℹ'], none: ['#8f9aa8', '≈'], raw: ['#8f9aa8', 'ℹ'], error: ['#d6456b', '⚠'] };
+  function fpt(x) { return (x > 0 ? '+' : x < 0 ? '−' : '') + (Math.abs(x) < 1 ? Math.abs(x).toFixed(2) : Math.abs(x).toFixed(1)); }
   function f2(x) { return (x > 0 ? '+' : x < 0 ? '−' : '') + (Math.abs(x) >= 100 ? CH.indian(Math.round(Math.abs(x))) : Math.abs(x).toFixed(2)); }
   function pTxt(p) { return p < 0.001 ? T('clearly real', 'स्पष्ट रूप से असली') : (p < 0.01 ? T('real', 'असली') : (p < 0.05 ? T('probably real', 'शायद असली') : T('could be chance', 'संयोग हो सकता है'))); }
   function show(R) {
     F.last = R;                                                                   // kept for the copy button and for checking the numbers from outside
     var out = $('frOut'); if (!out) return; disposeChart();
-    var H = HD(), v = F.verdict(R, hi()), k = KIND[v.kind] || KIND.raw, yName = H[FS.y], fName = H[FS.f];
+    var H = HD(), v = F.verdict(R, hi()), k = KIND[v.kind] || KIND.raw, yName = yLabel(), fName = H[FS.f], P = !!(R && R.pct), M = function (x) { return P ? x.toFixed(1) + '%' : f2(x).replace(/^\+/, ''); }, D = function (x) { return P ? fpt(x) : f2(x); };
     var html = '<div class="fr-verdict" style="border-color:' + k[0] + '"><b><span class="fr-ic" style="background:' + k[0] + '">' + k[1] + '</span>' + esc(v.title) + '</b><p>' + esc(v.text) + '</p></div>';
     if (R && !R.error) {
       var meta = FS.meta || {}, z = meta.zeroSkipped;
-      html += '<table class="big-tbl fr-tbl"><tr><th>' + esc(fName) + '</th><th>' + T('Rows', 'पंक्तियाँ') + '</th><th>' + T('Average ', 'औसत ') + esc(yName) + '</th><th>' + T('Difference as they are, against ', 'जैसे हैं वैसे अंतर, इनके मुकाबले ') + esc(R.ref) + '</th><th>' + T('Difference among similar rows (most likely range)', 'समान पंक्तियों में अंतर (संभावित सीमा)') + '</th></tr>' +
-        '<tr><td><b>' + esc(R.ref) + '</b> <em>(' + T('compared against', 'इसके मुकाबले तुलना') + ')</em></td><td class="num">' + CH.indian(R.groups.filter(function (g) { return g.level === R.ref; })[0].n) + '</td><td class="num">' + f2(R.groups.filter(function (g) { return g.level === R.ref; })[0].mean).replace(/^\+/, '') + '</td><td>–</td><td>–</td></tr>' +
-        R.levels.map(function (l) { return '<tr' + (l === R.main ? ' class="fr-main"' : '') + '><td><b>' + esc(l.level) + '</b></td><td class="num">' + CH.indian(l.n) + '</td><td class="num">' + f2(l.mean).replace(/^\+/, '') + '</td><td class="num">' + f2(l.raw.diff) + ' <em>(' + pTxt(l.raw.p) + ')</em></td><td class="num">' + (l.adj ? (function () { var tight = (l.adj.hi - l.adj.lo) < 0.02 && Math.abs(l.adj.diff) < 1, ff = tight ? function (x) { return (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(3); } : f2; return '<b>' + ff(l.adj.diff) + '</b> <em>(' + ff(l.adj.lo) + ' … ' + ff(l.adj.hi) + ') — ' + pTxt(l.adj.p) + '</em>'; })() : (l.notComparable ? '<em title="' + esc(T('No case of the comparison group is in the same ' + (R.adjusters[0] || 'group') + ' as these cases, so the difference cannot be separated from it.', 'तुलना समूह का कोई प्रकरण इनके जैसे ही समूह में नहीं है, इसलिए अंतर को उससे अलग नहीं किया जा सकता।')) + '">' + T('cannot be compared', 'तुलना संभव नहीं') + (l.only && l.only.length ? ' — ' + T('only in ', 'केवल ') + esc(l.only.join(', ')) : '') + '</em>' : '–')) + '</td></tr>'; }).join('') + '</table>';
-      if (z) html += '<div class="rp-warn"><div>ℹ ' + CH.indian(z) + T(' rows have 0 in “' + yName + '” and are left out.', ' पंक्तियों में “' + yName + '” में 0 है और छोड़ी गई हैं।') + '</div></div>';
+      html += '<table class="big-tbl fr-tbl"><tr><th>' + esc(fName) + '</th><th>' + T('Rows', 'पंक्तियाँ') + '</th><th>' + (P ? T('How often ', 'कितनी बार ') : T('Average ', 'औसत ')) + esc(yName) + '</th><th>' + T('Difference as they are, against ', 'जैसे हैं वैसे अंतर, इनके मुकाबले ') + esc(R.ref) + (P ? T(' (points)', ' (अंक)') : '') + '</th><th>' + T('Difference among similar rows (most likely range)', 'समान पंक्तियों में अंतर (संभावित सीमा)') + '</th></tr>' +
+        '<tr><td><b>' + esc(R.ref) + '</b> <em>(' + T('compared against', 'इसके मुकाबले तुलना') + ')</em></td><td class="num">' + CH.indian(R.groups.filter(function (g) { return g.level === R.ref; })[0].n) + '</td><td class="num">' + M(R.groups.filter(function (g) { return g.level === R.ref; })[0].mean) + '</td><td>–</td><td>–</td></tr>' +
+        R.levels.map(function (l) { return '<tr' + (l === R.main ? ' class="fr-main"' : '') + '><td><b>' + esc(l.level) + '</b></td><td class="num">' + CH.indian(l.n) + '</td><td class="num">' + M(l.mean) + '</td><td class="num">' + D(l.raw.diff) + ' <em>(' + pTxt(l.raw.p) + ')</em></td><td class="num">' + (l.adj ? (function () { var tight = (l.adj.hi - l.adj.lo) < 0.02 && Math.abs(l.adj.diff) < 1, ff = P ? fpt : (tight ? function (x) { return (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(3); } : f2); return '<b>' + ff(l.adj.diff) + '</b> <em>(' + ff(l.adj.lo) + ' … ' + ff(l.adj.hi) + ') — ' + pTxt(l.adj.p) + '</em>'; })() : (l.notComparable ? '<em title="' + esc(T('No case of the comparison group is in the same ' + (R.adjusters[0] || 'group') + ' as these cases, so the difference cannot be separated from it.', 'तुलना समूह का कोई प्रकरण इनके जैसे ही समूह में नहीं है, इसलिए अंतर को उससे अलग नहीं किया जा सकता।')) + '">' + T('cannot be compared', 'तुलना संभव नहीं') + (l.only && l.only.length ? ' — ' + T('only in ', 'केवल ') + esc(l.only.join(', ')) : '') + '</em>' : '–')) + '</td></tr>'; }).join('') + '</table>';
+      if (z && !P) html += '<div class="rp-warn"><div>ℹ ' + CH.indian(z) + T(' rows have 0 in “' + yName + '” and are left out.', ' पंक्तियों में “' + yName + '” में 0 है और छोड़ी गई हैं।') + '</div></div>';
       if (R.strata && R.strata.length > 1 && R.driver) {
         html += '<div class="prj-sub">' + T('Among similar rows: within each ', 'समान पंक्तियों में: हर ') + esc(R.driver.name) + '</div><div id="frChart" class="fr-chart"></div>';
         html += '<details class="rp-settings"><summary>' + T('Who is in each group', 'हर समूह में कौन है') + '</summary><table class="big-tbl"><tr><th>' + esc(R.driver.name) + '</th><th>' + T('Share of ', 'हिस्सा: ') + esc(R.mix.main) + '</th><th>' + T('Share of ', 'हिस्सा: ') + esc(R.mix.ref) + '</th></tr>' + R.mix.rows.map(function (r) { return '<tr><td>' + esc(r.level) + '</td><td class="num">' + Math.round(r.shareMain * 100) + '%</td><td class="num">' + Math.round(r.shareRef * 100) + '%</td></tr>'; }).join('') + '</table></details>';
       }
-      html += '<details class="rp-settings"><summary>' + T('How was this worked out? (for the curious)', 'यह कैसे निकाला गया? (जिज्ञासु के लिए)') + '</summary><div class="fr-how">' + (R.shapeNote ? '<b>' + esc(R.shapeNote) + '</b> ' : '') + (R.linear ? esc(R.linear === 'curve' ? T('Number columns are adjusted for as curves (a slope and a bend each, every row on its exact value); the plain gaps, the chart and the make-up table use 5 bands. ', 'संख्या कॉलम वक्र के रूप में समायोजित (हर एक की ढलान और मोड़, हर पंक्ति अपने सटीक मान पर); सीधे अंतर, चार्ट और बनावट तालिका 5 समूहों से। ') : T('Number columns are adjusted for as straight lines (one slope each, every row on its exact value); the plain gaps, the chart and the make-up table use 5 bands. ', 'संख्या कॉलम सीधी रेखा के रूप में समायोजित (हर एक की एक ढलान, हर पंक्ति अपने सटीक मान पर); सीधे अंतर, चार्ट और बनावट तालिका 5 समूहों से। ')) : '') + T('In plain words: the app first compares the groups as they are, then compares only rows that are alike in the factors above, so that a difference caused by who is in each group is not mistaken for a real one. How it is calculated: a linear regression of ' + yName + ' on the group and on each “adjust for” column (every value a 0/1 column), with robust (HC3) standard errors; the 95% range is ± 1.96 standard errors. It shows an association, not a cause. Adjusted for: ' + (R.adjusters.join(', ') || 'nothing') + '. R² = ' + R.r2.toFixed(2) + '.', 'सरल शब्दों में: ऐप पहले समूहों की जैसे हैं वैसे तुलना करता है, फिर केवल उन पंक्तियों की जो ऊपर के कारकों में समान हैं, ताकि इस वजह से आया अंतर कि हर समूह में कौन है, असली अंतर न समझ लिया जाए। गणना कैसे होती है: ' + yName + ' का रैखिक रिग्रेशन — समूह और हर “समायोजन” कॉलम पर (हर मान एक 0/1 कॉलम), मज़बूत (HC3) मानक त्रुटि के साथ; 95% सीमा = ± 1.96 मानक त्रुटि। यह संबंध दिखाता है, कारण नहीं। समायोजन: ' + (R.adjusters.join(', ') || 'कोई नहीं') + '. R² = ' + R.r2.toFixed(2) + '।') + '</div></details>';
+      html += '<details class="rp-settings"><summary>' + T('How was this worked out? (for the curious)', 'यह कैसे निकाला गया? (जिज्ञासु के लिए)') + '</summary><div class="fr-how">' + (R.shapeNote ? '<b>' + esc(R.shapeNote) + '</b> ' : '') + (R.linear ? esc(R.linear === 'curve' ? T('Number columns are adjusted for as curves (a slope and a bend each, every row on its exact value); the plain gaps, the chart and the make-up table use 5 bands. ', 'संख्या कॉलम वक्र के रूप में समायोजित (हर एक की ढलान और मोड़, हर पंक्ति अपने सटीक मान पर); सीधे अंतर, चार्ट और बनावट तालिका 5 समूहों से। ') : T('Number columns are adjusted for as straight lines (one slope each, every row on its exact value); the plain gaps, the chart and the make-up table use 5 bands. ', 'संख्या कॉलम सीधी रेखा के रूप में समायोजित (हर एक की एक ढलान, हर पंक्ति अपने सटीक मान पर); सीधे अंतर, चार्ट और बनावट तालिका 5 समूहों से। ')) : '') + T('In plain words: the app first compares the groups as they are, then compares only rows that are alike in the factors above, so that a difference caused by who is in each group is not mistaken for a real one. How it is calculated: a linear regression of ' + (P ? '“' + yName + '” (100 where it is true, 0 where not, so a gap is in percentage points)' : yName) + ' on the group and on each “adjust for” column (every value a 0/1 column), with robust (HC3) standard errors; the 95% range is ± 1.96 standard errors. It shows an association, not a cause. Adjusted for: ' + (R.adjusters.join(', ') || 'nothing') + '. R² = ' + R.r2.toFixed(2) + '.', 'सरल शब्दों में: ऐप पहले समूहों की जैसे हैं वैसे तुलना करता है, फिर केवल उन पंक्तियों की जो ऊपर के कारकों में समान हैं, ताकि इस वजह से आया अंतर कि हर समूह में कौन है, असली अंतर न समझ लिया जाए। गणना कैसे होती है: ' + yName + ' का रैखिक रिग्रेशन — समूह और हर “समायोजन” कॉलम पर (हर मान एक 0/1 कॉलम), मज़बूत (HC3) मानक त्रुटि के साथ; 95% सीमा = ± 1.96 मानक त्रुटि। यह संबंध दिखाता है, कारण नहीं। समायोजन: ' + (R.adjusters.join(', ') || 'कोई नहीं') + '. R² = ' + R.r2.toFixed(2) + '।') + '</div></details>';
       html += '<div class="prj-row" style="margin-top:8px;flex-wrap:wrap"><button class="tb-btn" id="frCopy">' + T('Copy the finding', 'निष्कर्ष कॉपी करें') + '</button><button class="tb-btn" id="frChartBtn">📊 ' + T('Open as a chart', 'चार्ट के रूप में खोलें') + '</button></div>';
     }
     out.innerHTML = html;
     if ($('frCopy')) $('frCopy').onclick = function () { var txt = v.title + '\n' + v.text; (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(T('Copied', 'कॉपी हुआ'), 'success'); }).catch(function () { toast(T('Could not copy. Select the text and press Ctrl+C.', 'कॉपी नहीं हुआ। पाठ चुनकर Ctrl+C दबाएँ।'), 'warning'); }); };
-    if ($('frChartBtn')) $('frChartBtn').onclick = function () { var dr = R.driver ? R.driver.dim : -1, adjCols = FS.adj; var spec = dr > 0 ? { x: adjCols[dr - 1], g: FS.f, ys: [{ col: FS.y, fn: 'avg' }], sort: 'natural', noZero: FS.noZero } : { x: FS.f, ys: [{ col: FS.y, fn: 'avg' }], noZero: FS.noZero }; var d = $('fairDialog'); if (d) d.remove(); STL.openChartStudio({ type: 'column', spec: spec }); };
+    if ($('frChartBtn')) $('frChartBtn').onclick = function () { var dr = R.driver ? R.driver.dim : -1, adjCols = FS.adj, yy = FS.yCat ? { col: FS.y, fn: 'pct', op: '=', value: FS.yCat.value } : { col: FS.y, fn: 'avg' }; var spec = dr > 0 ? { x: adjCols[dr - 1], g: FS.f, ys: [yy], sort: 'natural', noZero: FS.noZero } : { x: FS.f, ys: [yy], noZero: FS.noZero }; var d = $('fairDialog'); if (d) d.remove(); STL.openChartStudio({ type: 'column', spec: spec }); };
     if (R && !R.error && R.strata && R.strata.length > 1 && R.driver) drawStrata(R, yName, fName);
   }
   function drawStrata(R, yName, fName) {
@@ -421,9 +443,9 @@
       var el = $('frChart'); if (!el) return;
       var env = CH.kit.envOf({ hi: hi() }), K = CH.kit, o = K.base({ toolbox: false }, env), cols = CH.PALETTES.aurora;
       o.tooltip.trigger = 'axis'; o.tooltip.axisPointer = { type: 'shadow' }; o.grid = { left: 12, right: 18, top: 24, bottom: 52, containLabel: true };
-      o.xAxis = K.catAxis(env, R.strata.map(function (s) { return s.level; })); o.yAxis = K.valueAxis(env, T('Average ', 'औसत ') + yName, null, { scale: true });
+      o.xAxis = K.catAxis(env, R.strata.map(function (s) { return s.level; })); o.yAxis = K.valueAxis(env, (R.pct ? T('How often ', 'कितनी बार ') : T('Average ', 'औसत ')) + yName + (R.pct ? ' (%)' : ''), null, { scale: true });
       o.legend = { bottom: 4, textStyle: { color: env.text }, icon: 'roundRect', itemWidth: 12, itemHeight: 8 };
-      var lab = { show: true, color: env.sub, formatter: function (p) { return p.value.toFixed(2); } };
+      var lab = { show: true, color: env.sub, formatter: function (p) { return R.pct ? p.value.toFixed(1) + '%' : p.value.toFixed(2); } };
       var mk = function (name, color, key, pos) { return { name: name, type: 'line', symbol: 'circle', symbolSize: 11, lineStyle: { width: 3, color: color }, itemStyle: { color: color }, label: { show: true, position: pos, color: color, fontWeight: 600, formatter: lab.formatter }, data: R.strata.map(function (s) { return s[key]; }) }; };
       o.series = [mk(R.ref, cols[0], 'meanRef', 'bottom'), mk(R.main.level, cols[1], 'meanMain', 'top')];
       disposeChart(); chart = echarts.init(el, null, { renderer: 'canvas' }); chart.setOption(o);

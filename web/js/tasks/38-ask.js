@@ -165,7 +165,7 @@
       if (!fy && ordered.length >= 2 && ordered.some(function (c) { return c.cat && (!c.numeric || c.p.lowInt) && !c.vals.every(function (v) { return /^\d+$/.test(v); }); })) {   // a text outcome ("does a ban change burnout")
         var oc = ordered.filter(function (c) { return c.cat && BAD.test((c.vals || []).join(' ').split(' ').filter(function (x) { return BAD.test(x); })[0] || ''); })[0];
         var other = ordered.filter(function (c) { return c !== oc; })[0];
-        if (oc && other) { var ov = pickValue(oc, valOf(oc)); return done({ intent: 'why', y: oc.i, yCat: { col: oc.i, value: ov }, f: other.i, conf: 0.6, say: '“' + oc.name + '” is a category, so I will show what goes with how often it is “' + ov + '” (this includes “' + other.name + '”).' }); }
+        if (oc && other) { var ov = pickValue(oc, valOf(oc)); return done({ intent: 'fair', y: oc.i, yCat: { col: oc.i, value: ov }, f: other.i, conf: 0.8, say: 'You want to know whether “' + other.name + '” really makes a difference to how often “' + oc.name + '” is “' + ov + '” (compared fairly).' }); }
       }
       if (fy && ff) return done({ intent: 'fair', y: fy.i, f: ff.i, conf: 0.85, say: 'You want to know whether “' + ff.name + '” really makes a difference to “' + fy.name + '” (compared fairly).' });
       if (fy) return done({ intent: 'ask_f', y: fy.i, conf: 0.4, say: 'What do you want to compare “' + fy.name + '” across?' });
@@ -283,7 +283,7 @@
     var C = STL.charts, I = res;
     try {
       if (I.intent === 'why') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openDrivers({ y: I.y, yCat: I.yCat || null }); });
-      else if (I.intent === 'fair') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openFair({ y: I.y, f: I.f }); });
+      else if (I.intent === 'fair') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openFair({ y: I.y, f: I.f, yCat: I.yCat || undefined }); });
       else if (I.intent === 'why_change') {
         open(T('Add the change and explain it', 'बदलाव जोड़ें और समझाएँ'), function () { close(); STL.addColumn({ a: I.pair.after, op: 'minus', b: I.pair.before, name: I.pair.name }, function (ni) { STL.openDrivers({ y: ni }); }); });
       } else if (I.intent === 'change') {

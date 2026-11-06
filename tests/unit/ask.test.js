@@ -18,7 +18,7 @@ t('Does paid subscription change GPA?', 'fair', 'Post_Semester_GPA', 'Paid_Subsc
 t('Is Post GPA different for each major?', 'fair', 'Post_Semester_GPA', 'Major_Category');
 t('what is the effect of study hours on post GPA', 'fair', 'Post_Semester_GPA', 'Traditional_Study_Hours');
 t('compare skill retention between beginner and advanced', 'fair', 'Skill_Retention_Score', 'Prompt_Engineering_Skill');
-t('Does a strict ban affect burnout?', 'why', 'Burnout_Risk_Level', 'Institutional_Policy');
+t('Does a strict ban affect burnout?', 'fair', 'Burnout_Risk_Level', 'Institutional_Policy', r => assert.equal(r.yCat.value, 'High'));
 t('Average post semester GPA by year of study', 'agg_by', 'Post_Semester_GPA', 'Year_of_Study', r => assert.equal(r.fn, 'avg'));
 t('औसत post semester gpa year of study के अनुसार', 'agg_by', 'Post_Semester_GPA', 'Year_of_Study');
 t('total tool diversity by use case', 'agg_by', 'Tool_Diversity', 'Primary_Use_Case', r => assert.equal(r.fn, 'sum'));

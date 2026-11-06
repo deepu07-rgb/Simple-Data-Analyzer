@@ -50,6 +50,17 @@ const truth = { rare: rows.filter(r => r[0] === 'Rare').length, omHours: omega(r
   await ev(a => STL.openDrivers({ y: a }), c('Gain')); await page.waitForFunction(() => document.querySelector('#drOut table'), null, { timeout: 120000 }); await wait(500);
   const dep = await ev(() => Array.from(document.querySelectorAll('#drOut .big-note[style*="6d5bd0"]')).map(x => x.innerText));
   ok(dep.some(t => /Hours/.test(t) && /Use/.test(t) && /Y/.test(t)), '“It depends on …” finds that Hours matter only for Use = Y, from every row', dep);
+  // Fair comparison of a yes/no outcome on every row of the large file: Use X vs Y, among rows in the same Group (the rare one included)
+  await ev(a => STL.openFair({ y: a[0], f: a[1], adj: [a[2]], yCat: { col: a[0], value: 'High' } }), [c('Level'), c('Use'), c('Group')]);
+  await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict') && STL.fair.last && STL.fair.last.pct, null, { timeout: 120000 }); await wait(500);
+  const fr = await ev(() => ({ ref: STL.fair.last.ref, main: STL.fair.last.main.level, raw: STL.fair.last.main.raw.diff, adj: STL.fair.last.main.adj.diff, n: STL.fair.last.n }));
+  const known = rows.filter(r => r[3] !== ''), yes = r => r[3] === 'High' ? 100 : 0, grp = {}; known.forEach(r => { const o = grp[r[0]] || (grp[r[0]] = { n1: 0, s1: 0, n0: 0, s0: 0 }); if (r[2] === fr.main) { o.n1++; o.s1 += yes(r); } else { o.n0++; o.s0 += yes(r); } });
+  let num = 0, den = 0; Object.values(grp).forEach(o => { if (o.n1 && o.n0) { const w = o.n1 * o.n0 / (o.n1 + o.n0); num += w * (o.s1 / o.n1 - o.s0 / o.n0); den += w; } });
+  const mean = u => { const x = known.filter(r => r[2] === u); return x.reduce((a, r) => a + yes(r), 0) / x.length; };
+  ok(fr.n === known.length, 'Fair comparison of “Level = High” uses every row that has a level: ' + fr.n + ' = ' + known.length, fr);
+  ok(Math.abs(fr.raw - (mean(fr.main) - mean(fr.ref))) < 1e-6, 'plain gap in percentage points equals the calculation from the raw rows: ' + fr.raw.toFixed(4), [fr.raw, mean(fr.main) - mean(fr.ref)]);
+  ok(Math.abs(fr.adj - num / den) < 1e-6, 'gap among rows of the same Group (rare group included) equals the independent calculation: ' + fr.adj.toFixed(4) + ' vs ' + (num / den).toFixed(4));
+  await ev(() => document.getElementById('frX').click());
   ok(errors.length === 0, 'No JavaScript errors', errors); ok(external.length === 0, 'No request left the computer', external);
   await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); console.log(failures ? failures + ' FAILED' : 'ALL PASSED'); process.exit(failures ? 1 : 0);
 })().catch(x => { console.error(x); process.exit(1); });
