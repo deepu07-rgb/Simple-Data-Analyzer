@@ -30,3 +30,11 @@ test('जिले के अनुसार कुल बिल राशि gr
 test('छूट का बिल राशि पर क्या असर है: the discount is the group, the bill amount the measure', () => { const r = hask('छूट का बिल राशि पर क्या असर है'); assert.equal(r.intent, 'fair'); assert.equal(r.y, 8); assert.equal(r.f, 7); });
 test('कितने बिल में दर खाली है counts the empty rates, not the empty bill numbers', () => { const r = hask('कितने बिल में दर खाली है'); assert.equal(r.intent, 'count'); assert.deepEqual(conds(r), [{ col: 6, op: 'empty', value: '' }]); });
 test('कितने बिल थोक के हैं counts the wholesale bills', () => { const r = hask('कितने बिल थोक के हैं'); assert.equal(r.intent, 'count'); assert.deepEqual(conds(r), [{ col: 3, value: 'थोक' }]); });
+// mandi sheet (Hindi crop, English district / market, three price columns that share the word “भाव”)
+const MH = ['तारीख', 'राज्य', 'जिला (मूल नाम)', 'मंडी (मूल नाम)', 'फसल / वस्तु', 'न्यूनतम भाव (₹/क्विंटल)', 'अधिकतम भाव (₹/क्विंटल)', 'प्रमुख भाव (₹/क्विंटल)'];
+const mrows = Array.from({ length: 800 }, (_, i) => { const mn = 1000 + (i * 37) % 9000, mx = i % 5 === 0 ? mn : mn + 500; return ['2026-07-05', 'तमिलनाडु', 'D' + (i % 14), 'M' + (i % 25) + '(Sandhai )', 'फसल' + (i % 40), String(mn), String(mx), String(mn + (i % 5 === 0 ? 0 : 200))]; });
+const mcat = A.catalog(MH, mrows), mask = q => A.parse(q, MH, mrows, mcat);
+test('कितने जिले हैं counts the different districts', () => { const r = mask('कितने जिले हैं'); assert.equal(r.intent, 'distinct'); assert.equal(r.y, 2); });
+test('सबसे अधिक प्रमुख भाव किस फसल का है uses the modal price, not the maximum (“अधिक” is not “अधिकतम”)', () => { const r = mask('सबसे अधिक प्रमुख भाव किस फसल का है'); assert.equal(r.intent, 'top'); assert.equal(r.y, 7); assert.equal(r.x, 4); });
+test('फसल का प्रमुख भाव पर क्या असर है: the column with most words in common is the measure', () => { const r = mask('फसल का प्रमुख भाव पर क्या असर है'); assert.equal(r.intent, 'fair'); assert.equal(r.y, 7); assert.equal(r.f, 4); });
+test('rows where the maximum price equals the minimum price', () => { const r = mask('कितनी पंक्तियों में अधिकतम भाव और न्यूनतम भाव बराबर हैं'); assert.equal(r.intent, 'count'); assert.equal(r.conds[0].op, 'eqcol'); assert.deepEqual([r.conds[0].col, r.conds[0].col2].sort(), [5, 6]); });

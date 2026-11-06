@@ -93,7 +93,7 @@
       var tot = lv.reduce(function (a, l) { return a + l.n; }, 0), sy = lv.reduce(function (a, l) { return a + l.sy; }, 0), isInd = tot > 0 && lv.every(function (l) { return Math.abs(l.syy - l.sy) < 1e-9; }), implies = null;
       if (isInd && d.kind === 'cat' && lv.length === 2 && sy / tot > 0.005 && sy / tot < 0.995) lv.forEach(function (l) { if (l.n >= 0.005 * tot && (l.sy === 0 || l.sy === l.n)) implies = { label: l.label, yes: l.sy === l.n }; });
       return { col: d.col, name: d.name, kind: d.kind, omega2: om.omega2, eta2: om.eta2, k: om.k, n: om.n, high: big[0] || null, low: big[big.length - 1] || null, levels: big, bands: d.bands || null,
-               derived: fopt && fopt.partner === d.col ? null : implies ? { why: 'implies', label: implies.label, yes: implies.yes } : shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
+               derived: fopt && fopt.partner === d.col ? null : implies ? { why: 'implies', label: implies.label, yes: implies.yes } : shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 && (d.kind === 'num' || lv.length <= 12) ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
     });
     out.sort(function (a, b) { return b.omega2 - a.omega2; });
     return out;

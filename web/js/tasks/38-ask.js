@@ -13,7 +13,7 @@
 
   // ------------------------------------------------------------ words
   var STOP = {}; ('a an the of in on at to for from by with and or is are was were be been do does did can could will would should it its this that these those my our your their me we you they them i what which who whom how why when where whether any some all each every per than then there here as about into over under between among if not no yes please show tell give find me us get want need like using use used also more most much many very just only own words ' +
-    'का की के है हैं था थे थी को से में पर और या क्या कौन कैसे कितना कितने कितनी क्यों यह वह ये वे मेरे हमारे ने भी तो ही कि जो').split(' ').forEach(function (w) { if (w) STOP[w] = 1; });
+    'सबसे अधिक ज़्यादा ज्यादा कम किस का की के है हैं था थे थी को से में पर और या क्या कौन कैसे कितना कितने कितनी क्यों यह वह ये वे मेरे हमारे ने भी तो ही कि जो').split(' ').forEach(function (w) { if (w) STOP[w] = 1; });
   var KEEP = { 'no': 1, 'yes': 1 };
   function stem(w) { if (w.length > 3 && /[ऀ-ॿ]/.test(w)) return w.replace(/[ािीुूेैोौंँ]+$/, ''); if (w.length > 5 && /ies$/.test(w)) return w.slice(0, -3) + 'y'; if (w.length > 5 && /(ing|ed)$/.test(w)) return w.replace(/(ing|ed)$/, ''); if (w.length > 3 && /s$/.test(w) && !/ss$/.test(w)) return w.slice(0, -1); return w; }
   A.words = function (t) { return s(t).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9ऀ-ॿ]+/).filter(Boolean); };
@@ -183,7 +183,8 @@
       // Hindi: “X का Y पर असर” = the effect of X on Y (X is the group, Y the measure)
       var hiP = /(\S.*?)\s+(?:का|की|के)\s+(.+?)\s+पर\s+(?:क्या\s+)?(?:असर|प्रभाव)/.exec(q);
       if (hiP) { var g1 = A.words(hiP[1]).map(stem), g2 = A.words(hiP[2]).map(stem), hit = function (c, g) { return c.words.some(function (w) { return g.indexOf(w) >= 0; }); };
-        var cy = cat.filter(function (c) { return hit(c, g2) && !hit(c, g1) && (c.measure || c.numeric); })[0] || cat.filter(function (c) { return hit(c, g2); })[0], cx = cat.filter(function (c) { return hit(c, g1) && c !== cy; })[0];
+        var ov = function (c, g) { return c.words.filter(function (w) { return g.indexOf(w) >= 0; }).length; }, best = function (list, g) { return list.slice().sort(function (a, b) { return ov(b, g) - ov(a, g); })[0]; };
+        var cy = best(cat.filter(function (c) { return hit(c, g2) && !hit(c, g1) && (c.measure || c.numeric); }), g2) || best(cat.filter(function (c) { return hit(c, g2); }), g2), cx = best(cat.filter(function (c) { return hit(c, g1) && c !== cy; }), g1);
         if (cy && cx) { fy = cy; ff = cx; } }
       if (fy && ff) return done({ intent: 'fair', y: fy.i, f: ff.i, conf: 0.85, say: 'You want to know whether “' + ff.name + '” really makes a difference to “' + fy.name + '” (compared fairly).' });
       if (fy) return done({ intent: 'ask_f', y: fy.i, conf: 0.4, say: 'What do you want to compare “' + fy.name + '” across?' });
@@ -199,8 +200,9 @@
     // ---- distribution
     if (RX.dist.test(q) && nums.length) return done({ intent: 'dist', x: nums[0].i, conf: 0.85, say: 'You want to see how “' + nums[0].name + '” is spread.' });
     // ---- how many different … (distinct values of a column)
-    if (RX.distinct.test(q) && RX.count.test(q)) {
-      var dcol = named.filter(function (x) { return !valOf(x.c); }).sort(byPos)[0];
+    var plainMany = RX.count.test(q) && !RX.by.test(q) && !RX.distinct.test(q) && !vcols.length && !/\b(rows?|records?|entries|people|persons|cases|applicants?|bills?|students?)\b|पंक्ति|प्रविष्टि|बिल|रिकॉर्ड/i.test(q) && named.length && (named[0].c.cat || (named[0].c.p && !named[0].c.numeric && !named[0].c.p.unique)) && !/\b(empty|blank|missing)\b|खाली|रिक्त/i.test(q);
+    if ((RX.distinct.test(q) && RX.count.test(q)) || plainMany) {
+      var dcol = plainMany ? named.slice().sort(function (a, b) { return b.sc - a.sc || a.pos - b.pos; })[0] : named.filter(function (x) { return !valOf(x.c); }).sort(byPos)[0];
       if (!dcol) return done({ intent: 'none', conf: 0, say: 'I could not tell which column to count the different values of. Say its name, for example “how many different ' + (cat[0] ? cat[0].name : 'ID') + '”.' });
       return done({ intent: 'distinct', y: dcol.c.i, conds: vcols.filter(function (v) { return v.col !== dcol.c.i; }).map(function (v) { return { col: v.col, value: v.value }; }), conf: 0.85, say: 'You want to count how many different values “' + dcol.c.name + '” has' + (vcols.length ? ' among the rows where ' + vcols.filter(function (v) { return v.col !== dcol.c.i; }).map(function (v) { return '“' + headers[v.col] + '” = “' + v.value + '”'; }).join(' and ') : '') + '.' });
     }
@@ -214,6 +216,11 @@
     // ---- counts
     if (RX.count.test(q)) {
       var gb = cats.filter(function (c) { return !valOf(c); })[0] || gcols[0], fv = vcols, cm = RX.contain.exec(q), wcond = null;
+      var same = /\b(equal|equals|same|identical|match)\b|बराबर|समान|एक जैसे/i.test(q), mm = named.filter(function (x) { return x.c.measure || x.c.numeric; }).sort(function (a, b) { return b.sc - a.sc || a.pos - b.pos; }).slice(0, 2).sort(byPos);
+      if (same && mm.length === 2 && !fv.length) {                                                // “in how many rows is the maximum price equal to the minimum price”
+        used[mm[0].c.name.toLowerCase()] = 1;
+        return done({ intent: 'count', conds: [{ col: mm[0].c.i, op: 'eqcol', col2: mm[1].c.i, value: '' }], conf: 0.8, say: 'You want to count the rows where “' + mm[0].c.name + '” equals “' + mm[1].c.name + '”.' });
+      }
       if (cm && !/^(the|a|an|word|words|all|any)$/i.test(cm[2])) {                                  // "how many rows contain happy": the text column holds this word
         var isTxt = function (c) { return !c.cat && !c.numeric && !c.date && !c.p.serial && !c.p.unique && c.avgLen >= 12; }, tcol = cols.filter(isTxt)[0] || cat.filter(isTxt).sort(function (a, b) { return b.avgLen - a.avgLen; })[0] || cat.filter(function (c) { return !c.cat && !c.numeric && !c.date && /text|comment|remark|description|feedback|complaint|message|note|review|reason/i.test(c.name); })[0] || cat.filter(function (c) { return !c.catOk && !c.numeric && !c.date; }).sort(function (a, b) { return b.p.distinct - a.p.distinct; })[0];
         if (tcol) { wcond = { col: tcol.i, value: cm[2].toLowerCase(), op: 'word' }; used[cm[2].toLowerCase()] = 1; }
@@ -298,7 +305,7 @@
   function nums(col) { var C = STL.charts, out = []; S.R.forEach(function (r) { var x = C.num(r[col]); if (x !== null) out.push(x); }); return out; }
   function rowsWhere(conds) {
     return S.R.filter(function (r) { return (conds || []).every(function (c) {
-      var v = String(r[c.col] == null ? '' : r[c.col]); if (c.op === 'empty') return v.trim() === ''; if (c.op === 'word') return v.toLowerCase().replace(/[^a-z0-9ऀ-ॿ']+/g, ' ').split(' ').indexOf(c.value) >= 0; if (c.op === 'contains') return v.toLowerCase().indexOf(c.value) >= 0; return v.trim() === c.value;
+      var v = String(r[c.col] == null ? '' : r[c.col]); if (c.op === 'eqcol') { var a1 = STL.charts.num(r[c.col]), b1 = STL.charts.num(r[c.col2]); return a1 !== null && b1 !== null && a1 === b1; } if (c.op === 'empty') return v.trim() === ''; if (c.op === 'word') return v.toLowerCase().replace(/[^a-z0-9ऀ-ॿ']+/g, ' ').split(' ').indexOf(c.value) >= 0; if (c.op === 'contains') return v.toLowerCase().indexOf(c.value) >= 0; return v.trim() === c.value;
     }); });
   }
   function mean(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; }

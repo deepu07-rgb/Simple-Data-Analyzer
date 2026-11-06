@@ -294,6 +294,9 @@ class Engine:
                 parts.append(f"{_num(i)} {sym} ?"); params.append(float(v))
             elif op == "between":
                 parts.append(f"{_num(i)} BETWEEN ? AND ?"); params += [float(v), float(v2)]
+            elif op == "eqcol":                                             # two number columns hold the same value in the row
+                j = self._check_col(d, c.get("col2"))
+                extra.append(f"({_num(i)} = {_num(j)})")
             elif op == "empty":
                 parts.append(f"({c} IS NULL OR trim({c}) = '')")
             elif op == "notempty":

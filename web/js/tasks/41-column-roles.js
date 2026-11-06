@@ -25,7 +25,8 @@
     var C = root.STL && STL.charts;
     return prof.map(function (p, i) {
       var name = s(headers[i]), blankName = /^Column \d+$/.test(name), avgy = C && C.avgy ? C.avgy(p) : false, L = avgLen && avgLen[i] || 0, out;
-      if (p.serial || (blankName && (p.unique || p.numeric === false && p.distinct > 0.9 * Math.max(p.filled, 1)))) out = { role: 'rowno', doubt: false, why: 'its values run 1, 2, 3 … one per row' };
+      if (!p.serial && p.filled > 1 && p.distinct === 1) out = { role: 'ignore', doubt: false, base: p.numeric ? 'amount' : 'category', why: 'the same value in every row: it tells nothing' };
+      else if (p.serial || (blankName && (p.unique || p.numeric === false && p.distinct > 0.9 * Math.max(p.filled, 1)))) out = { role: 'rowno', doubt: false, why: 'its values run 1, 2, 3 … one per row' };
       else if (p.date && !p.numeric) out = { role: 'date', doubt: false };
       else if (p.numeric) {
         if (p.unique || p.idLike) out = { role: 'id', doubt: false, why: 'a different whole number in every row' };

@@ -799,7 +799,7 @@
   CH.groupColumns = function (prof, nums, rows, idx) {
     var M = STL.merge;
     var cats = prof.filter(function (p) {
-      var named = NAME_GROUP.test(p.name), lim = named ? 300 : 40;
+      var named = NAME_GROUP.test(p.name), lim = named ? 300 : (p.filled >= 10 * p.distinct ? 150 : 40);          // a group that averages 10+ rows is a real grouping
       return ((!p.numeric && !p.date && !p.list) || p.lowInt) && !p.unique && !(p.code && !p.lowInt) && p.distinct >= 2 && p.distinct <= lim && p.fill >= 0.6;
     });
     // derived columns: drop a category that only restates a number, then one of two that mean the same thing

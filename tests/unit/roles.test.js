@@ -38,3 +38,7 @@ test('a year / month / day is a period to group by, never an amount; bpm is aver
   assert.equal(g[0].role, 'category'); assert.equal(g[1].role, 'category'); assert.equal(g[2].role, 'measure');
   assert.ok(g[3].doubt && /1 cell is not a number \(e\.g\. “BPM110/.test(g[3].why), JSON.stringify(g[3]));
 });
+test('a column with the same value in every row is “ignore”: it tells nothing', () => {
+  const Hc = ['date', 'state', 'qty'], rs = Array.from({ length: 300 }, (_, i) => ['2026-07-05', 'तमिलनाडु', String(1 + (i * 7) % 90)]), ix = rs.map((_, i) => i), pf = CH.profile(Hc, rs, ix, true), g = R.guess(Hc, pf, [10, 8, 2]);
+  assert.equal(g[0].role, 'ignore'); assert.equal(g[1].role, 'ignore'); assert.notEqual(g[2].role, 'ignore');
+});
