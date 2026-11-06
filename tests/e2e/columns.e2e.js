@@ -54,6 +54,14 @@ console.log('text file', (fs.statSync(TXT).size / 1e6).toFixed(1), 'MB');
   await page.click('#rcOk'); await wait(800);
   await ev(() => STL.openAsk()); await page.waitForSelector('#akQ'); await page.fill('#akQ', 'average label'); await page.press('#akQ', 'Enter'); await wait(2500);
   const ans = await ev(() => document.getElementById('akOut').innerText.replace(/\s+/g, ' ')); ok(/looks like a code/.test(ans), 'the answer still warns that label is a code', ans);
+  // text encodings: an older Windows (cp1252) file and a UTF-16 file open with their accents; a file damaged on the way is flagged
+  const ENC = [['w.csv', Buffer.from('Name,Amount\nBeyonc\xe9,5\nZo\xeb,6\nJos\xe9,7\n', 'latin1')], ['u.csv', Buffer.concat([Buffer.from([0xFF, 0xFE]), Buffer.from('Name,Amount\nBeyoncé,5\nZoë,6\nJosé,7\n', 'utf16le')])], ['d.csv', Buffer.from('Name,Amount\nTaylor\xef\xbf\xbd\xef\xbf\xbds,5\nX\xe9,6\nY,7\nZ,8\nQ,9\nR,1\nS,2\n', 'latin1')]];
+  await ev(() => BIG.exit()); const got = [];
+  for (const [n, b] of ENC) { fs.writeFileSync(path.join(dir, n), b); await page.setInputFiles('#fileInput', path.join(dir, n)); await wait(1500); got.push(await ev(() => rawData.map(r => r[0]).join('|'))); }
+  ok(got[0] === 'Beyoncé|Zoë|José', 'a Windows-1252 file keeps its accents: ' + got[0], got); ok(got[1] === 'Beyoncé|Zoë|José', 'a UTF-16 file keeps its accents: ' + got[1], got);
+  ok(/\uFFFD/.test(got[2]) && !/ï¿½/.test(got[2]), 'a file damaged on the way is not turned into more nonsense: ' + got[2], got);
+  await ev(() => STL.openColumnCheck()); await page.waitForSelector('#colRolesDialog'); const dm = await ev(() => document.getElementById('colRolesDialog').innerText); ok(/damaged characters/.test(dm), 'the column check says a column holds damaged characters'); await ev(() => document.getElementById('rcX').click());
+  await page.setInputFiles('#fileInput', TXT); await page.waitForFunction(() => window.BIG && BIG.active && BIG.profile, null, { timeout: 60000 }); await wait(1500);
   await ev(() => STL.openDrivers({})); await page.waitForFunction(() => document.querySelector('#drUsed'), null, { timeout: 90000 });
   const used = await ev(() => document.getElementById('drUsed').innerText); ok(/What this used: .*label.*code.*125,?000? rows|What this used: .*label.* rows/.test(used.replace(/,/g, '')) && /your column check applied/.test(used), 'an answer says what it used: columns, their roles, rows read, and that the column check applied', used);
   ok(errors.length === 0, 'No JavaScript errors', errors); ok(external.length === 0, 'No request left the computer', external);

@@ -145,9 +145,24 @@ function processFile(file) {
   } else if (ext === 'xls') {
     readWorkbookInBrowser(file);
   } else {
+    // UTF-8 (with or without a BOM), UTF-16 (Excel "Unicode text") or, when the bytes are not valid UTF-8, the Windows-1252 of older Excel files:
+    // reading everything as UTF-8 turned é, ñ, ’ into ��� (the Spotify file)
     const reader = new FileReader();
-    reader.onload = (e) => parseCSVTSV(e.target.result);
-    reader.readAsText(file);
+    reader.onload = (e) => parseCSVTSV(decodeTextFile(e.target.result));
+    reader.readAsArrayBuffer(file);
+  }
+}
+function decodeTextFile(buf) {
+  const u = new Uint8Array(buf);
+  try {
+    if (u[0] === 0xFF && u[1] === 0xFE) return new TextDecoder('utf-16le').decode(u.subarray(2));
+    if (u[0] === 0xFE && u[1] === 0xFF) return new TextDecoder('utf-16be').decode(u.subarray(2));
+    return new TextDecoder('utf-8', { fatal: true }).decode(u).replace(/^\uFEFF/, '');
+  } catch (e) {
+    // a file that already holds the replacement character (EF BF BD) was UTF-8 once and has been damaged on the way: keep it as UTF-8;
+    // otherwise it is an older Windows file
+    let damaged = false; for (let i = 0; i + 2 < u.length; i++) { if (u[i] === 0xEF && u[i + 1] === 0xBF && u[i + 2] === 0xBD) { damaged = true; break; } }
+    try { return new TextDecoder(damaged ? 'utf-8' : 'windows-1252').decode(u).replace(/^\uFEFF/, ''); } catch (e2) { return new TextDecoder('utf-8').decode(u); }
   }
 }
 

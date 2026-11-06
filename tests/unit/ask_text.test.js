@@ -14,3 +14,10 @@ test('a word together with a code: “label 4”', () => { const r = ask('how ma
 test('“commonest words” opens the word tool', () => { const r = ask('what are the most common words'); assert.equal(r.intent, 'tool'); assert.equal(r.tool, 'words'); });
 test('“mention” works too', () => { const r = ask('how many mention lonely'); assert.deepEqual(conds(r), [{ col: 1, value: 'lonely', op: 'word' }]); });
 test('“label 1” is not read as the column named “Column 1”', () => { const r = ask('how many rows containing happy have label 1'); assert.deepEqual(conds(r).sort((a, b) => a.col - b.col), [{ col: 1, value: 'happy', op: 'word' }, { col: 2, value: '1' }]); });
+// the column written after “by” is the “by” column, also with many values or a year (Spotify file)
+const H2 = ['track_name', 'artist(s)_name', 'artist_count', 'released_year', 'released_month', 'streams', 'mode'];
+const AR = ['Taylor Swift', 'The Weeknd', 'Ed Sheeran', 'Bad Bunny', 'Drake', 'Dua Lipa', 'Harry Styles', 'SZA', 'Doja Cat', 'Lizzo', 'Latto', 'Olivia Rodrigo', 'Karol G', 'Feid', 'Arctic Monkeys'];
+const rows2 = Array.from({ length: 900 }, (_, i) => ['Song ' + i, AR[i % AR.length] + (i % 40 === 0 ? ' & guest ' + i : ''), String(1 + i % 3), String(1990 + i % 34), String(1 + i % 12), String(1e6 + Math.floor(rnd() * 9e8)), i % 2 ? 'Major' : 'Minor']);
+const cat2 = A.catalog(H2, rows2), ask2 = q => A.parse(q, H2, rows2, cat2);
+test('total streams by artist(s)_name uses the artist column, not artist_count', () => { const r = ask2('total streams by artist(s)_name'); assert.equal(r.intent, 'agg_by'); assert.equal(r.x, 1); assert.equal(r.fn, 'sum'); });
+test('average streams by released_year uses the year, not the month', () => { const r = ask2('average streams by released_year'); assert.equal(r.intent, 'agg_by'); assert.equal(r.x, 3); });

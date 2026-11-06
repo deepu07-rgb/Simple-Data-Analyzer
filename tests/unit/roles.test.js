@@ -31,3 +31,10 @@ test('a measurement chosen for a row-number-like column makes it a measure', () 
   const H4 = H.map(h => h + '   '), roles = G.map(g => g.role); roles[0] = 'measure'; R.confirm(H4, roles, G.map(g => g.role));
   const p = CH.profile(H4, rows, idx)[0]; assert.ok(p.numeric && !p.serial && CH.isMeasure(p));
 });
+test('a year / month / day is a period to group by, never an amount; bpm is averaged', () => {
+  const Hs = ['released_year', 'released_day', 'bpm', 'streams'];
+  const rs = Array.from({ length: 900 }, (_, i) => [String(1950 + i % 74), String(1 + i % 31), String(70 + (i * 7) % 130), i === 5 ? 'BPM110KeyAModeMajorDanceability53' : String(1e6 + (i * 99991) % 900000000)]);
+  const ix = rs.map((_, i) => i), pf = CH.profile(Hs, rs, ix, true), g = R.guess(Hs, pf, Hs.map(() => 5));
+  assert.equal(g[0].role, 'category'); assert.equal(g[1].role, 'category'); assert.equal(g[2].role, 'measure');
+  assert.ok(g[3].doubt && /1 cell is not a number \(e\.g\. “BPM110/.test(g[3].why), JSON.stringify(g[3]));
+});

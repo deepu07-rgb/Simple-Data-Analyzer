@@ -15,12 +15,13 @@
   R.ROLES = [['rowno', 'Row number (ignored)', 'पंक्ति क्रमांक (छोड़ा जाएगा)'], ['id', 'ID or reference number (ignored)', 'आईडी / संदर्भ संख्या (छोड़ी जाएगी)'], ['category', 'Category (group by it)', 'श्रेणी (इससे समूह बनाएँ)'],
     ['code', 'Code with a few values (label, status, grade)', 'कुछ मानों वाला कोड (लेबल, स्थिति, ग्रेड)'], ['amount', 'Amount (add up)', 'राशि (जोड़ें)'], ['measure', 'Measurement (average)', 'माप (औसत)'], ['date', 'Date', 'दिनांक'],
     ['text', 'Written text (comments, remarks)', 'लिखा हुआ टेक्स्ट (टिप्पणी, शिकायत)'], ['ignore', 'Ignore this column', 'यह कॉलम छोड़ें']];
+  var PERIODNAME = /(^|[_ \-])(year|yr|month|day|week|quarter|fy)s?($|[_ \-])|released_(year|month|day)|वर्ष|माह|महीना|दिन/i;
   var AMOUNTNAME = /amount|amt|cost|price|sales|revenue|salary|income|wage|fee|total|expense|budget|fund|payment|paid|balance|value|rs\b|inr|राशि|वेतन|कीमत|मूल्य|बजट|व्यय|आय|भुगतान|शुल्क|योग/i;
   function s(v) { return v == null ? '' : String(v); }
   function sigOf(headers) { return headers.map(function (h) { return s(h).trim().toLowerCase(); }).join('\u0001'); }
   R.sig = sigOf;
   // ------------------------------------------------------------ the guesses
-  R.guess = function (headers, prof, avgLen) {
+  R.guess = function (headers, prof, avgLen, damaged) {
     var C = root.STL && STL.charts;
     return prof.map(function (p, i) {
       var name = s(headers[i]), blankName = /^Column \d+$/.test(name), avgy = C && C.avgy ? C.avgy(p) : false, L = avgLen && avgLen[i] || 0, out;
@@ -40,6 +41,11 @@
         else if (L >= 15) out = { role: 'text', doubt: true, why: 'many different values: text or a category?' };
         else out = { role: 'category', doubt: true, why: 'many different values' };
       }
+      // a year / month / day / week of a date is a period to group by, never an amount
+      if ((out.role === 'amount' || out.role === 'measure') && p.allInt && PERIODNAME.test(name)) out = { role: 'category', doubt: false, base: out.role, why: 'a year, month or day: a period to group by' };
+      // a number column with a few cells that are not numbers: say which
+      if (p.numeric && p.nonNum > 0 && p.nonNum <= Math.max(5, 0.05 * p.filled)) { out.doubt = true; out.why = (out.why ? out.why + '. ' : '') + p.nonNum + ' cell' + (p.nonNum > 1 ? 's are' : ' is') + ' not a number (e.g. “' + p.badEx + '”) and will be left out of totals and averages'; }
+      var dm = damaged && damaged[i] || 0; if (dm > 0) { out.doubt = true; out.why = (out.why ? out.why + '. ' : '') + dm + ' value' + (dm > 1 ? 's contain' : ' contains') + ' damaged characters (�): the file lost them before it reached you'; }
       if (blankName && out.role !== 'rowno') out.doubt = true;
       return out;
     });
@@ -92,7 +98,7 @@
   // everything the screen needs, from the open file (a large file: its 4,000-row sample plus the engine's counts over every row)
   function inspect() {
     var CH = STL.charts, H = HD(), rows = RD(), idx = IDX(), prof = CH.profile(H, rows, idx, true), avg = H.map(function (_, c) { var n = 0, L = 0; for (var k = 0; k < Math.min(idx.length, 300); k++) { var v = s(rows[idx[k]][c]); if (v) { n++; L += v.length; } } return n ? L / n : 0; });
-    var guess = R.guess(H, prof, avg), cur = R.rolesFor(H, guess), caps = [];
+    var dmg = H.map(function (_, c) { var n = 0; for (var k = 0; k < idx.length; k++) { if (s(rows[idx[k]][c]).indexOf('\uFFFD') >= 0) n++; } return n; }), guess = R.guess(H, prof, avg, dmg), cur = R.rolesFor(H, guess), caps = [];
     try { if (STL.colChecks) caps = STL.colChecks.caps(rows, idx, H, prof).filter(function (c) { return c.placeholder; }); } catch (e) { /* optional */ }
     var ex = H.map(function (_, c) { var seen = {}, out = []; for (var k = 0; k < idx.length && out.length < 3; k++) { var v = s(rows[idx[k]][c]).trim(); if (v && !seen[v]) { seen[v] = 1; out.push(v.length > 30 ? v.slice(0, 30) + '…' : v); } } return out; });
     return { H: H, prof: prof, guess: guess, cur: cur, caps: caps, ex: ex, remembered: !!R.stored(H) };
@@ -136,7 +142,7 @@
     o.querySelectorAll('.rc-blank').forEach(function (e) { e.onchange = function () { st.blank[+e.dataset.i] = e.checked; }; });
     $('rcReset').onclick = function () { R.forget(I.H); o.remove(); toast(T('Forgotten. The app will guess again.', 'भूल गया। ऐप फिर अंदाज़ा लगाएगा।'), 'info'); };
     $('rcOk').onclick = function () {
-      R.confirm(I.H, st.roles, I.guess.map(function (g) { return g.role; })); o.remove();
+      R.confirm(I.H, st.roles, I.guess.map(function (g) { return g.base || g.role; })); o.remove();
       var todo = I.caps.filter(function (c) { return st.blank[c.col]; }), changed = st.roles.filter(function (r, i) { return r !== I.guess[i].role; }).length;
       var done = function () { toast(T('Saved. ' + (changed ? changed + ' column' + (changed > 1 ? 's' : '') + ' changed. ' : '') + 'This will be remembered for files with the same columns.', 'सहेजा गया। ' + (changed ? changed + ' कॉलम बदले। ' : '') + 'समान कॉलमों वाली फ़ाइलों के लिए याद रखा जाएगा।'), 'success'); };
       if (!todo.length) { done(); return; }

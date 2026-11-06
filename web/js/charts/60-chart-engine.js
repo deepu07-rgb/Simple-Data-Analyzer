@@ -85,13 +85,14 @@
   var NAME_ID = /(^|[\s._\-/])(id|uid|guid|sr|sl|no|number|क्रम|क्रमांक|नंबर|आईडी)([\s._\-/]|$)/i, NAME_CODE = /(^|[\s._\-/])(code|pin|pincode|zip|phone|mobile|contact|aadhaar|aadhar|कोड|फोन|मोबाइल)([\s._\-/]|$)/i,
       NAME_COORD = /^(lat|latitude|lon|long|lng|longitude|अक्षांश|देशांतर)$/i, NAME_SCORE = /(^|[^a-z])(rating|ratings|score|scores|grade|marks|percent|percentage|pct|rate|ratio|index|age)([^a-z]|$)|%|आयु|अंक|प्रतिशत/i;
   function colFacts(rows, idx, c, header) {
-    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, zeros = 0, sample = Math.min(idx.length, 4000), listy = 0, items = {}, itemTotal = 0, itemDistinct = 0, xs = [];
+    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, zeros = 0, sample = Math.min(idx.length, 4000), listy = 0, items = {}, itemTotal = 0, itemDistinct = 0, xs = [], badEx = null;
     for (var k = 0; k < sample; k++) {
       var v = rows[idx[k]][c]; n++;
       if (blank(v)) continue; nn++;
       var t = s(v).trim(); if (/^0\d+$/.test(t) || /^\d{10,}$/.test(t)) code++;
       var x = num(v); if (x !== null) { np++; if (x < min) min = x; if (x > max) max = x; if (x % 1 !== 0) allInt = false; if (x === 0) zeros++; xs.push(x); }
       else {
+        if (badEx === null && !isDateVal(v)) badEx = t.length > 40 ? t.slice(0, 40) + '…' : t;
         if (isDateVal(v)) nd++;
         if (t.indexOf(',') > 0) { listy++; t.split(',').forEach(function (it) { it = it.trim().toLowerCase(); if (!it) return; itemTotal++; if (!items[it]) { items[it] = 1; itemDistinct++; } }); }
       }
@@ -114,7 +115,7 @@
     if (numeric && min >= 0 && xs.length > 200 && nd2 > 30) { xs.sort(function (a, b) { return a - b; }); var m50 = xs[xs.length >> 1], m99 = xs[Math.floor(xs.length * 0.99)]; heavy = m50 > 0 && m99 / m50 > 15 && xs[xs.length - 1] / m50 > 50; }
     if (nn >= 20 && nd2 === 2) { flagKeys = Object.keys(distinct); flag = true; }
     return { index: c, name: s(header), filled: nn, unit: unit, heavy: heavy, flag: flag, flagKeys: flagKeys, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
-             zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)), tidx: numeric && NAME_TIMEIDX.test(s(header)) };
+             zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)), tidx: numeric && NAME_TIMEIDX.test(s(header)), nonNum: nn - np, badEx: badEx };
   }
   CH.profile = function (headers, rows, idx, noRoles) {
     var prof = headers.map(function (h, i) { return colFacts(rows, idx, i, h); });
@@ -792,7 +793,7 @@
   var NAME_OUTCOME = /revenue|sales|profit|margin|income|cups|volume|turnover|streams|plays|views|downloads|listens|clicks|likes|shares|orders|visits|installs|कमाई|बिक्री|मुनाफ़ा/i;
   function measScore(p) { return (p.score ? 3 : (NAME_OUTCOME.test(p.name) ? 5.5 : (NAME_AMOUNT.test(p.name) ? 3.5 : 0))) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b|(^|[_ ])per[_ ]/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
-  CH.avgy = function (p) { if (p.roleFn) return p.roleFn === 'avg'; return p.score || p.unit || p.tidx || /income|earning|wage|salary per|\bage\b|_age|age_|birth|employed|tenure|seniority/i.test(p.name) || /gpa|cgpa|retention|dependency|anxiety|stress|satisfaction|percentile|average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
+  CH.avgy = function (p) { if (p.roleFn) return p.roleFn === 'avg'; return p.score || p.unit || p.tidx || /income|earning|wage|salary per|\bage\b|_age|age_|birth|employed|tenure|seniority|\bbpm\b|tempo|rank|position/i.test(p.name) || /gpa|cgpa|retention|dependency|anxiety|stress|satisfaction|percentile|average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
   // columns that make sense to group or compare by, best first (no IDs, no columns that only restate a number, no duplicates)
   CH.groupColumns = function (prof, nums, rows, idx) {

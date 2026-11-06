@@ -126,6 +126,10 @@
     vcols.forEach(function (v) { var c = cat[v.col]; if (!cols.some(function (x) { return x.i === c.i; })) cols.push(c); });
     res.cols = cols.map(function (c) { return c.name; });
     var H = function (c) { return c.name; }, meas = cols.filter(function (c) { return c.measure; }), nums = cols.filter(function (c) { return c.numeric; }), cats = cols.filter(function (c) { return c.cat; });
+    // a column named in the question can be the “by” column even with many values (artist, year, district): text with repeats, or whole numbers like a year
+    var byM = /\b(?:by|per|for each|across|wise)\s+([\w()%.]+)/i.exec(q), byTok = byM ? byM[1].toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    var byCol = byTok.length >= 3 ? cols.filter(function (c) { var nm = c.name.toLowerCase().replace(/[^a-z0-9]/g, ''); return nm === byTok || (byTok.length >= 4 && nm.indexOf(byTok) === 0); })[0] : null;       // the column written right after “by”
+    var gcols = cols.filter(function (c) { return !c.cat && !c.date && c.p && !c.p.unique && !c.p.serial && c.p.distinct >= 2 && ((!c.numeric && c.p.distinct < 0.95 * Math.max(c.p.filled, 1)) || (c.numeric && c.p.allInt && c.p.distinct <= 120)); });
     var valOf = function (c) { var v = vcols.filter(function (x) { return x.col === c.i; })[0]; return v ? v.value : null; };
     res.named = named;
     function done(o) {
@@ -199,7 +203,7 @@
     }
     // ---- counts
     if (RX.count.test(q)) {
-      var gb = cats.filter(function (c) { return !valOf(c); })[0], fv = vcols, cm = RX.contain.exec(q), wcond = null;
+      var gb = cats.filter(function (c) { return !valOf(c); })[0] || gcols[0], fv = vcols, cm = RX.contain.exec(q), wcond = null;
       if (cm && !/^(the|a|an|word|words|all|any)$/i.test(cm[2])) {                                  // "how many rows contain happy": the text column holds this word
         var isTxt = function (c) { return !c.cat && !c.numeric && !c.date && !c.p.serial && !c.p.unique && c.avgLen >= 12; }, tcol = cols.filter(isTxt)[0] || cat.filter(isTxt).sort(function (a, b) { return b.avgLen - a.avgLen; })[0] || cat.filter(function (c) { return !c.cat && !c.numeric && !c.date && /text|comment|remark|description|feedback|complaint|message|note|review|reason/i.test(c.name); })[0] || cat.filter(function (c) { return !c.catOk && !c.numeric && !c.date; }).sort(function (a, b) { return b.p.distinct - a.p.distinct; })[0];
         if (tcol) { wcond = { col: tcol.i, value: cm[2].toLowerCase(), op: 'word' }; used[cm[2].toLowerCase()] = 1; }
@@ -216,7 +220,7 @@
     var g0 = function (oc) { return cats.filter(function (c) { return c !== oc && !valOf(c) && !c.numeric; })[0] || cat.filter(function (c) { return c.cat && !c.numeric && c !== oc && c.vals.length <= 12; })[0]; };
     var isTop = RX.top.test(q), isAgg = RX.agg.test(q), fn = /\b(total|sum)\b|कुल|योग/i.test(q) ? 'sum' : (/median|माध्यिका/i.test(q) ? 'median' : 'avg');
     if (isTop || isAgg) {
-      var m = meas[0] || nums.filter(function (c) { return !c.cat; })[0] || nums[0] || null, g = cats.filter(function (c) { return c !== m && !valOf(c); })[0] || null;
+      var m = meas[0] || nums.filter(function (c) { return !c.cat; })[0] || nums[0] || null, g = (byCol && byCol !== m && (byCol.cat || gcols.indexOf(byCol) >= 0) ? byCol : null) || cats.filter(function (c) { return c !== m && !valOf(c); })[0] || gcols.filter(function (c) { return c !== m; })[0] || null;
       var oc = cats.filter(function (c) { return !c.numeric && c.vals && c.vals.some(function (v) { return BAD.test(v); }); })[0];
       if (!m && oc && g0(oc)) { var ov = pickValue(oc, valOf(oc)); return done({ intent: isTop ? 'top' : 'agg_by', y: oc.i, yCat: { col: oc.i, value: ov }, x: g0(oc).i, fn: 'pct', sort: /\b(lowest|smallest|least|minimum)\b/i.test(q) ? 'asc' : 'desc', conf: 0.75, say: 'You want to see how often “' + oc.name + '” is “' + ov + '” for each “' + g0(oc).name + '”.' }); }
       if (!m) { var anyM = cat.filter(function (c) { return c.measure; }); return done({ intent: 'ask_y', conf: 0.3, say: 'Which number do you mean?', choices: anyM.slice(0, 6).map(function (c) { return c.name; }) }); }
