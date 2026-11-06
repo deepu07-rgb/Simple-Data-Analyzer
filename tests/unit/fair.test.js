@@ -25,10 +25,10 @@ test('raw difference equals the plain averages (Welch test)', () => {
 test('the paradox is detected: raw gap negative, adjusted positive, price named as the cause', () => {
   const { R } = run([2, 3]), v = F.verdict(R, false);
   assert.ok(R.main.raw.diff < -0.2 && R.main.adj.diff > 0.05);
-  assert.equal(v.kind, 'reversal'); assert.match(v.title, /REVERSES.*mix effect.*Simpson/); assert.match(v.text, /plain gap is −0\.25.*\+0\.10/);
+  assert.equal(v.kind, 'reversal'); assert.match(v.title, /misleading.*flips/); assert.match(v.text, /as they are, the difference is −0\.25.*\+0\.10/);
   assert.equal(R.driver.name, 'Price', 'price explains the reversal, not city');
   assert.match(v.text, /Yes rows are \d+% Price = 1 versus \d+% for No/);
-  const hi = F.verdict(R, true); assert.match(hi.title, /सिम्पसन/); assert.match(hi.text, /सीधा अंतर −0\.25/);
+  const hi = F.verdict(R, true); assert.match(hi.title, /भ्रामक/); assert.match(hi.text, /जैसे हैं वैसे समूहों में अंतर −0\.25/);
   assert.ok(R.strata.length === 4 && R.strata.every(s => s.diff > 0), 'inside every price range delivery is higher');
   assert.ok(R.mix.rows[0].shareMain > R.mix.rows[0].shareRef, 'delivery rows are mostly the cheap ones');
 });
@@ -38,7 +38,7 @@ test('verdicts: explained, partly explained, holds, hidden, no difference, nothi
   assert.equal(k(mk(0.3, 1e-9, 0.02, 0.4)), 'explained'); assert.equal(k(mk(0.3, 1e-9, 0.1, 1e-4)), 'shrinks');
   assert.equal(k(mk(0.3, 1e-9, 0.28, 1e-8)), 'holds'); assert.equal(k(mk(0.01, 0.6, 0.2, 1e-5)), 'masked');
   assert.equal(k(mk(0.02, 0.5, 0.01, 0.7)), 'none');
-  assert.equal(k(mk(-0.09, 1e-9, 0.03, 0.018)), 'weak_explained', 'a flipped gap with borderline evidence is not called chance'); assert.equal(k(mk(0.1, 0.02, 0.09, 0.03)), 'weak'); assert.match(F.verdict(mk(-0.09, 1e-9, 0.03, 0.018), false).text, /p = 0\.018/); assert.equal(k(mk(0.3, 1e-9, 0.3, 1e-9, 0)), 'raw');
+  assert.equal(k(mk(-0.09, 1e-9, 0.03, 0.018)), 'weak_explained', 'a flipped gap with borderline evidence is not called chance'); assert.equal(k(mk(0.1, 0.02, 0.09, 0.03)), 'weak'); assert.match(F.verdict(mk(-0.09, 1e-9, 0.03, 0.018), false).text, /small and not certain/); assert.doesNotMatch(F.verdict(mk(0.3, 1e-9, 0.28, 1e-8), false).text, /p [=<]|95%|association|like-for-like|mix effect/); assert.equal(k(mk(0.3, 1e-9, 0.3, 1e-9, 0)), 'raw');
   assert.equal(k(mk(-0.3, 1e-9, 0.2, 1e-5)), 'reversal');
   assert.equal(F.verdict({ error: 'factor' }, false).kind, 'error');
 });
@@ -101,4 +101,11 @@ test('a group that works where nobody in the comparison group works cannot be co
 test('with no adjuster everything is comparable (plain gap only)', () => {
   const R = F.analyse([{ k: ['A'], n: 100, sy: 1000, syy: 10400 }, { k: ['B'], n: 100, sy: 2000, syy: 20400 }], ['Group']);
   assert.ok(R.levels.every(l => !l.notComparable));
+});
+
+test('a real but tiny gap says so: 50,000 rows make everything "real", the size is told in plain words', () => {
+  const mk = (adj, sd) => ({ names: ['F', 'Price'], adjusters: ['Price'], nAdjust: 1, ref: 'No', sd, main: { level: 'Yes', n: 5000, raw: { diff: adj, p: 1e-9 }, adj: { diff: adj, lo: adj - 0.001, hi: adj + 0.001, p: 1e-9 } }, driver: { name: 'Price' }, mix: null });
+  const tiny = F.verdict(mk(0.006, 0.2), false), small = F.verdict(mk(0.03, 0.2), false), big = F.verdict(mk(0.2, 0.2), false);
+  assert.equal(tiny.kind, 'holds'); assert.match(tiny.title, /real, but very small/); assert.match(tiny.text, /very small: about 3% of the usual spread/); assert.match(small.text, /small: about 15% of the usual spread/); assert.match(big.text, /large: about 100%/);
+  assert.match(F.verdict(mk(0.006, 0.2), true).title, /बहुत छोटा/); assert.doesNotMatch(F.verdict(mk(0.3, undefined), false).text, /usual spread/);
 });

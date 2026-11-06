@@ -33,7 +33,7 @@ const pct = x => Math.round(x * 1000) / 10;
   const shot = async n => { if (process.env.SHOTS) { await wait(500); await page.screenshot({ path: path.join(process.env.SHOTS, n + '.png') }); } };
   const drivers = async () => { await page.waitForFunction(() => document.querySelector('#drOut table'), null, { timeout: 30000 }); await wait(400);
     return ev(() => ({ y: document.getElementById('drY').selectedOptions[0].text, text: document.getElementById('drOut').innerText, rows: Array.from(document.querySelectorAll('#drOut tr')).map(t => t.innerText.replace(/\s+/g, ' ')), cells: Array.from(document.querySelectorAll('#drOut table:not(.dr-rule) tr')).slice(1).map(t => [t.cells[0].innerText.split('\n')[0].replace(/ ⚠| \(5 bands\)/g, '').trim(), t.cells[1] ? t.cells[1].innerText : '']) })); };
-  const share = (d, name) => { const c = d.cells.find(x => x[0] === name); return c ? parseFloat(c[1]) : NaN; };
+  const share = (d, name) => { const c = d.cells.find(x => x[0].replace(/ \(grouped low to high\)$/, '') === name); return c ? parseFloat(c[1]) : NaN; };
 
   await page.setInputFiles('#fileInput', { name: 'restaurants.csv', mimeType: 'text/csv', buffer: csv(1) });
   await page.waitForFunction(() => typeof rawData !== 'undefined' && rawData.length === 3000, null, { timeout: 15000 }); await wait(500);
@@ -46,8 +46,8 @@ const pct = x => Math.round(x * 1000) / 10;
   ok(Math.abs(share(d, 'Price range') - pct(FX.omega.price[0])) < 0.051 && Math.abs(share(d, 'Online delivery') - pct(FX.omega.f[0])) < 0.051, 'ω² equals Python: Price range ' + share(d, 'Price range') + '%, Online delivery ' + share(d, 'Online delivery') + '%', d.rows);
   ok(/go most with “Price range”/.test(d.text), 'It says in words what goes most with the rating', d.text.slice(0, 300));
   ok(/“Tier” may be a label given BY “Rating”/.test(d.text) && d.rows.some(r => /^Tier ⚠/.test(r)), 'It warns that “Tier” looks like a label given by the rating', d.rows);
-  ok(share(d, 'Temperature') >= 0 && d.rows.some(r => /^Temperature \(5 bands\)/.test(r)), 'Number columns take part in five bands', d.rows);
-  ok(/“Cost for two” mostly stands in for “Price range”: it explains [\d.]+% overall but only [\d.]+% inside each “Price range” group/.test(d.text) && d.rows.some(r => /^Cost for two .*↳ mostly through Price range/.test(r)), 'A cost that only follows the price range is called a stand-in, not a cause', d.text.slice(0, 900));
+  ok(share(d, 'Temperature') >= 0 && d.rows.some(r => /^Temperature \(grouped low to high\)/.test(r)), 'Number columns take part in five groups, low to high', d.rows);
+  ok(/“Cost for two” mostly just follows “Price range”: it goes with [\d.]+% of the differences overall, but only [\d.]+% once “Price range” is held the same/.test(d.text) && d.rows.some(r => /^Cost for two .*↳ mostly just follows Price range/.test(r)), 'A cost that only follows the price range is not called a separate cause', d.text.slice(0, 900));
   ok(!/Next: [^\n]*Cost for two/.test(d.text), 'The stand-in is not offered as the next factor', d.text.slice(0, 600));
   const rule = await ev(() => ({ head: (Array.from(document.querySelectorAll('#drOut .prj-sub')).find(e => /How “Tier” is made/.test(e.innerText)) || {}).innerText, rows: Array.from(document.querySelectorAll('.dr-rule tr')).slice(1).map(t => t.innerText.replace(/\s+/g, ' ').trim()) }));
   console.log('  rule heading:', rule.head);
@@ -68,7 +68,7 @@ const pct = x => Math.round(x * 1000) / 10;
   // a number as the compared column (4 equal-count bands, the lowest is the reference)
   await ev(() => STL.openFair({ y: 0, f: 4, adj: [2] })); await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict'), null, { timeout: 15000 }); await wait(400);
   const nfc = await ev(() => ({ opt: document.getElementById('frF').selectedOptions[0].text, rows: Array.from(document.querySelectorAll('.fr-tbl tr')).slice(1).map(t => t.cells[0].innerText.replace(/\s+/g, ' ').trim()), head: document.querySelector('.fr-tbl tr').cells[0].innerText }));
-  ok(/Temperature \(a number, in 4 bands\)/.test(nfc.opt) && nfc.rows.length === 4 && /reference/.test(nfc.rows[0]) && /^3\d–4\d/.test(nfc.rows[0]) && /^6\d–7\d/.test(nfc.rows[3]) && nfc.rows[1] < nfc.rows[2], 'A number can be the compared column: 4 bands, the lowest as reference (' + nfc.rows.join(' | ') + ')', nfc);
+  ok(/Temperature \(a number, in 4 bands\)/.test(nfc.opt) && nfc.rows.length === 4 && /compared against/.test(nfc.rows[0]) && /^3\d–4\d/.test(nfc.rows[0]) && /^6\d–7\d/.test(nfc.rows[3]) && nfc.rows[1] < nfc.rows[2], 'A number can be the compared column: 4 bands, the lowest as reference (' + nfc.rows.join(' | ') + ')', nfc);
   await ev(() => document.getElementById('frX').click());
   // number adjusters as a straight line: the gap equals the row-level regression
   await ev(() => STL.openFair({ y: 0, f: 1, adj: [2, 4] })); await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict'), null, { timeout: 15000 }); await wait(400);
@@ -79,7 +79,7 @@ const pct = x => Math.round(x * 1000) / 10;
   await page.selectOption('#frLin', 'line'); await page.waitForFunction(() => /straight line/.test((document.querySelector('#frOut .fr-how') || {}).textContent || ''), null, { timeout: 15000 }); await wait(300);
   const lin = await ev(() => { const row = Array.from(document.querySelectorAll('.fr-tbl tr')).find(t => /^Yes/.test(t.innerText)); const want = STL.fair.linearFit(rawData, rawData.map((_, i) => i), { y: 0, factor: 1, cats: [2], lins: [4], ref: 'No' }); return { row: row && row.innerText.replace(/\s+/g, ' '), want: want.levels.Yes[0], text: document.querySelector('#frOut .fr-verdict').innerText }; });
   const shown = +((/([−+-]\d+\.\d\d) \(/.exec((lin.row || '').split(')').slice(1).join(')')) || ['', 'NaN'])[1].replace('−', '-'));
-  ok(Math.abs(shown - lin.want) < 0.006 && /Temperature \(straight line\)/.test(lin.text), 'Like-for-like gap with Temperature as a straight line: ' + shown + ' (regression ' + lin.want.toFixed(4) + ')', lin);
+  ok(Math.abs(shown - lin.want) < 0.006 && /alike in [^.]*Temperature/.test(lin.text), 'Like-for-like gap with Temperature as a straight line: ' + shown + ' (regression ' + lin.want.toFixed(4) + ')', lin);
   await ev(() => document.getElementById('frX').click());
 
   // ---- bands on the x axis and the % measure
@@ -103,7 +103,7 @@ const pct = x => Math.round(x * 1000) / 10;
   ok(/Calculated by the engine from all rows/.test(d.text), 'Large file: the engine ranks the columns from all 12,000 rows', d.text.slice(-200));
   ok(Math.abs(share(d, 'Price range') - pct(FX.omega.price[0])) < 0.11 && /“Tier” may be a label/.test(d.text), 'Large file: same ω² for Price range (' + share(d, 'Price range') + '%) and the same Tier warning', d.rows);
   const brule = await ev(() => ({ head: (Array.from(document.querySelectorAll('#drOut .dr-rule-h'))[0] || {}).textContent, note: document.getElementById('drOut').innerText, rows: Array.from(document.querySelectorAll('.dr-rule tr')).slice(1).map(t => t.innerText.replace(/\s+/g, ' ').trim()) }));
-  ok(/“Cost for two” mostly stands in for “Price range”/.test(d.text), 'Large file: the stand-in is found by the engine from all rows', d.text.slice(0, 600));
+  ok(/“Cost for two” mostly just follows “Price range”/.test(d.text), 'Large file: the stand-in is found by the engine from all rows', d.text.slice(0, 600));
   await ev(() => document.getElementById('drX').click());
   await ev(() => STL.openColumnChecks()); await page.waitForFunction(() => /Columns calculated/.test((document.getElementById('ccOut') || {}).textContent || ''), null, { timeout: 30000 }); await wait(300);
   const bcc = await ev(() => document.getElementById('ccOut').innerText);

@@ -183,12 +183,14 @@
     var b = $('nextBanner');
     if (!b) { b = document.createElement('div'); b.id = 'nextBanner'; b.className = 'stl-banner'; b.style.flexWrap = 'wrap'; var stage = $('workspace-stage'); if (stage && stage.parentNode) stage.parentNode.insertBefore(b, stage); else document.body.appendChild(b); }
     b.innerHTML = '<span class="stl-banner-t"><b>' + T('Your file is ready: ', 'आपकी फ़ाइल तैयार है: ') + fmt(rawData.length) + T(' rows, ', ' पंक्तियाँ, ') + headers.length + T(' columns. What would you like to do?', ' कॉलम। आप क्या करना चाहेंगे?') + '</b></span>' +
-      '<button class="tb-btn primary" id="nbCharts">📊 ' + T('Show me the best charts', 'सबसे अच्छे चार्ट दिखाएँ') + '</button>' +
+      '<button class="tb-btn primary" id="nbAsk">💬 ' + T('Ask in your own words', 'अपने शब्दों में पूछें') + '</button>' +
+      '<button class="tb-btn" id="nbCharts">📊 ' + T('Show me the best charts', 'सबसे अच्छे चार्ट दिखाएँ') + '</button>' +
       '<button class="tb-btn" id="nbWhy">🔍 ' + T('What affects a number?', 'किसी संख्या को क्या प्रभावित करता है?') + '</button>' +
       '<button class="tb-btn" id="nbFair">⚖ ' + T('Is a difference real?', 'क्या अंतर असली है?') + '</button>' +
       '<button class="tb-btn" id="nbAdd">➕ ' + T('Add a column (like the change)', 'नया कॉलम जोड़ें (जैसे बदलाव)') + '</button>' +
       '<button class="tb-btn" id="nbX" aria-label="close">×</button>';
     b.style.display = 'flex';
+    $('nbAsk').onclick = function () { hideNext(); if (STL.openAsk) STL.openAsk(); };
     $('nbCharts').onclick = function () { hideNext(); if (STL.openChartStudio) STL.openChartStudio(); };
     $('nbWhy').onclick = function () { hideNext(); if (STL.openDrivers) STL.openDrivers(); };
     $('nbFair').onclick = function () { hideNext(); if (STL.openFair) STL.openFair(); };
@@ -524,7 +526,7 @@
       ['📂', 'Open a file', 'फ़ाइल खोलें', 'Excel or CSV', 'एक्सेल या CSV', function () { $('fileInput').click(); }],
       ['🧩', 'Combine files', 'फ़ाइलें जोड़ें', 'Many files into one table', 'कई फ़ाइलें, एक तालिका', function () { STL.openMerge(); }],
       ['🧹', 'Clean a messy file', 'बिगड़ी फ़ाइल साफ़ करें', 'Titles, totals, old Hindi font, lakh, dates', 'शीर्षक, योग, पुराना हिंदी फ़ॉन्ट, लाख, तारीख', function () { STL._openFixerAfterImport = true; $('fileInput').click(); }],
-      ['💬', 'Ask a question', 'प्रश्न पूछें', 'Ask about your data', 'अपने डेटा से पूछें', function () { if (!hasData()) { toast(T('Open a file first, or try the sample data below.', 'पहले फ़ाइल खोलें, या नीचे नमूना डेटा आज़माएँ।'), 'info'); return; } switchTool('intelligence'); }],
+      ['💬', 'Ask a question', 'प्रश्न पूछें', 'Ask about your data', 'अपने डेटा से पूछें', function () { if (!hasData()) { toast(T('Open a file first, or try the sample data below.', 'पहले फ़ाइल खोलें, या नीचे नमूना डेटा आज़माएँ।'), 'info'); return; } if (STL.openAsk) STL.openAsk(); else switchTool('intelligence'); }],
       ['🗃️', 'Open a large file', 'बड़ी फ़ाइल खोलें', 'Up to millions of rows', 'लाखों पंक्तियों तक', function () { BIG.pickFile(); }],
       ['💾', 'Open a project', 'प्रोजेक्ट खोलें', 'Continue saved work', 'सहेजा हुआ काम जारी रखें', function () { PRJ.openDialog(); }]
     ];

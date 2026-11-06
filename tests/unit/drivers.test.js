@@ -55,9 +55,9 @@ test('a column that only stands in for a stronger one is told apart (checked aga
   assert.ok(Math.abs(by.Calories.inside.omega2 - SI.exp.kcal_in_g) < 0.002, 'inside share ≈ statsmodels ' + by.Calories.inside.omega2);
   assert.ok(!by.Temperature.standIn && Math.abs(by.Temperature.inside.omega2 - SI.exp.temp_in_g) < 0.004, 'temperature keeps its own effect ' + by.Temperature.inside.omega2 + ' vs ' + SI.exp.temp_in_g);
   const lines = D.summary(R, 'Waste', false);
-  assert.ok(lines.some(l => /“Calories” mostly stands in for “Group”: it explains [\d.]+% overall but only 0(\.\d)?% inside each “Group” group/.test(l)), lines.join('\n'));
+  assert.ok(lines.some(l => /“Calories” mostly just follows “Group”: it goes with [\d.]+% of the differences overall, but only 0(\.\d)?% once “Group” is held the same/.test(l)), lines.join('\n'));
   assert.ok(lines.some(l => /^Next: Temperature/.test(l)), 'the stand-in is not listed as the next factor');
-  assert.match(D.summary(R, 'Waste', true).join(' '), /मुख्यतः “Group” का प्रतिबिंब है/);
+  assert.match(D.summary(R, 'Waste', true).join(' '), /मुख्यतः “Group” के साथ-साथ चलता है/);
 });
 test('D.within equals the textbook formula on hand-made cells', () => {
   // z1: x makes no difference; z2: x makes a difference of 2

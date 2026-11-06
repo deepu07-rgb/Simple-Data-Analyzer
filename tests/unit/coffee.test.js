@@ -63,7 +63,7 @@ test('a remainder of 0.2% of the gap is "explained by mix", however significant 
     main: { level: 'Point', n: 1709, mean: 36, raw: { diff: 10.98, se: 0.1, p: 1e-12 }, adj: { diff: 0.02, se: 0.005, lo: 0.01, hi: 0.03, p: 0.003 } },
     driver: { name: 'discount (curve)', dim: 1 }, mix: { main: 'Point', ref: 'Tomoro', rows: [{ level: '0.1–15.4', shareMain: 0.45, shareRef: 0.01 }] } };
   const v = F.verdict(R, false);
-  assert.equal(v.kind, 'explained'); assert.ok(v.tiny); assert.match(v.text, /What is left \(\+0\.02\) is only 0\.2% of the plain gap/);
+  assert.equal(v.kind, 'explained'); assert.ok(v.tiny); assert.match(v.text, /What is left \(\+0\.02\) is only 0\.2% of the first gap/);
   assert.match(F.verdict(R, true).text, /केवल 0\.2%/);
   R.main.adj = { diff: 3, se: 0.2, lo: 2.6, hi: 3.4, p: 1e-9 };                              // 27% left: not negligible
   assert.equal(F.verdict(R, false).kind, 'shrinks');

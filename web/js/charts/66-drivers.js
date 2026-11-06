@@ -79,7 +79,7 @@
         var o = by[key] || (by[key] = { label: key, n: 0, sy: 0, syy: 0 }); o.n++; o.sy += v; o.syy += v * v;
       }
       return { col: c.col, name: c.name, kind: c.kind, levels: Object.keys(by).map(function (q) { return by[q]; }), bands: bands };
-    }), headers[y], { flagY: !!(prof[y] && prof[y].flag) });
+    }), headers[y], { flagY: !!(prof[y] && prof[y].flag), partner: opt.partner });
     if (opt.walls !== false) D.markWalls(ranked, rows, idx, y, opt.noZero);
     return opt.standIns === false ? ranked : D.findStandIns(ranked, rows, idx, y, opt.noZero);
   };
@@ -90,10 +90,63 @@
       big.sort(function (a, b) { return b.mean - a.mean; });
       var shared = D.sharesName(d.name, yName);
       return { col: d.col, name: d.name, kind: d.kind, omega2: om.omega2, eta2: om.eta2, k: om.k, n: om.n, high: big[0] || null, low: big[big.length - 1] || null, levels: big, bands: d.bands || null,
-               derived: shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
+               derived: fopt && fopt.partner === d.col ? null : shared.length && om.eta2 >= 0.3 ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
     });
     out.sort(function (a, b) { return b.omega2 - a.omega2; });
     return out;
+  };
+
+
+  // ---------------------------------------------------------------- "it depends on …"
+  // Two columns can matter only TOGETHER: more AI hours cost grades only for people who use AI to get direct answers. Ranking one column at a time
+  // cannot see this. For the strongest pairs, the cell averages (A × B) are compared with the best "A plus B" model; what is left over is the interaction.
+  //   returns [{ a, b, nameA, nameB, share, extra, F, cells, odd }]  share = all of A and B together, extra = the part that is more than A and B added up
+  D.interactions = function (rows, idx, y, ranked, opt) {
+    opt = opt || {}; var C = CH(), cand = ranked.filter(function (r) { return !r.derived && !r.walls && r.omega2 >= 0.001 && r.levels && r.levels.length >= 2 && r.levels.length <= 14; }).slice(0, 14);       // a column can matter only together with another one, so weak columns take part too (paired with one of the six strongest)
+    if (cand.length < 2) return [];
+    cand = cand.map(function (r) {                                                                       // a number is cut into 8 bands here (5 would blur a narrow stretch such as 10-15 hours)
+      if (r.kind !== 'num') return r; var vals = idx.map(function (i) { return C.num(rows[i][r.col]); }), b8 = C.quantileBands(vals, 8); if (!b8 || b8.n < 3) return r;
+      return Object.assign({}, r, { bands: b8, levels: b8.labels.map(function (l) { return { label: l }; }) });
+    });
+    var n = idx.length, ys = new Float64Array(n), ok = new Uint8Array(n), codes = cand.map(function () { return new Int16Array(n).fill(-1); });
+    var maps = cand.map(function (r) { var m = {}; r.levels.forEach(function (l, i) { m[l.label] = i; }); return m; });
+    for (var k = 0; k < n; k++) {
+      var row = rows[idx[k]], v = yv(row[y]); if (v === null || v === undefined || (opt.noZero && C.num(row[y]) === 0)) continue; ys[k] = v; ok[k] = 1;
+      for (var c = 0; c < cand.length; c++) { var lab = keyOf(row, cand[c], C), at = maps[c][lab]; if (at !== undefined) codes[c][k] = at; }
+    }
+    var out = [];
+    for (var i = 0; i < cand.length; i++) for (var j = i + 1; j < cand.length; j++) {
+      if (i >= 6) continue;
+      var ka = cand[i].levels.length, kb = cand[j].levels.length, nc = ka * kb, N = new Float64Array(nc), S = new Float64Array(nc), Q = new Float64Array(nc), tot = 0;
+      for (k = 0; k < n; k++) { if (!ok[k]) continue; var a = codes[i][k], b = codes[j][k]; if (a < 0 || b < 0) continue; var cell = a * kb + b, y1 = ys[k]; N[cell]++; S[cell] += y1; Q[cell] += y1 * y1; tot++; }
+      if (tot < 200) continue;
+      var SY = 0, SYQ = 0, present = 0; for (var q = 0; q < nc; q++) { SY += S[q]; SYQ += Q[q]; if (N[q] > 0) present++; }
+      var M = SY / tot, SST = SYQ - SY * SY / tot, SSC = 0, SSW = 0;
+      for (q = 0; q < nc; q++) if (N[q] > 0) { var mq = S[q] / N[q]; SSC += N[q] * (mq - M) * (mq - M); SSW += Math.max(Q[q] - N[q] * mq * mq, 0); }
+      if (!(SST > 0)) continue;
+      // the best "A plus B": alternate between the row effects and the column effects (weighted by the rows in each cell)
+      var ea = new Float64Array(ka), eb = new Float64Array(kb);
+      for (var it = 0; it < 40; it++) {
+        for (var x = 0; x < ka; x++) { var sn = 0, sw = 0; for (var z = 0; z < kb; z++) { var cq = x * kb + z; if (N[cq] > 0) { sn += N[cq] * (S[cq] / N[cq] - M - eb[z]); sw += N[cq]; } } ea[x] = sw ? sn / sw : 0; }
+        for (z = 0; z < kb; z++) { sn = 0; sw = 0; for (x = 0; x < ka; x++) { cq = x * kb + z; if (N[cq] > 0) { sn += N[cq] * (S[cq] / N[cq] - M - ea[x]); sw += N[cq]; } } eb[z] = sw ? sn / sw : 0; }
+      }
+      var fm = 0; for (q = 0; q < nc; q++) if (N[q] > 0) fm += N[q] * (ea[Math.floor(q / kb)] + eb[q % kb]); fm /= tot;
+      var SSA = 0, odd = null, oddScore = 0;
+      for (q = 0; q < nc; q++) if (N[q] > 0) { var f1 = ea[Math.floor(q / kb)] + eb[q % kb] - fm, mq2 = S[q] / N[q] - M, dev = mq2 - f1; SSA += N[q] * f1 * f1; if (N[q] >= 100 && N[q] * dev * dev > oddScore) { oddScore = N[q] * dev * dev; odd = { a: cand[i].levels[Math.floor(q / kb)].label, b: cand[j].levels[q % kb].label, n: N[q], mean: S[q] / N[q], expected: M + f1 }; } }
+      var SSI = Math.max(SSC - SSA, 0), dfi = present - (ka + kb - 1), dfe = tot - present; if (dfi < 1 || dfe < 1) continue;
+      var MSE = SSW / dfe, F = (SSI / dfi) / (MSE || 1e-300), extra = Math.max(0, (SSI - dfi * MSE) / (SST + MSE)), share = Math.max(0, (SSC - (present - 1) * MSE) / (SST + MSE));
+      var sd = Math.sqrt(SST / Math.max(tot - 1, 1)), local = odd && extra >= 0.004 && odd.n >= 200 && Math.abs(odd.mean - odd.expected) >= 0.3 * sd && F > 10;      // a small group can change a lot without moving the overall share much
+      if ((extra >= 0.01 && F > 10) || local) out.push({ a: cand[i].col, b: cand[j].col, nameA: cand[i].name, nameB: cand[j].name, kindA: cand[i].kind, kindB: cand[j].kind, share: share, extra: extra, F: F, odd: odd, local: !(extra >= 0.01) });
+    }
+    out.sort(function (p, q) { return q.extra - p.extra; });
+    return out.slice(0, 3);
+  };
+  D.interText = function (it, yName, hi) {
+    var f = function (x) { return (Math.round(x * 1000) / 10) + '%'; }, n2 = function (v) { return D.yFn ? f(v) : (Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 100) / 100)); }, o = it.odd;
+    var lead = hi ? '“' + it.nameA + '” का असर “' + it.nameB + '” पर निर्भर करता है। साथ मिलाकर ये ' + f(it.share) + ' अंतर समझाते हैं, जिसमें से ' + f(it.extra) + ' केवल इस “निर्भरता” का है (अलग-अलग असर जोड़ने से यह नहीं मिलता)। '
+      : 'How much “' + it.nameA + '” matters depends on “' + it.nameB + '”. Together they explain ' + f(it.share) + ' of the differences, and ' + f(it.extra) + ' of that comes only from this dependence (it is more than their separate effects added up). ';
+    if (o) lead += hi ? 'सबसे अलग समूह: ' + it.nameB + ' = ' + o.b + ', ' + it.nameA + ' = ' + o.a + ' (' + CH().indian(o.n) + ' पंक्तियाँ): औसत ' + n2(o.mean) + ', जबकि अलग-अलग असर से लगभग ' + n2(o.expected) + ' की उम्मीद थी।' : 'The group that stands out: ' + it.nameB + ' = ' + o.b + ' with ' + it.nameA + ' = ' + o.a + ' (' + CH().indian(o.n) + ' rows): average ' + n2(o.mean) + ', where the separate effects would suggest about ' + n2(o.expected) + '.';
+    return lead;
   };
 
   // ---------------------------------------------------------------- stand-ins
@@ -452,7 +505,7 @@
     return ranked;
   };
 
-  D.summary = function (ranked, yName, hi) {
+  D.summary = function (ranked, yName, hi, inter) {
     var f = function (x) { return (Math.round(x * 1000) / 10) + '%'; }, n2 = function (v) { return D.yFn ? f(v) : (Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 100) / 100)); };
     var causes = ranked.filter(function (r) { return !r.derived; }), res = ranked.filter(function (r) { return r.derived; }), out = [];
     var lab = causes.filter(function (r) { return r.walls; }); causes = causes.filter(function (r) { return !r.walls; });   // possible labels are told apart, not led with
@@ -467,8 +520,8 @@
         if (z.made) { var nm = z.name.split(' + ').map(function (x) { return '“' + x + '”'; });
           out.push(hi ? '“' + r.name + '” ' + nm.join(' और ') + ' से बना है (इनके हर संयोजन में इसका एक ही मान है), इसलिए यह उनका सार है, अलग कारण नहीं: कुल मिलाकर ' + f(r.omega2) + ', पर हर संयोजन के भीतर केवल ' + f(z.omega2) + '।'
                       : '“' + r.name + '” is made of ' + nm.join(' and ') + ' (every combination of them has one value of it), so it sums them up and is not a separate cause: it explains ' + f(r.omega2) + ' overall but only ' + f(z.omega2) + ' inside each combination.'); return; }
-        out.push(hi ? '“' + r.name + '” मुख्यतः “' + z.name + '” का प्रतिबिंब है: कुल मिलाकर यह ' + f(r.omega2) + ' समझाता है, पर हर “' + z.name + '” समूह के भीतर केवल ' + f(z.omega2) + '। इसे अलग कारण न मानें।'
-                    : '“' + r.name + '” mostly stands in for “' + z.name + '”: it explains ' + f(r.omega2) + ' overall but only ' + f(z.omega2) + ' inside each “' + z.name + '” group. Do not count it as a separate cause.'); });
+        out.push(hi ? '“' + r.name + '” मुख्यतः “' + z.name + '” के साथ-साथ चलता है: कुल मिलाकर यह ' + f(r.omega2) + ' अंतर से जुड़ा है, पर “' + z.name + '” को समान रखने पर केवल ' + f(z.omega2) + '। इसे अलग कारण न मानें।'
+                    : '“' + r.name + '” mostly just follows “' + z.name + '”: it goes with ' + f(r.omega2) + ' of the differences overall, but only ' + f(z.omega2) + ' once “' + z.name + '” is held the same. Do not treat it as a separate cause.'); });
       var weak = causes.filter(function (r) { return r.omega2 < 0.01; }).map(function (r) { return r.name; });
       if (weak.length) out.push(hi ? 'लगभग कोई संबंध नहीं (1% से कम): ' + weak.slice(0, 6).join(', ') + (weak.length > 6 ? ' …' : '।') : 'Almost no link (under 1% each): ' + weak.slice(0, 6).join(', ') + (weak.length > 6 ? ' …' : '.'));
     } else out.push(hi ? 'किसी भी कॉलम का “' + yName + '” से स्पष्ट संबंध नहीं।' : 'No column goes clearly with “' + yName + '”.');
@@ -481,7 +534,8 @@
     var after = res.filter(function (r) { return r.derived.why === 'result'; }); res = res.filter(function (r) { return r.derived.why !== 'result'; });
     if (after.length) out.push(hi ? after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' “' + yName + '” के बाद की गिनती है, इसलिए यह उसका परिणाम है, कारण नहीं; इसे क्रम से बाहर रखा गया है।' : after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' count' + (after.length > 1 ? '' : 's') + ' what happens after “' + yName + '”, so it is a result of it, not a cause. Left out of the ranking.');
     if (res.length) out.push(hi ? 'ये कॉलम “' + yName + '” से ही बने लगते हैं — इन्हें कारण न मानें: ' + res.map(function (r) { return r.name; }).join(', ') + '।' : 'These columns look calculated from “' + yName + '” itself — treat them as results, not causes: ' + res.map(function (r) { return r.name; }).join(', ') + '.');
-    out.push(hi ? 'कारक एक-दूसरे से जुड़े हो सकते हैं; किसी एक को दूसरों के मुकाबले जाँचने के लिए “निष्पक्ष तुलना” उपयोग करें।' : 'Factors can overlap; use “Fair comparison” to check one against the others.');
+    if (inter && inter.length) out.push(hi ? 'ध्यान दें: एक छिपी निर्भरता मिली है, जो एक-एक कॉलम देखने से नहीं दिखती (नीचे “यह किस पर निर्भर करता है”)।' : 'Note: a dependence was found that looking at one column at a time does not show — see “It depends on …” below.');
+    out.push(hi ? 'कई कारक साथ-साथ चल सकते हैं। किसी एक को दूसरों के मुकाबले निष्पक्ष जाँचने के लिए “क्या यह असली है?” (निष्पक्ष तुलना) उपयोग करें।' : 'Several factors can go together. To test one fairly against the others, use “Is it real?” (Fair comparison).');
     return out;
   };
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -552,7 +606,7 @@
     var yFn = DS.yCat ? function (cell) { var q = s0(cell).trim(); return q === '' ? null : (q === DS.yCat.value ? 1 : 0); } : null; D.yFn = yFn;
     var yName = DS.yCat ? H[y] + ' = ' + DS.yCat.value : H[y];
     var cands = D.candidates(H, DS.prof, y);
-    if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero, logY: D.logY, yFn: yFn }); done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
+    if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero, logY: D.logY, yFn: yFn }); try { DS.inter = D.interactions(RD(), viewIdx(), y, R, { noZero: DS.noZero }); } catch (e2) { DS.inter = []; } done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
     // large file: the engine sums every row, per column (number columns in bands made from the sample's quintiles)
     var sc = STL.bigCharts.scope(), S = STL.bigCharts.sample;
     Promise.all(cands.map(function (c) {
@@ -572,6 +626,7 @@
             }).then(function () {
         return Promise.all(ranked.filter(function (r) { return r.walls; }).map(function (r) { return bigRule(r, y, H, cands, sc, ranked); }));
       }).then(function () {
+        try { DS.inter = D.interactions(S.rows, S.idx, y, ranked, { noZero: DS.noZero }); } catch (e2) { DS.inter = []; }          // from the sample the charts use
         done(ranked, T('Calculated by the engine from all rows of the file', 'इंजन ने फ़ाइल की सभी पंक्तियों से गणना की') + (ranked.some(function (r) { return r.rule; }) ? T('; the label rule was learned from a sample that keeps every label and then checked on all rows.', '; लेबल का नियम हर लेबल वाले नमूने से सीखा गया और फिर सभी पंक्तियों पर जाँचा गया।') : '.'));
       });
     }).catch(fail);
@@ -593,9 +648,9 @@
   function fillChecks() { var el = $('drCols'); if (el && DS.checks) el.innerHTML = STL.colChecks.html(DS.checks); }
   function show(ranked, yName, note) {
     var out = $('drOut'); if (!out) return; dispose();
-    var lines = D.summary(ranked, yName, hi()), causes = ranked.filter(function (r) { return !r.derived; }), res = ranked.filter(function (r) { return r.derived; });
+    var lines = D.summary(ranked, yName, hi(), DS.inter), causes = ranked.filter(function (r) { return !r.derived; }), res = ranked.filter(function (r) { return r.derived; });
     var pct = function (x) { return (Math.round(x * 1000) / 10).toFixed(1) + '%'; }, nv = function (v) { return D.yFn ? pct(v) : Math.abs(v) >=1000 ? CH.indian(Math.round(v)) : (Math.round(v * 100) / 100).toFixed(2); };
-    var row = function (r) { return '<tr><td><b>' + esc(r.name) + '</b>' + (r.walls ? ' <span title="' + esc(T('May be a label given by the number', 'शायद संख्या से तय लेबल')) + '">⚠</span>' : '') + (r.kind === 'num' ? ' <em>(' + T('5 bands', '5 समूह') + ')</em>' : '') + (r.formula && !(r.derived && r.derived.why === 'formula') ? '<div class="dr-via">= ' + esc(r.formula.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.derived && r.derived.why === 'formula' ? '<div class="dr-via">= ' + esc(r.derived.text.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.standIn && r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('made of ', 'इनसे बना: ')) + '<b>' + esc(r.standIn.name.split(' + ').join(T(' and ', ' और '))) + '</b>' + esc(T(': inside their combinations only ', ': इनके संयोजनों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.standIn && !r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('mostly through ', 'मुख्यतः ')) + '<b>' + esc(r.standIn.name) + '</b>' + esc(T(': inside its groups only ', ' के कारण: उसके समूहों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.partly ? '<div class="dr-via">↳ ' + esc(T('partly through ', 'आंशिक रूप से ')) + '<b>' + esc(r.partly.name) + '</b>' + esc(T(': inside its groups ', ' के कारण: उसके समूहों के भीतर ')) + pct(r.partly.omega2) + '</div>' : '') + '</td><td class="num"><b>' + pct(r.omega2) + '</b></td><td>' + (r.low && r.high ? esc(r.low.label) + ' <em>' + nv(r.low.mean) + '</em> → ' + esc(r.high.label) + ' <em>' + nv(r.high.mean) + '</em>' : '–') + '</td><td><button class="cs-link" data-ch="' + r.col + '">📊 ' + T('Chart', 'चार्ट') + '</button>' + (r.kind === 'cat' && !r.derived && !DS.yCat ? ' · <button class="cs-link" data-fr="' + r.col + '">⚖ ' + T('Fair check', 'निष्पक्ष जाँच') + '</button>' : '') + '</td></tr>'; };
+    var row = function (r) { return '<tr><td><b>' + esc(r.name) + '</b>' + (r.walls ? ' <span title="' + esc(T('May be a label given by the number', 'शायद संख्या से तय लेबल')) + '">⚠</span>' : '') + (r.kind === 'num' ? ' <em>(' + T('grouped low to high', 'कम से अधिक समूहों में') + ')</em>' : '') + (r.formula && !(r.derived && r.derived.why === 'formula') ? '<div class="dr-via">= ' + esc(r.formula.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.derived && r.derived.why === 'formula' ? '<div class="dr-via">= ' + esc(r.derived.text.split(' = ').slice(1).join(' = ')) + '</div>' : '') + (r.standIn && r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('made of ', 'इनसे बना: ')) + '<b>' + esc(r.standIn.name.split(' + ').join(T(' and ', ' और '))) + '</b>' + esc(T(': inside their combinations only ', ': इनके संयोजनों के भीतर केवल ')) + pct(r.standIn.omega2) + '</div>' : '') + (r.standIn && !r.standIn.made ? '<div class="dr-via">↳ ' + esc(T('mostly just follows ', 'मुख्यतः साथ चलता है: ')) + '<b>' + esc(r.standIn.name) + '</b>' + esc(T(' (only ', ' (केवल ')) + pct(r.standIn.omega2) + esc(T(' once it is held the same)', ' जब वह समान रखा जाए)')) + '</div>' : '') + (r.partly ? '<div class="dr-via">↳ ' + esc(T('partly follows ', 'आंशिक रूप से साथ चलता है: ')) + '<b>' + esc(r.partly.name) + '</b>' + esc(T(' (', ' (')) + pct(r.partly.omega2) + esc(T(' once it is held the same)', ' जब वह समान रखा जाए)')) + '</div>' : '') + '</td><td class="num"><b>' + pct(r.omega2) + '</b></td><td>' + (r.low && r.high ? esc(r.low.label) + ' <em>' + nv(r.low.mean) + '</em> → ' + esc(r.high.label) + ' <em>' + nv(r.high.mean) + '</em>' : '–') + '</td><td><button class="cs-link" data-ch="' + r.col + '">📊 ' + T('Chart', 'चार्ट') + '</button>' + (r.kind === 'cat' && !r.derived && !DS.yCat ? ' · <button class="cs-link" data-fr="' + r.col + '">⚖ ' + T('Is it real?', 'क्या यह असली है?') + '</button>' : '') + '</td></tr>'; };
     var head = '<tr><th>' + T('Column', 'कॉलम') + '</th><th>' + T('Explains', 'समझाता है') + '</th><th>' + T('Lowest → highest average', 'न्यूनतम → अधिकतम औसत') + '</th><th></th></tr>';
     var bn = ''; (DS.pairs || []).forEach(function (pr) { if (bn || DS.yCat || (pr.before !== DS.y && pr.after !== DS.y) || HD().indexOf(pr.name) >= 0) return; var H2 = HD();
       bn = '<div class="big-note" style="border-color:#14a38b"><b>💡 ' + esc(T('Before and after', 'पहले और बाद')) + '</b> — ' + esc(T('“' + H2[pr.before] + '” and “' + H2[pr.after] + '” look like a before and an after. Most of the difference between rows is where they started. To see what changed:', '“' + H2[pr.before] + '” और “' + H2[pr.after] + '” पहले और बाद जैसे लगते हैं। पंक्तियों के बीच अंतर का अधिकांश हिस्सा यह है कि उन्होंने कहाँ से शुरू किया। बदलाव देखने के लिए:')) + ' <button class="tb-btn primary" data-chg="' + pr.after + '|' + pr.before + '|' + esc(pr.name) + '">' + esc(T('Add “' + pr.name + '” and explain it', '“' + pr.name + '” जोड़ें और समझाएँ')) + '</button></div>'; });
@@ -609,10 +664,15 @@
           lines.map(function (u, k) { return '<tr><td class="num">' + (k + 1) + '</td><td>' + esc(D.lineText(u, hi())) + '</td><td><b>' + esc(u.label) + '</b></td><td class="num">' + CH.indian(u.n) + '</td><td class="num">' + (u.n ? D.accText(u.right / u.n) : '–') + '</td></tr>'; }).join('') +
           '<tr><td></td><td><em>' + T('otherwise', 'अन्यथा') + '</em></td><td><b>' + esc(q.otherwise.label) + '</b></td><td class="num">' + CH.indian(q.otherwise.n) + '</td><td class="num">' + (q.otherwise.n ? D.accText(q.otherwise.right / q.otherwise.n) : '–') + '</td></tr></table>';
       }).join('') +
+      ((DS.inter || []).length ? '<div class="prj-sub">🔗 ' + T('It depends on …', 'यह किस पर निर्भर करता है …') + '</div>' + DS.inter.map(function (it, i) { return '<div class="big-note" style="border-color:#6d5bd0">' + esc(D.interText(it, yName, hi())) + ' <button class="cs-link" data-int="' + i + '">📊 ' + T('Show', 'दिखाएँ') + '</button></div>'; }).join('') : '') +
       (res.length ? '<div class="prj-sub">' + T('Probably results of ', 'संभवतः परिणाम: ') + esc(yName) + T(' (not causes)', ' (कारण नहीं)') + '</div><table class="big-tbl fr-tbl">' + head + res.map(row).join('') + '</table>' : '') +
       '<div id="drCols"></div>' +
       '<div class="fr-how">' + T('“Explains” is ω² (omega squared): the share of the variation in the number that lies between the groups of a column, corrected for chance. It shows which factors go together with the number, not what causes it. ', '“समझाता है” = ω² (ओमेगा स्क्वेयर्ड): संख्या की भिन्नता का वह भाग जो किसी कॉलम के समूहों के बीच है, संयोग के लिए सुधारा हुआ। यह बताता है कि कौन-से कारक संख्या के साथ चलते हैं, कारण नहीं। ') + (note ? esc(note) : '') + '</div>';
     out.innerHTML = html; fillChecks();
+    out.querySelectorAll('[data-int]').forEach(function (b) { b.onclick = function () {
+      var it = DS.inter[+b.dataset.int], xa = it.a, gb = it.b; if (it.kindB === 'num' && it.kindA !== 'num') { xa = it.b; gb = it.a; }
+      var xn = (xa === it.a ? it.kindA : it.kindB) === 'num', spec = { x: xa, g: gb, ys: [DS.yCat ? { col: DS.y, fn: 'pct', op: '=', value: DS.yCat.value } : { col: DS.y, fn: 'avg' }], noZero: DS.noZero, sort: xn ? 'natural' : 'desc' }; if (xn) spec.bands = 6;
+      dispose(); var d = $('driversDialog'); if (d) d.remove(); STL.openChartStudio({ type: xn ? 'line' : 'column', spec: spec }); }; });
     out.querySelectorAll('[data-chg]').forEach(function (b) { b.onclick = function () { var q = b.dataset.chg.split('|'); STL.addColumn({ a: +q[0], op: 'minus', b: +q[1], name: q.slice(2).join('|') }, function (ni) { dispose(); var d = $('driversDialog'); if (d) d.remove(); STL.openDrivers({ y: ni }); }); }; });
     out.querySelectorAll('[data-ch]').forEach(function (b) { b.onclick = function () { var c = +b.dataset.ch, r = ranked.filter(function (q) { return q.col === c; })[0], spec = { x: c, ys: [DS.yCat ? { col: DS.y, fn: 'pct', op: '=', value: DS.yCat.value } : { col: DS.y, fn: 'avg' }], noZero: DS.noZero, sort: r && r.kind === 'num' ? 'natural' : 'desc' }; if (r && r.kind === 'num') spec.bands = 6; dispose(); $('driversDialog').remove(); STL.openChartStudio({ type: 'column', spec: spec }); }; });
     out.querySelectorAll('[data-fr]').forEach(function (b) { b.onclick = function () { var c = +b.dataset.fr, others = causes.filter(function (r) { return r.col !== c && !r.walls && !r.standIn && r.omega2 >= 0.005; }).slice(0, 3).map(function (r) { return r.col; }); dispose(); $('driversDialog').remove(); STL.openFair({ y: DS.y, f: c, adj: others, noZero: DS.noZero }); }; });

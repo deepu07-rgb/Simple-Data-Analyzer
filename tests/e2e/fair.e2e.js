@@ -38,10 +38,10 @@ const csv = reps => Buffer.from('Rating,Online delivery,Price range,City\n' + Ar
   const r = await ev(() => ({ title: document.querySelector('.fr-verdict b').innerText, text: document.querySelector('.fr-verdict p').innerText, rows: Array.from(document.querySelectorAll('.fr-tbl tr')).map(t => t.innerText.replace(/\s+/g, ' ')), adj: Array.from(document.querySelectorAll('#frAdj input:checked')).map(i => i.parentNode.innerText.trim()), strata: !!document.querySelector('#frChart canvas'), y: document.getElementById('frY').selectedOptions[0].text, f: document.getElementById('frF').selectedOptions[0].text }));
   ok(r.y === 'Rating' && r.f === 'Online delivery', 'The Studio opens it with the chart\'s measure and groups (' + r.y + ' by ' + r.f + ')', r);
   ok(/Price range/.test(r.adj.join()) , 'It chooses the factors to adjust for by itself (' + r.adj.join(', ') + ')', r.adj);
-  ok(/REVERSES/.test(r.title) && /Simpson/.test(r.title), 'The verdict says the gap REVERSES and names it a mix effect (Simpson’s paradox)', r.title);
-  ok(/plain gap is −0\.25/.test(r.text) && /\+0\.1[0-9]/.test(r.text), 'It states both numbers: plain −0.25, like-for-like +0.10', r.text);
+  ok(/misleading/.test(r.title) && /flips/.test(r.title), 'The verdict says the first comparison is misleading because the answer flips', r.title);
+  ok(/as they are, the difference is −0\.25/.test(r.text) && /\+0\.1[0-9]/.test(r.text), 'It states both numbers: as they are −0.25, among similar rows +0.10', r.text);
   ok(/Price range/.test(r.text) && /% Price range = 1 versus/.test(r.text), 'It names the cause and shows the make-up difference', r.text);
-  ok(r.rows.some(t => /Yes/.test(t) && /−0\.25/.test(t) && /\+0\.10/.test(t)), 'The table shows the plain and the adjusted gap with its 95% range', r.rows);
+  ok(r.rows.some(t => /Yes/.test(t) && /−0\.25/.test(t) && /\+0\.10/.test(t)), 'The table shows the plain and the adjusted gap with the range it most likely lies in', r.rows);
   ok(r.strata, 'A chart shows the gap inside every price range');
   await shot('50-fair-reversal');
   // the app's number equals statsmodels
@@ -57,7 +57,7 @@ const csv = reps => Buffer.from('Rating,Online delivery,Price range,City\n' + Ar
 
   // ---- Hindi
   await ev(() => { document.getElementById('frX').click(); setUiLanguage('hi'); STL.openFair({ y: 0, f: 1, adj: [2, 3] }); }); await wait(900);
-  ok(await ev(() => /सिम्पसन/.test(document.querySelector('.fr-verdict b').innerText) && /सीधा अंतर −0\.25/.test(document.querySelector('.fr-verdict p').innerText) && /निष्पक्ष तुलना/.test(document.querySelector('#fairDialog .prj-h').innerText)), 'The whole screen and the verdict speak Hindi');
+  ok(await ev(() => /भ्रामक/.test(document.querySelector('.fr-verdict b').innerText) && /जैसे हैं वैसे समूहों में अंतर −0\.25/.test(document.querySelector('.fr-verdict p').innerText) && /निष्पक्ष तुलना/.test(document.querySelector('#fairDialog .prj-h').innerText)), 'The whole screen and the verdict speak Hindi');
   await shot('51-fair-hindi');
   await ev(() => { document.getElementById('frX').click(); setUiLanguage('en'); });
 
@@ -76,7 +76,7 @@ const csv = reps => Buffer.from('Rating,Online delivery,Price range,City\n' + Ar
   await page.waitForFunction(() => window.BIG && BIG.active && BIG.matched === 12000, null, { timeout: 30000 });
   await ev(() => STL.openFair({ y: 0, f: 1, adj: [2, 3] })); await page.waitForFunction(() => document.querySelector('#frOut .fr-verdict'), null, { timeout: 15000 }); await wait(500);
   const big = await ev(() => ({ title: document.querySelector('.fr-verdict b').innerText, text: document.querySelector('.fr-verdict p').innerText }));
-  ok(/REVERSES/.test(big.title) && /plain gap is −0\.25/.test(big.text), 'On a 12,000-row Large File (calculated by the engine) the verdict is the same', big);
+  ok(/misleading/.test(big.title) && /as they are, the difference is −0\.25/.test(big.text), 'On a 12,000-row Large File (calculated by the engine) the verdict is the same', big);
   const m = /it is \+(\d\.\d\d)/.exec(big.text); ok(m && Math.abs(+m[1] - Math.round(FX.full.beta * 100) / 100) < 0.011, 'and the like-for-like gap equals the in-memory one (+' + (m && m[1]) + ')', big.text);
   await shot('52-fair-big');
 
