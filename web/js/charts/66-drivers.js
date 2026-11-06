@@ -15,6 +15,11 @@
   function CH() { return STL.charts; }
   function s(v) { return v == null ? '' : String(v); }
 
+  // a number with a few huge values (streams: 134 .. 443,000,000) is explained on a log scale: otherwise the handful of giants decides everything
+  D.logY = false;
+  function yv(v) { var C = CH(), x = C.num(v); return (x !== null && D.logY) ? Math.log1p(Math.max(x, 0)) : x; }
+  // columns that count what happens AFTER a yes/no outcome (plays after "viral", sales after "bought") are results of it
+  D.NAME_RESULT = /streams|plays|views|downloads|listens|clicks|likes|shares|orders|sales|revenue|visits|installs|साझा|बिक्री/i;
   D.omega = function (levels) {
     var N = 0, SY = 0, SYY = 0, k = 0, ssb = 0, ssw = 0;
     levels.forEach(function (l) { if (!l.n) return; k++; N += l.n; SY += l.sy; SYY += l.syy; });
@@ -41,7 +46,7 @@
   // pass/fail - so such a column should not be used to adjust a comparison of that number.
   D.walls = function (rows, idx, y, col, noZero) {
     var C = CH(), by = {}, all = [];
-    for (var k = 0; k < idx.length; k++) { var r = rows[idx[k]], v = C.num(r[y]); if (v === null || (noZero && v === 0)) continue; var key = s(r[col]).trim(); if (!key) continue; (by[key] || (by[key] = [])).push(v); all.push(v); }
+    for (var k = 0; k < idx.length; k++) { var r = rows[idx[k]], v = yv(r[y]); if (v === null || (noZero && C.num(r[y]) === 0)) continue; var key = s(r[col]).trim(); if (!key) continue; (by[key] || (by[key] = [])).push(v); all.push(v); }
     all.sort(function (a, b) { return a - b; });
     var N = all.length, below = function (x) { var lo = 0, hi = N; while (lo < hi) { var m = (lo + hi) >> 1; if (all[m] < x) lo = m + 1; else hi = m; } return lo; }, above = function (x) { var lo = 0, hi = N; while (lo < hi) { var m = (lo + hi) >> 1; if (all[m] <= x) lo = m + 1; else hi = m; } return N - lo; };
     var out = [];
@@ -63,28 +68,28 @@
 
   // in-memory ranking from the rows
   D.rank = function (rows, idx, headers, y, opt) {
-    opt = opt || {}; var C = CH(), prof = opt.prof || C.profile(headers, rows, idx), cands = opt.candidates || D.candidates(headers, prof, y);
+    opt = opt || {}; D.logY = !!opt.logY; var C = CH(), prof = opt.prof || C.profile(headers, rows, idx), cands = opt.candidates || D.candidates(headers, prof, y);
     var ranked = D.finish(cands.map(function (c) {
       var bands = null, by = {};
       if (c.kind === 'num') bands = C.quantileBands(idx.map(function (i) { return C.num(rows[i][c.col]); }), 5);
       for (var k = 0; k < idx.length; k++) {
-        var r = rows[idx[k]], v = C.num(r[y]); if (v === null || (opt.noZero && v === 0)) continue;
+        var r = rows[idx[k]], v = yv(r[y]); if (v === null || (opt.noZero && C.num(r[y]) === 0)) continue;
         var key; if (bands) { var bi = C.bandOf(bands, C.num(r[c.col])); key = bi < 0 ? '(blank)' : bands.labels[bi]; } else { key = s(r[c.col]).trim() || '(blank)'; }
         var o = by[key] || (by[key] = { label: key, n: 0, sy: 0, syy: 0 }); o.n++; o.sy += v; o.syy += v * v;
       }
       return { col: c.col, name: c.name, kind: c.kind, levels: Object.keys(by).map(function (q) { return by[q]; }), bands: bands };
-    }), headers[y]);
+    }), headers[y], { flagY: !!(prof[y] && prof[y].flag) });
     if (opt.walls !== false) D.markWalls(ranked, rows, idx, y, opt.noZero);
     return opt.standIns === false ? ranked : D.findStandIns(ranked, rows, idx, y, opt.noZero);
   };
   // turn per-column level sums into the ranked answer (shared with the large-file path)
-  D.finish = function (list, yName) {
+  D.finish = function (list, yName, fopt) {
     var out = list.map(function (d) {
-      var lv = d.levels.filter(function (l) { return l.n > 0; }), om = D.omega(lv), big = lv.filter(function (l) { return l.n >= 20; }).map(function (l) { return { label: l.label, n: l.n, mean: l.sy / l.n }; });
+      var lv = d.levels.filter(function (l) { return l.n > 0; }), om = D.omega(lv), big = lv.filter(function (l) { return l.n >= 20; }).map(function (l) { return { label: l.label, n: l.n, mean: D.logY ? Math.expm1(l.sy / l.n) : l.sy / l.n }; });
       big.sort(function (a, b) { return b.mean - a.mean; });
       var shared = D.sharesName(d.name, yName);
       return { col: d.col, name: d.name, kind: d.kind, omega2: om.omega2, eta2: om.eta2, k: om.k, n: om.n, high: big[0] || null, low: big[big.length - 1] || null, levels: big, bands: d.bands || null,
-               derived: shared.length ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : null) };
+               derived: shared.length ? { why: 'name', words: shared } : (om.eta2 >= 0.6 ? { why: 'determines' } : (fopt && fopt.flagY && d.kind === 'num' && D.NAME_RESULT.test(d.name) ? { why: 'result' } : null)) };
     });
     out.sort(function (a, b) { return b.omega2 - a.omega2; });
     return out;
@@ -107,7 +112,7 @@
   D.pairCells = function (rows, idx, y, xc, zc, noZero) {
     var C = CH(), by = {};
     for (var k = 0; k < idx.length; k++) {
-      var r = rows[idx[k]], v = C.num(r[y]); if (v === null || (noZero && v === 0)) continue;
+      var r = rows[idx[k]], v = yv(r[y]); if (v === null || (noZero && C.num(r[y]) === 0)) continue;
       var x = keyOf(r, xc, C), z = keyOf(r, zc, C), key = z + '\u0001' + x, o = by[key] || (by[key] = { z: z, x: x, n: 0, sy: 0, syy: 0 }); o.n++; o.sy += v; o.syy += v * v;
     }
     return Object.keys(by).map(function (q) { return by[q]; });
@@ -136,7 +141,7 @@
   D.findComposites = function (ranked, rows, idx, y, noZero) {
     var C = CH(), real = ranked.filter(function (r) { return !r.derived && !r.walls && !r.standIn && r.omega2 >= 0.01; });
     var X = real.filter(function (r) { return r.kind === 'cat' && r.k >= 3; }); if (!X.length || real.length < 3) return ranked;
-    var keep = [], ys = []; for (var k = 0; k < idx.length; k++) { var v = C.num(rows[idx[k]][y]); if (v === null || (noZero && v === 0)) continue; keep.push(idx[k]); ys.push(v); }
+    var keep = [], ys = []; for (var k = 0; k < idx.length; k++) { var v = yv(rows[idx[k]][y]); if (v === null || (noZero && C.num(rows[idx[k]][y]) === 0)) continue; keep.push(idx[k]); ys.push(v); }
     var codes = {}, sizes = {}; real.forEach(function (c) { var map = {}, m = 0, a = new Int32Array(keep.length); for (var t = 0; t < keep.length; t++) { var key = keyOf(rows[keep[t]], c, C); a[t] = key in map ? map[key] : (map[key] = m++); } codes[c.col] = a; sizes[c.col] = m; });
     function zkey(cols, t) { var z = 0; for (var u = 0; u < cols.length; u++) z = z * sizes[cols[u]] + codes[cols[u]][t]; return z; }
     function purity(xc, cols) {                                         // share of rows whose value is the most common one in their combination
@@ -170,7 +175,7 @@
     var C = CH(), pairs = D.standInPairs(ranked); if (!pairs.length) return ranked;
     // each column's group of every row, as a small whole number, once; then a pair is one pass over typed arrays
     var keep = [], ys = [];
-    for (var k = 0; k < idx.length; k++) { var v = C.num(rows[idx[k]][y]); if (v === null || (noZero && v === 0)) continue; keep.push(idx[k]); ys.push(v); }
+    for (var k = 0; k < idx.length; k++) { var v = yv(rows[idx[k]][y]); if (v === null || (noZero && C.num(rows[idx[k]][y]) === 0)) continue; keep.push(idx[k]); ys.push(v); }
     var codes = {}, sizes = {};
     var codeCols = []; pairs.forEach(function (p) { codeCols.push(p.x, p.z); }); ranked.forEach(function (r) { if (!r.derived && !r.walls && r.omega2 >= 0.01) codeCols.push(r); });
     codeCols.forEach(function (c) { (function (c) { if (codes[c.col]) return; var map = {}, m = 0, a = new Int32Array(keep.length); for (var t = 0; t < keep.length; t++) { var key = keyOf(rows[keep[t]], c, C); a[t] = key in map ? map[key] : (map[key] = m++); } codes[c.col] = a; sizes[c.col] = m; })(c); });
@@ -450,6 +455,7 @@
     var f = function (x) { return (Math.round(x * 1000) / 10) + '%'; }, n2 = function (v) { return Math.abs(v) >= 1000 ? CH().indian(Math.round(v)) : String(Math.round(v * 100) / 100); };
     var causes = ranked.filter(function (r) { return !r.derived; }), res = ranked.filter(function (r) { return r.derived; }), out = [];
     var lab = causes.filter(function (r) { return r.walls; }); causes = causes.filter(function (r) { return !r.walls; });   // possible labels are told apart, not led with
+    if (D.logY) out.push(hi ? '“' + yName + '” में कुछ बहुत बड़े मान हैं, इसलिए नीचे के प्रतिशत लॉग-स्केल पर हैं (वरना मुट्ठी भर बड़े मान सब तय कर देते)। दिखाए गए मान सामान्य (ज्यामितीय औसत) हैं।' : '“' + yName + '” has a few huge values, so the shares below are on a log scale (otherwise a handful of giants would decide everything). The values shown are typical ones (geometric averages).');
     var top = causes.filter(function (r) { return !r.standIn; })[0];                // a column made of others is never the headline
     if (top && top.omega2 >= 0.005) {
       out.push(hi ? '“' + yName + '” के अंतर सबसे अधिक “' + top.name + '” से जुड़े हैं (भिन्नता का ' + f(top.omega2) + ' समझाता है)' + (top.high && top.low ? ': ' + n2(top.low.mean) + ' (' + top.low.label + ') से ' + n2(top.high.mean) + ' (' + top.high.label + ') तक।' : '।')
@@ -469,6 +475,8 @@
     lab.forEach(function (r) { var w = r.walls[0], e = n2(w.edge);
       out.push(hi ? '“' + r.name + '” शायद “' + yName + '” से तय होने वाला लेबल है: हर “' + w.label + '” पंक्ति में यह ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ' है, जबकि बाकी ' + Math.round(w.beyond * 100) + '% पंक्तियाँ इसके पार हैं। इसे कारण मानने से पहले जाँचें; निष्पक्ष तुलना इसे अपने-आप नहीं चुनती।' + ruleLine(r)
                   : '“' + r.name + '” may be a label given BY “' + yName + '”: every “' + w.label + '” row has it ' + (w.side === 'max' ? '≤ ' : '≥ ') + e + ', while ' + Math.round(w.beyond * 100) + '% of the other rows lie beyond. Check before treating it as a cause; Fair comparison does not pick it by itself.' + ruleLine(r)); });
+    var after = res.filter(function (r) { return r.derived.why === 'result'; }); res = res.filter(function (r) { return r.derived.why !== 'result'; });
+    if (after.length) out.push(hi ? after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' “' + yName + '” के बाद की गिनती है, इसलिए यह उसका परिणाम है, कारण नहीं; इसे क्रम से बाहर रखा गया है।' : after.map(function (r) { return '“' + r.name + '”'; }).join(', ') + ' count' + (after.length > 1 ? '' : 's') + ' what happens after “' + yName + '”, so it is a result of it, not a cause. Left out of the ranking.');
     if (res.length) out.push(hi ? 'ये कॉलम “' + yName + '” से ही बने लगते हैं — इन्हें कारण न मानें: ' + res.map(function (r) { return r.name; }).join(', ') + '।' : 'These columns look calculated from “' + yName + '” itself — treat them as results, not causes: ' + res.map(function (r) { return r.name; }).join(', ') + '.');
     out.push(hi ? 'कारक एक-दूसरे से जुड़े हो सकते हैं; किसी एक को दूसरों के मुकाबले जाँचने के लिए “निष्पक्ष तुलना” उपयोग करें।' : 'Factors can overlap; use “Fair comparison” to check one against the others.');
     return out;
@@ -529,8 +537,9 @@
       }).catch(function () {});
     };
     var fail = function (e) { if ($('drOut')) $('drOut').innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; };
+    D.logY = !isBig() && !!(DS.prof[y] && DS.prof[y].heavy);
     var cands = D.candidates(H, DS.prof, y);
-    if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero }); done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
+    if (!isBig()) { setTimeout(function () { try { var R = D.rank(RD(), viewIdx(), H, y, { prof: DS.prof, candidates: cands, noZero: DS.noZero, logY: D.logY }); done(D.addRules(R, RD(), viewIdx(), y, H[y], cands)); } catch (e) { fail(e); } }, 20); return; }
     // large file: the engine sums every row, per column (number columns in bands made from the sample's quintiles)
     var sc = STL.bigCharts.scope(), S = STL.bigCharts.sample;
     Promise.all(cands.map(function (c) {
@@ -540,7 +549,7 @@
         return { col: c.col, name: c.name, kind: c.kind, bands: b, levels: r.cells.map(function (cell) { var key = cell.k[0], m = /^b(\d+)$/.exec(key); return { label: b && m ? b.labels[+m[1]] : key, n: cell.n, sy: cell.sy, syy: cell.syy }; }) };
       });
     })).then(function (list) {
-      var ranked = D.findComposites(D.markWalls(D.finish(list, H[y]), S.rows, S.idx, y, DS.noZero), S.rows, S.idx, y, DS.noZero), pairs = D.standInPairs(ranked);
+      var ranked = D.findComposites(D.markWalls(D.finish(list, H[y], { flagY: !!(DS.prof[y] && DS.prof[y].flag) }), S.rows, S.idx, y, DS.noZero), S.rows, S.idx, y, DS.noZero), pairs = D.standInPairs(ranked);
       // stand-ins: the engine adds up every (column, stronger column) pair
       // stand-ins: the engine adds up every (column, stronger column) pair, in one request
       var b = {}; ranked.forEach(function (c) { if (c.bands) b[c.col] = c.bands.edges; });

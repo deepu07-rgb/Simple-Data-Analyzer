@@ -84,12 +84,12 @@
   var NAME_ID = /(^|[\s._\-/])(id|uid|guid|sr|sl|no|number|क्रम|क्रमांक|नंबर|आईडी)([\s._\-/]|$)/i, NAME_CODE = /(^|[\s._\-/])(code|pin|pincode|zip|phone|mobile|contact|aadhaar|aadhar|कोड|फोन|मोबाइल)([\s._\-/]|$)/i,
       NAME_COORD = /^(lat|latitude|lon|long|lng|longitude|अक्षांश|देशांतर)$/i, NAME_SCORE = /(^|[^a-z])(rating|ratings|score|scores|grade|marks|percent|percentage|pct|rate|ratio|index|age)([^a-z]|$)|%|आयु|अंक|प्रतिशत/i;
   function colFacts(rows, idx, c, header) {
-    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, zeros = 0, sample = Math.min(idx.length, 4000), listy = 0, items = {}, itemTotal = 0, itemDistinct = 0;
+    var n = 0, nn = 0, np = 0, nd = 0, distinct = {}, nd2 = 0, code = 0, allInt = true, min = Infinity, max = -Infinity, zeros = 0, sample = Math.min(idx.length, 4000), listy = 0, items = {}, itemTotal = 0, itemDistinct = 0, xs = [];
     for (var k = 0; k < sample; k++) {
       var v = rows[idx[k]][c]; n++;
       if (blank(v)) continue; nn++;
       var t = s(v).trim(); if (/^0\d+$/.test(t) || /^\d{10,}$/.test(t)) code++;
-      var x = num(v); if (x !== null) { np++; if (x < min) min = x; if (x > max) max = x; if (x % 1 !== 0) allInt = false; if (x === 0) zeros++; }
+      var x = num(v); if (x !== null) { np++; if (x < min) min = x; if (x > max) max = x; if (x % 1 !== 0) allInt = false; if (x === 0) zeros++; xs.push(x); }
       else {
         if (isDateVal(v)) nd++;
         if (t.indexOf(',') > 0) { listy++; t.split(',').forEach(function (it) { it = it.trim().toLowerCase(); if (!it) return; itemTotal++; if (!items[it]) { items[it] = 1; itemDistinct++; } }); }
@@ -108,7 +108,11 @@
     var lowInt = numeric && allInt && nd2 <= 12 && nn >= 20 && !coord;
     // "North Indian, Chinese": a text column whose comma-separated items repeat a lot is a LIST of tags, not one value
     var list = !numeric && nn > 0 && listy / nn >= 0.25 && itemTotal > 0 && itemDistinct / itemTotal < 0.25 && itemDistinct <= 400;
-    return { index: c, name: s(header), filled: nn, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
+    // a share between 0 and 1 (danceability 0.76): to be averaged, never added up. A number with a few huge values (streams): best looked at on a log scale.
+    var unit = numeric && !allInt && min >= 0 && max <= 1 && nd2 > 10, heavy = false, flag = false, flagKeys = null;
+    if (numeric && min >= 0 && xs.length > 200 && nd2 > 30) { xs.sort(function (a, b) { return a - b; }); var m50 = xs[xs.length >> 1], m99 = xs[Math.floor(xs.length * 0.99)]; heavy = m50 > 0 && m99 / m50 > 15 && xs[xs.length - 1] / m50 > 50; }
+    if (nn >= 20 && nd2 === 2) { flagKeys = Object.keys(distinct); flag = true; }
+    return { index: c, name: s(header), filled: nn, unit: unit, heavy: heavy, flag: flag, flagKeys: flagKeys, fill: n ? nn / n : 0, numeric: numeric, date: nn > 0 && nd / nn >= 0.8, distinct: nd2, min: min, max: max, code: code / Math.max(nn, 1) > 0.3 || (numeric && NAME_CODE.test(s(header)) && allInt), serial: serial, unique: unique,
              zeros: zeros, zeroPct: np ? zeros / np : 0, commaPct: nn ? listy / nn : 0, allInt: allInt, coord: coord, idLike: idLike, lowInt: lowInt, list: list, items: itemDistinct, score: NAME_SCORE.test(s(header)) };
   }
   CH.profile = function (headers, rows, idx) {
@@ -738,6 +742,9 @@
         } else if (data.series.length > 1) {                                           // several series of averages / medians: the single highest bar (adding averages together means nothing)
           var bc = null, bs = null, bv = -Infinity; cats.forEach(function (c) { c.values.forEach(function (v, si) { if (v !== null && v > bv) { bv = v; bc = c; bs = data.series[si]; } }); });
           if (bc) add('Highest ' + fl.toLowerCase() + ': ' + bs.name + ' in ' + bc.label + ' (' + indian(Math.round(bv * 100) / 100) + ').', 'सर्वाधिक: ' + bc.label + ' में ' + bs.name + ' (' + indian(Math.round(bv * 100) / 100) + ')।');
+        } else if (shownFn === 'pct' && data.series[0] && data.series[0].mname && cats.length > 1) {
+          var hiC = cats.slice().sort(function (a, b) { return b.total - a.total; }), top2 = hiC[0], low2 = hiC[hiC.length - 1], sn = String(data.series[0].mname).replace(/^%\s*/, '');
+          add('Share of rows where ' + sn + ': highest in ' + top2.label + ' (' + pctText(top2.total) + '), lowest in ' + low2.label + ' (' + pctText(low2.total) + ').', sn + ' वाली पंक्तियों का हिस्सा: सबसे अधिक ' + top2.label + ' में (' + pctText(top2.total) + '), सबसे कम ' + low2.label + ' में (' + pctText(low2.total) + ')।');
         } else add('Highest ' + fl.toLowerCase() + ': ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ').', 'सर्वाधिक: ' + best.label + ' (' + indian(Math.round(best.total * 100) / 100) + ')।');
       }
       if (['line', 'area', 'stackedArea'].indexOf(type) >= 0 && n >= 2) {
@@ -772,10 +779,10 @@
   CH.isMeasure = function (p) { return p.numeric && !p.serial && !p.code && !p.unique && !p.coord && !p.idLike && !p.lowInt; };
   // engineered figures (a ratio of two columns, an "adjusted" copy of another number) are rarely the headline
   // what a business wants to know (revenue, profit, cups sold) comes before a price or a cost, and a rating-like index never gets the amount bonus
-  var NAME_OUTCOME = /revenue|sales|profit|margin|income|cups|volume|turnover|कमाई|बिक्री|मुनाफ़ा/i;
+  var NAME_OUTCOME = /revenue|sales|profit|margin|income|cups|volume|turnover|streams|plays|views|downloads|listens|clicks|likes|shares|orders|visits|installs|कमाई|बिक्री|मुनाफ़ा/i;
   function measScore(p) { return (p.score ? 3 : (NAME_OUTCOME.test(p.name) ? 5.5 : (NAME_AMOUNT.test(p.name) ? 3.5 : 0))) + Math.min(p.distinct, 200) / 400 + p.fill + Math.min(p.namedBy || 0, 2) - (/ratio|_to_|\bto\b|(^|[_ ])per[_ ]/i.test(p.name) ? 2 : 0) - (/adjusted|effective|normali[sz]ed|weighted/i.test(p.name) ? 1 : 0); }
   CH.rankMeasures = function (list) { return list.slice().sort(function (a, b) { return measScore(b) - measScore(a); }); };
-  CH.avgy = function (p) { return p.score || /average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
+  CH.avgy = function (p) { return p.score || p.unit || /average|avg|mean|per\b|price|cost|kcal|calorie|gram|celsius|temperature|\btemp|minute|hour|\bkm\b|_km|distance|weight|height|duration|speed|तापमान|दूरी|वज़न/i.test(p.name); };   // per-row measurements: a total of them means nothing
   CH.fnFor = function (p) { return CH.avgy(p) ? 'avg' : 'sum'; };
   // columns that make sense to group or compare by, best first (no IDs, no columns that only restate a number, no duplicates)
   CH.groupColumns = function (prof, nums, rows, idx) {
@@ -814,6 +821,8 @@
       } catch (e) { /* suggestions still work by name */ }
     }
     var c1 = cats[0], c2 = cats[1], n1 = nums[0], n2 = nums[1], L = lists[0], yesNo = cats.filter(function (p) { return p.distinct === 2 && !p.numeric; }).slice(0, 2);
+    var NAME_FLAG = /viral|churn|default|fraud|convert|target|label|\bhit\b|success|surviv|click|purchas|cancel|\blate\b|breach|defect|positive|won\b|passed|dropout|attrition|हिट|सफल/i;
+    var POS = /^(1|yes|y|true|t|हाँ|हां)$/i, flagCols = prof.filter(function (p) { return p.flag && p.fill >= 0.8 && !p.date && p.flagKeys.some(function (k) { return POS.test(k); }) && p.flagKeys.every(function (k) { return /^(0|1|yes|no|y|n|true|false|t|f|हाँ|हां|नहीं)$/i.test(k); }); });
     function add(type, spec, whyEn, whyHi, score) { out.push({ type: type, spec: spec, why: B(whyEn, whyHi), score: score }); }
     var pre = function (p) { return /^(average|avg|mean|total)\b/i.test(p.name) ? '' : FN[fnFor(p)][0]; };
     function ttl(p, c) { return pre(p) + p.name + ' — ' + c.name; }
@@ -837,6 +846,13 @@
     if (c1 && n1 && !avgy(n1) && c1.distinct >= 5) add('pareto', { x: c1.index, ys: [{ col: n1.index, fn: 'sum' }], sort: 'desc', topN: 15, title: T({ hi: false }, 'Pareto: ', 'पैरेटो: ') + n1.name + ' / ' + c1.name }, 'Do a few ' + c1.name + ' values make most of the total?', 'क्या कुछ ' + c1.name + ' कुल का अधिकांश बनाते हैं?', 56);
     if (c1 && nums.length >= 3 && c1.distinct <= 8) add('radar', { x: c1.index, ys: nums.slice(0, 5).map(function (p) { return { col: p.index, fn: 'avg' }; }), sort: 'desc', title: c1.name }, 'Profile of each ' + c1.name + ' across several measures', 'कई मापों में हर ' + c1.name + ' का स्वरूप', 54);
     if (dates[0] && (function () { var a = Infinity, b = -Infinity; idx.slice(0, 4000).forEach(function (i) { var ms = dateMs(rows[i][dates[0].index]); if (ms !== null) { if (ms < a) a = ms; if (ms > b) b = ms; } }); return (b - a) / 86400000 >= 45; })()) add('calendar', { x: dates[0].index, ys: [{ col: -1, fn: 'count' }], title: T({ hi: false }, 'Rows per day — ', 'प्रतिदिन पंक्तियाँ — ') + dates[0].name }, 'Which days are busiest', 'कौन-से दिन सबसे व्यस्त हैं', 52);
+    // a yes/no column the file is about (viral, churned, fraud): its share by the grouping that goes most with it
+    flagCols.slice(0, 2).forEach(function (fc, fi) {
+      var posKey = fc.flagKeys.filter(function (k) { return POS.test(k); })[0], gcs = cats.filter(function (g) { return g.index !== fc.index && !flagCols.some(function (q) { return q.index === g.index; }); }), best = gcs[0], bestOm = -1;
+      if (STL.drivers && gcs.length) { try { var sub2 = idx.length > 4000 ? idx.slice(0, 4000) : idx; STL.drivers.rank(rows, sub2, headers, fc.index, { prof: prof, candidates: gcs.slice(0, 12).map(function (g) { return { col: g.index, name: g.name, kind: 'cat' }; }), standIns: false, walls: false }).forEach(function (r) { if (r.omega2 > bestOm) { bestOm = r.omega2; best = gcs.filter(function (g) { return g.index === r.col; })[0]; } }); } catch (e) { /* by name then */ } }
+      if (best) add('column', { x: best.index, ys: [{ col: fc.index, fn: 'pct', op: '=', value: posKey }], sort: 'desc', topN: 14, minRows: 20, title: T({ hi: false }, 'Share of rows where ', '') + fc.name + ' = ' + posKey + ' — ' + best.name },
+        'In which ' + best.name + ' is “' + fc.name + '” most common?', 'किस ' + best.name + ' में “' + fc.name + '” सबसे अधिक है?', (NAME_FLAG.test(fc.name) ? 130 : 78) - fi);
+    });
     out.sort(function (a, b) { return b.score - a.score; });
     return out.slice(0, max);
   };
