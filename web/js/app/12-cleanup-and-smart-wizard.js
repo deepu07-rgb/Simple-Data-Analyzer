@@ -136,7 +136,7 @@ function runWizardScan() {
   // 5. Inconsistent capitalisation in text columns
   headers.forEach((h, ci) => {
     if (colTypes[ci] !== 'text') return;
-    const vals = rawData.map(r => String(r[ci] || '').trim()).filter(v => v.length > 0);
+    const vals = rawData.map(r => String(r[ci] == null ? '' : r[ci]).trim()).filter(v => v.length > 0);
     const uniq = new Set(vals);
     const uniqLower = new Set(vals.map(v => v.toLowerCase()));
     if (uniq.size > uniqLower.size) {

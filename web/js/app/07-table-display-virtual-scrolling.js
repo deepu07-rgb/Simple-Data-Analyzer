@@ -251,7 +251,7 @@ function getCellStyle(ri, ci) {
   }
   for (const rule of cfRules) {
     if (rule.col !== ci) continue;
-    const val = String(rawData[ri][ci] || '');
+    const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
     const numVal = parseFloat(val);
     const ruleNum = parseFloat(rule.value);
     let match = false;
@@ -277,7 +277,7 @@ function getCellStyle(ri, ci) {
 function getCellValidationClass(ri, ci) {
   for (const rule of validationRules) {
     if (rule.col !== ci) continue;
-    const val = String(rawData[ri][ci] || '').trim();
+    const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]).trim();
     if (!validateCell(val, rule)) return 'cell-invalid';
   }
   return '';

@@ -71,7 +71,7 @@ function splitColumn() {
 
   let maxParts = 1;
   rawData.forEach(row => {
-    const parts = String(row[ci] || '').split(delim);
+    const parts = String(row[ci] == null ? '' : row[ci]).split(delim);
     maxParts = Math.max(maxParts, parts.length);
   });
 
@@ -81,7 +81,7 @@ function splitColumn() {
   }
 
   rawData.forEach(row => {
-    const parts = String(row[ci] || '').split(delim);
+    const parts = String(row[ci] == null ? '' : row[ci]).split(delim);
     for (let p = 0; p < maxParts; p++) {
       row.splice(ci + 1 + p, 0, (parts[p] || '').trim());
     }
@@ -104,7 +104,7 @@ function mergeColumns() {
   headers.push(newName);
   colTypes.push('text');
   rawData.forEach(row => {
-    row.push(String(row[ci1] || '') + sep + String(row[ci2] || ''));
+    row.push(String(row[ci1] == null ? '' : row[ci1]) + sep + String(row[ci2] == null ? '' : row[ci2]));
   });
 
   showTable();
@@ -120,6 +120,25 @@ function initPivotPanel() {
   wrap.innerHTML = headers.map((h, i) =>
     `<span class="col-draggable" draggable="true" ondragstart="event.dataTransfer.setData('text/plain','${i}')">${escHtml(h)}</span>`
   ).join('');
+  // no dragging needed: pick the three things from lists (rows, columns, values); the table builds itself
+  let box = document.getElementById('pivotQuick');
+  if (!box) { box = document.createElement('div'); box.id = 'pivotQuick'; box.style.cssText = 'margin:0 0 12px;padding:10px;border:1px solid var(--border,#ddd);border-radius:8px'; wrap.parentNode.insertBefore(box, wrap); }
+  const opts = (sel, none) => (none ? '<option value="-1">— none —</option>' : '') + headers.map((h, i) => `<option value="${i}"${i === sel ? ' selected' : ''}>${escHtml(h)}</option>`).join('');
+  box.innerHTML = `<div style="font-weight:600;margin-bottom:6px">Quick pivot — choose from the lists</div>
+    <label style="display:block;margin:4px 0">Rows (what to group by)<select id="pivotRowSel" class="big-select" style="width:100%">${opts(pivotConfig.rows[0], true)}</select></label>
+    <label style="display:block;margin:4px 0">Columns (optional)<select id="pivotColSel" class="big-select" style="width:100%">${opts(pivotConfig.cols[0], true)}</select></label>
+    <label style="display:block;margin:4px 0">Values (the number to calculate)<select id="pivotValSel" class="big-select" style="width:100%">${opts(pivotConfig.vals[0], true)}</select></label>`;
+  const sync = () => {
+    const v = id => parseInt(document.getElementById(id).value, 10);
+    pivotConfig.rows = v('pivotRowSel') >= 0 ? [v('pivotRowSel')] : [];
+    pivotConfig.cols = v('pivotColSel') >= 0 ? [v('pivotColSel')] : [];
+    pivotConfig.vals = v('pivotValSel') >= 0 ? [v('pivotValSel')] : [];
+    renderPivotFields();
+    if (pivotConfig.rows.length && pivotConfig.vals.length) buildPivotTable();
+  };
+  const res = document.getElementById('pivotResult'); if (res && box.nextSibling !== res) box.parentNode.insertBefore(res, box.nextSibling);      // the answer right under the three lists, not below the drag boxes
+  ['pivotRowSel', 'pivotColSel', 'pivotValSel'].forEach(id => { document.getElementById(id).onchange = sync; });
+  const ag = document.getElementById('pivotAgg'); if (ag) ag.onchange = () => { if (pivotConfig.rows.length && pivotConfig.vals.length) buildPivotTable(); };
   renderPivotFields();
 }
 
@@ -141,7 +160,8 @@ function removePivotField(zone, ci) {
 
 function renderPivotFields() {
   ['rows', 'cols', 'vals'].forEach(zone => {
-    const container = document.getElementById(`pivot${zone.charAt(0).toUpperCase()+zone.slice(1)}Fields`);
+    const container = document.getElementById({ rows: 'pivotRowFields', cols: 'pivotColFields', vals: 'pivotValFields' }[zone]);   // (the ids are Row / Col / Val, not Rows / Cols / Vals)
+    if (!container) return;
     container.innerHTML = pivotConfig[zone].map(ci =>
       `<span class="pivot-field">${escHtml(headers[ci])} <span class="pf-del" onclick="removePivotField('${zone}',${ci})">×</span></span>`
     ).join('');
@@ -163,9 +183,12 @@ function buildPivotTable() {
   const indices = getDisplayData();
 
   indices.forEach(ri => {
-    const rowKey = String(rawData[ri][rowField] || '');
-    const colKey = colField !== null ? String(rawData[ri][colField] || '') : '_total_';
-    const val = parseFloat(rawData[ri][valField]) || 0;
+    const cell = (c) => { const v = rawData[ri][c]; return v === null || v === undefined ? '' : String(v); };      // a 0 is a value, not an empty cell
+    const rowKey = cell(rowField);
+    const colKey = colField !== null ? cell(colField) : '_total_';
+    // numbers as the rest of the app reads them (1,234 and Hindi digits); an empty or non-numeric cell is left out, never counted as 0
+    const val = (window.STL && STL.charts && STL.charts.num) ? STL.charts.num(rawData[ri][valField]) : parseFloat(rawData[ri][valField]);
+    if (val === null || val === undefined || isNaN(val)) return;
 
     if (!groups[rowKey]) groups[rowKey] = {};
     if (!groups[rowKey][colKey]) groups[rowKey][colKey] = [];
@@ -300,7 +323,7 @@ function buildDashboard() {
   });
 
   const emptyCounts = headers.map((h, i) => {
-    const empty = rawData.filter(r => String(r[i] || '').trim() === '').length;
+    const empty = rawData.filter(r => String(r[i] == null ? '' : r[i]).trim() === '').length;
     return { col: h, count: empty };
   }).filter(e => e.count > 0).sort((a,b) => b.count - a.count);
   if (emptyCounts.length > 0) {

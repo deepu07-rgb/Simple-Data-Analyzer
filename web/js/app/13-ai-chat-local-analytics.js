@@ -511,7 +511,7 @@ function convertToUpperCase() {
   const ci = parseInt(document.getElementById('colOpsCol')?.value || document.getElementById('analysisCol')?.value);
   if (isNaN(ci)) { toast('Select a column first', 'error'); return; }
   pushUndo();
-  rawData.forEach(row => { row[ci] = String(row[ci] || '').toUpperCase(); });
+  rawData.forEach(row => { row[ci] = String(row[ci] == null ? '' : row[ci]).toUpperCase(); });
   renderTable();
   toast(`Converted ${headers[ci]} to uppercase`, 'success');
 }
@@ -520,7 +520,7 @@ function convertToLowerCase() {
   const ci = parseInt(document.getElementById('colOpsCol')?.value || document.getElementById('analysisCol')?.value);
   if (isNaN(ci)) { toast('Select a column first', 'error'); return; }
   pushUndo();
-  rawData.forEach(row => { row[ci] = String(row[ci] || '').toLowerCase(); });
+  rawData.forEach(row => { row[ci] = String(row[ci] == null ? '' : row[ci]).toLowerCase(); });
   renderTable();
   toast(`Converted ${headers[ci]} to lowercase`, 'success');
 }
@@ -535,7 +535,7 @@ function findReplace() {
   rawData.forEach(row => {
     const cols = col === 'all' ? headers.map((_, i) => i) : [parseInt(col)];
     cols.forEach(ci => {
-      const v = String(row[ci] || '');
+      const v = String(row[ci] == null ? '' : row[ci]);
       if (v.includes(find)) {
         row[ci] = v.split(find).join(replace);
         count++;

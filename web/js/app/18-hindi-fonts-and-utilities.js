@@ -774,9 +774,9 @@ function runGroupBy() {
   const groups = {};
   rawData.forEach(row => {
     const gVal = String(row[gci] != null ? row[gci] : '').trim() || '(blank)';
-    const aVal = parseFloat(row[aci]);
+    const aVal = ((window.STL && STL.charts && STL.charts.num) ? STL.charts.num : (v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; }))(row[aci]);
     if (!groups[gVal]) groups[gVal] = [];
-    if (!isNaN(aVal)) groups[gVal].push(aVal);
+    if (aVal !== null && !isNaN(aVal)) groups[gVal].push(aVal);
   });
 
   const results = [];
@@ -790,11 +790,11 @@ function runGroupBy() {
       else if (func === 'min') agg = Math.min(...vals);
       else if (func === 'max') agg = Math.max(...vals);
       else if (func === 'median') {
-        const sorted = vals.slice().sort((a,b)=>a-b);
-        agg = sorted[Math.floor(sorted.length / 2)];
+        const sorted = vals.slice().sort((a,b)=>a-b), mid = sorted.length >> 1;
+        agg = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
       } else if (func === 'stddev') {
         const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
-        const variance = vals.reduce((a,b)=>a + (b - avg)**2, 0) / vals.length;
+        const variance = vals.length > 1 ? vals.reduce((a,b)=>a + (b - avg)**2, 0) / (vals.length - 1) : 0;      // sample standard deviation, as Excel's STDEV.S
         agg = Math.sqrt(variance);
       }
     } else {
@@ -817,15 +817,17 @@ function initComparisonPanel() {
 }
 
 function runComparison() {
-  const c1 = parseInt(document.getElementById('compareCol1').value);
-  const c2 = parseInt(document.getElementById('compareCol2').value);
+  const _e1 = document.getElementById('compareColA') || document.getElementById('compareCol1'), _e2 = document.getElementById('compareColB') || document.getElementById('compareCol2');
+  const c1 = parseInt(_e1 && _e1.value);
+  const c2 = parseInt(_e2 && _e2.value);
   if (isNaN(c1) || isNaN(c2)) return;
 
   let html = `<table class="comparison-table"><tr><th>#</th><th>${escHtml(headers[c1])}</th><th>${escHtml(headers[c2])}</th><th>Diff</th><th>% Change</th></tr>`;
 
   rawData.slice(0, 200).forEach((row, idx) => {
-    const v1 = parseFloat(row[c1]);
-    const v2 = parseFloat(row[c2]);
+    const _nf = ((window.STL && STL.charts && STL.charts.num) ? STL.charts.num : (v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; }));
+    const v1 = _nf(row[c1]) === null ? NaN : _nf(row[c1]);
+    const v2 = _nf(row[c2]) === null ? NaN : _nf(row[c2]);
     if (!isNaN(v1) && !isNaN(v2)) {
       const diff = v2 - v1;
       const pct = v1 !== 0 ? (diff / v1) * 100 : 0;

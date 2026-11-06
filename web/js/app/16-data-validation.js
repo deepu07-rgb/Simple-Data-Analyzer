@@ -37,7 +37,7 @@ function runValidation() {
   validationRules.forEach(rule => {
     let invalid = 0;
     rawData.forEach(row => {
-      const val = String(row[rule.col] || '').trim();
+      const val = String(row[rule.col] == null ? '' : row[rule.col]).trim();
       if (!validateCell(val, rule)) invalid++;
     });
     summary[headers[rule.col] + ' (' + rule.type + ')'] = invalid;
@@ -81,7 +81,7 @@ function executePDFExport() {
       headers.forEach((_, ci) => {
         for (const rule of cfRules) {
           if (rule.col !== ci) continue;
-          const val = String(rawData[ri][ci] || '');
+          const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
           const numVal = parseFloat(val);
           const ruleNum = parseFloat(rule.value);
           let match = false;
@@ -260,7 +260,7 @@ function generateClientPDF(title, paperSize, orientation, indices, tableData, in
     if (ri === undefined) return;
     for (const rule of cfRules) {
       if (rule.col !== ci) continue;
-      const val = String(rawData[ri][ci] || '');
+      const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
       const numVal = parseFloat(val), ruleNum = parseFloat(rule.value);
       let match = false;
       switch (rule.cond) {

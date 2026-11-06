@@ -219,7 +219,7 @@ function applyFormula() {
         headers.push('Concat');
         colTypes.push('text');
         rawData.forEach(row => {
-          const val = resolvedArgs.map(a => a.type === 'col' ? String(row[a.idx] || '') : a.value).join('');
+          const val = resolvedArgs.map(a => a.type === 'col' ? String(row[a.idx] == null ? '' : row[a.idx]) : a.value).join('');
           row.push(val);
         });
         const newCi = headers.length - 1;
@@ -241,7 +241,7 @@ function applyFormula() {
         headers.push(`${func}(${headers[ci]})`);
         colTypes.push('text');
         rawData.forEach(row => {
-          const v = String(row[ci] || '');
+          const v = String(row[ci] == null ? '' : row[ci]);
           switch(func) {
             case 'UPPER': row.push(v.toUpperCase()); break;
             case 'LOWER': row.push(v.toLowerCase()); break;

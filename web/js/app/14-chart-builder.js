@@ -32,7 +32,7 @@ function buildChart() {
   const type = document.getElementById('chartType').value;
   const indices = getDisplayData();
   const maxPts = Math.min(indices.length, 50);
-  const labels = indices.slice(0, maxPts).map(ri => String(rawData[ri][chartXCol] || ''));
+  const labels = indices.slice(0, maxPts).map(ri => String(rawData[ri][chartXCol] == null ? '' : rawData[ri][chartXCol]));
 
   let datasets = [];
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
@@ -396,7 +396,7 @@ function exportDashboardExcel() {
     headers.forEach((_, ci) => {
       for (const rule of cfRules) {
         if (rule.col !== ci) continue;
-        const val = String(rawData[ri][ci] || '');
+        const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
         const numVal = parseFloat(val);
         const ruleNum = parseFloat(rule.value);
         let match = false;
@@ -468,7 +468,7 @@ function exportInteractiveHTML() {
     headers.forEach((_, ci) => {
       for (const rule of cfRules) {
         if (rule.col !== ci) continue;
-        const val = String(rawData[ri][ci] || '');
+        const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
         const numVal = parseFloat(val);
         const ruleNum = parseFloat(rule.value);
         let match = false;

@@ -425,12 +425,12 @@ function importData(data) {
 function detectTypes() {
   colTypes = headers.map((_, ci) => {
     let numCount = 0, dateCount = 0, total = 0;
-    const sampleSize = Math.min(rawData.length, 100);
+    const sampleSize = Math.min(rawData.length, 400);
     for (let ri = 0; ri < sampleSize; ri++) {
-      const v = String(rawData[ri][ci] || '').trim();
+      const v = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]).trim();
       if (v === '') continue;
       total++;
-      if (!isNaN(Number(v))) numCount++;
+      const _nf = ((window.STL && STL.charts && STL.charts.num) ? STL.charts.num : (v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; })); if (!isNaN(Number(v)) || _nf(v) !== null) numCount++;
       else if (!isNaN(Date.parse(v)) && v.length > 4) dateCount++;
     }
     if (total === 0) return 'text';

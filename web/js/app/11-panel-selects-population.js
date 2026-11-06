@@ -45,7 +45,10 @@ function runAnalysis() {
     <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-label">Non-Empty</div></div>`;
 
   if (colTypes[ci] === 'number') {
-    const nums = nonEmpty.map(Number).filter(n => !isNaN(n));
+    const _nf = ((window.STL && STL.charts && STL.charts.num) ? STL.charts.num : (v => { const n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? null : n; }));
+    const nums = nonEmpty.map(v => _nf(v)).filter(n => n !== null && !isNaN(n));
+    const _bad = nonEmpty.length - nums.length;
+    if (_bad > 0) html += `<div class="stat-card" style="grid-column:1/-1"><div class="stat-label">${_bad} cell${_bad > 1 ? 's are' : ' is'} not a number and left out of the figures below</div></div>`;
     if (nums.length > 0) {
       nums.sort((a, b) => a - b);
       const sum = nums.reduce((a, b) => a + b, 0);
@@ -138,7 +141,7 @@ function onFilterTypeChange() {
 function loadFilterValues() {
   const ci = parseInt(document.getElementById('filterCol').value);
   if (isNaN(ci)) return;
-  const values = [...new Set(rawData.map(r => String(r[ci] || '')))].sort();
+  const values = [...new Set(rawData.map(r => String(r[ci] == null ? '' : r[ci])))].sort();
   const container = document.getElementById('filterValuesList');
   container.innerHTML = values.slice(0, 100).map(v =>
     `<div class="filter-value-item"><input type="checkbox" checked data-val="${escAttr(v)}"><span>${escHtml(v || '(empty)')}</span></div>`
@@ -177,7 +180,7 @@ function applyAllFilters() {
     let indices = rawData.map((_, i) => i);
     for (const f of activeFilters) {
       indices = indices.filter(ri => {
-        const val = String(rawData[ri][f.col] || '');
+        const val = String(rawData[ri][f.col] == null ? '' : rawData[ri][f.col]);
         const numVal = parseFloat(val);
         switch(f.type) {
           case 'values': return f.values.includes(val);

@@ -78,8 +78,8 @@ const GUIDED_OPERATIONS = [
   { id:'max', en:'Maximum', hi:'अधिकतम', kind:'number' },
   { id:'product', en:'Product', hi:'गुणनफल', kind:'number' },
   { id:'range', en:'Range (Max - Min)', hi:'परास', kind:'number' },
-  { id:'variance', en:'Variance', hi:'विचरण', kind:'number' },
-  { id:'stddev', en:'Standard deviation', hi:'मानक विचलन', kind:'number' },
+  { id:'variance', en:'Variance (sample)', hi:'विचरण (नमूना)', kind:'number' },
+  { id:'stddev', en:'Standard deviation (sample)', hi:'मानक विचलन (नमूना)', kind:'number' },
   { id:'percentile90', en:'90th percentile', hi:'90वां प्रतिशतक', kind:'number' },
   { id:'count_numbers', en:'Count numeric cells', hi:'संख्यात्मक सेल गिनें', kind:'number' },
   { id:'count_nonempty', en:'Count non-empty cells', hi:'भरी हुई सेल गिनें', kind:'any' },
@@ -295,12 +295,12 @@ function calculateGuidedResult() {
       case 'range': result = Math.max(...numbers)-Math.min(...numbers); break;
       case 'variance': {
         const mean = numbers.reduce((sum,value)=>sum+value,0)/numbers.length;
-        result = numbers.reduce((sum,value)=>sum+Math.pow(value-mean,2),0)/numbers.length;
+        result = numbers.length > 1 ? numbers.reduce((sum,value)=>sum+Math.pow(value-mean,2),0)/(numbers.length-1) : 0;      // sample, like Excel's VAR.S
         break;
       }
       case 'stddev': {
         const mean = numbers.reduce((sum,value)=>sum+value,0)/numbers.length;
-        result = Math.sqrt(numbers.reduce((sum,value)=>sum+Math.pow(value-mean,2),0)/numbers.length);
+        result = numbers.length > 1 ? Math.sqrt(numbers.reduce((sum,value)=>sum+Math.pow(value-mean,2),0)/(numbers.length-1)) : 0;      // sample, like Excel's STDEV.S
         break;
       }
       case 'percentile90': result = percentile(numbers,.9); break;
@@ -1729,7 +1729,7 @@ function isHindiTextColumn(colIdx) {
   if (rawData.length === 0) return false;
   const sampleSize = Math.min(rawData.length, 50);
   for (let ri = 0; ri < sampleSize; ri++) {
-    const val = String(rawData[ri][colIdx] || '');
+    const val = String(rawData[ri][colIdx] == null ? '' : rawData[ri][colIdx]);
     if (/[\u0900-\u097F]/.test(val)) return true;
   }
   return false;

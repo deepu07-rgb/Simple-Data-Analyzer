@@ -27,7 +27,7 @@ function executeExcelExport() {
       headers.forEach((_, ci) => {
         for (const rule of cfRules) {
           if (rule.col !== ci) continue;
-          const val = String(rawData[ri][ci] || '');
+          const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
           const numVal = parseFloat(val);
           let match = false;
           switch(rule.cond) {
@@ -133,7 +133,7 @@ function generateClientExcel(filename, freezeHeader, includeFormat, indices) {
   const colWidthArr = headers.map((h, ci) => {
     let maxLen = h.length;
     indices.slice(0, 100).forEach(ri => {
-      const len = String(rawData[ri][ci] || '').length;
+      const len = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]).length;
       if (len > maxLen) maxLen = len;
     });
     return { wch: Math.min(maxLen + 2, 40) };
@@ -149,7 +149,7 @@ function generateClientExcel(filename, freezeHeader, includeFormat, indices) {
       headers.forEach((_, ci) => {
         for (const rule of cfRules) {
           if (rule.col !== ci) continue;
-          const val = String(rawData[ri][ci] || '');
+          const val = String(rawData[ri][ci] == null ? '' : rawData[ri][ci]);
           const numVal = parseFloat(val);
           const ruleNum = parseFloat(rule.value);
           let match = false;
@@ -432,7 +432,7 @@ function convertHindi() {
   let converted = 0;
   cols.forEach(ci => {
     rawData.forEach(row => {
-      const original = String(row[ci] || '');
+      const original = String(row[ci] == null ? '' : row[ci]);
       if (!original.trim()) return;
 
       let actualSrc = src;

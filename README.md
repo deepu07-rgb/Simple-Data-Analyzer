@@ -87,6 +87,7 @@ BASE=http://127.0.0.1:5000 PY=python node tests/e2e/workbook.e2e.js  # a messy m
 BASE=http://127.0.0.1:5000 node tests/e2e/scale.e2e.js  # a 600,000-row file in Large File mode: every number equals an independent calculation (rare value counted, text outcome, log scale, dependence)
 BASE=http://127.0.0.1:5000 node tests/e2e/link.e2e.js  # a 10 MB, 800,000-row payment record + details file: one row per ID, link by ID, repeated IDs left empty, placeholder code made empty
 BASE=http://127.0.0.1:5000 node tests/e2e/text.e2e.js  # a 14 MB, 125,000-row free-text file: words, repeats and conflicts, contains-a-word counts, row-number column, text length columns
+BASE=http://127.0.0.1:5000 node tests/e2e/manual.e2e.js  # the manual Excel-style tools driven like a person: edit/undo, sort, filter, Column Analysis, Group By, Pivot (also from three lists), Compare, Guided Calculate, SQL, column tools, validation - each figure equals an independent calculation
 BASE=http://127.0.0.1:5000 node tests/e2e/columns.e2e.js  # Check your columns: Hindi register + 11 MB Large File, placeholder emptied, choices remembered and applied
 BASE=http://127.0.0.1:5000 node tests/e2e/novice.e2e.js  # a first-time user: typing a question, "What would you like to do?", before/after change column, a text outcome explained in percent
 BASE=http://127.0.0.1:5000 node tests/e2e/dashboard.e2e.js  # Dashboard: layout, edits, PowerPoint, PDF, print, saved with the project (needs python-pptx and pypdf)

@@ -407,7 +407,7 @@ function showContextMenu(e, ri) {
 
 function ctxCopyCell() {
   if (ctxRowIdx >= 0 && ctxColIdx >= 0) {
-    navigator.clipboard.writeText(String(rawData[ctxRowIdx][ctxColIdx] || '')).then(() => toast('Copied!', 'success'));
+    navigator.clipboard.writeText(String(rawData[ctxRowIdx][ctxColIdx] == null ? '' : rawData[ctxRowIdx][ctxColIdx])).then(() => toast('Copied!', 'success'));
   }
 }
 
@@ -462,7 +462,7 @@ function ctxSortDesc() {
 
 function ctxFilterValue() {
   if (ctxRowIdx >= 0 && ctxColIdx >= 0) {
-    const val = String(rawData[ctxRowIdx][ctxColIdx] || '');
+    const val = String(rawData[ctxRowIdx][ctxColIdx] == null ? '' : rawData[ctxRowIdx][ctxColIdx]);
     activeFilters = activeFilters.filter(f => f.col !== ctxColIdx);
     activeFilters.push({ col: ctxColIdx, type: 'eq', values: [val], text: '', numVal: val });
     applyAllFilters();
