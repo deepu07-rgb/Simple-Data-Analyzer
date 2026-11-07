@@ -52,7 +52,7 @@ const file = (name, buffer) => ({ name, mimeType: 'application/octet-stream', bu
 
   // ---- Home
   const tiles = await page.$$eval('.stl-tile b', es => es.map(e => e.textContent));
-  ok(tiles.length === 12 && tiles[0].includes('report') && tiles[1].includes('changed') && tiles[2].includes('Charts'), 'Home shows the flagship tools first (12 tiles)', tiles);
+  ok(tiles.length === 16 && tiles[0].includes('report') && tiles[1].includes('changed') && tiles[2].includes('Charts'), 'Home shows the flagship tools first (16 tiles)', tiles);
 
   // ---- 1. Report Autopilot: teach with last month, fill this month, download, verify the Excel
   await importFile(file('this_month.csv', csv(M2)));
