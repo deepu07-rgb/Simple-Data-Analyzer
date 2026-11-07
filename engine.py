@@ -1,0 +1,1528 @@
+"""
+Stellura analytics engine (DuckDB)
+==================================
+Holds big tables on this PC (in a temp database file, not in browser memory) and answers
+paged / sorted / filtered row requests, column profiles, group-bys and read-only SQL.
+
+Design rules
+- Everything is stored as text (VARCHAR), exactly as in the file, so Hindi text, leading zeros
+  and phone numbers are never altered. Numeric work uses TRY_CAST on the fly.
+- DuckDB itself is not allowed to touch the file system or network (enable_external_access
+  is false); files are read in Python (pyarrow / openpyxl) and handed over as Arrow tables.
+- The SQL endpoint accepts a single SELECT statement only.
+"""
+import csv
+import io
+import codecs
+import math
+import os
+import shutil
+import tempfile
+import threading
+import uuid
+from collections import OrderedDict
+from datetime import date, datetime
+
+import duckdb
+import pyarrow as pa
+import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
+
+MAX_DATASETS = int(os.environ.get("STELLURA_MAX_DATASETS", 6))
+MAX_QUERY_ROWS = 10_000
+MAX_PAGE = 2_000
+NUM = "TRY_CAST(replace(replace({c}, ',', ''), ' ', '') AS DOUBLE)"
+
+
+class EngineError(ValueError):
+    """A problem with the request that the user can understand."""
+
+
+def _col(i):
+    return f"c{int(i)}"
+
+
+def _num(i):
+    return NUM.format(c=_col(i))
+
+
+def _clean(v):
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.date().isoformat() if (v.hour, v.minute, v.second) == (0, 0, 0) else v.isoformat(sep=" ")
+    if isinstance(v, date):
+        return v.isoformat()
+    if isinstance(v, float) and v == int(v) and abs(v) < 1e15:
+        return str(int(v))
+    return str(v)
+
+
+def json_safe(o):
+    """Replace NaN / Infinity (not valid JSON) with None, recursively."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [json_safe(v) for v in o]
+    return o
+
+
+def unique_headers(raw):
+    """Same rules as the app: blank -> 'Column N', duplicates get a numeric suffix."""
+    out, seen = [], {}
+    for i, h in enumerate(raw):
+        h = "" if h is None else str(h).strip()
+        h = h or f"Column {i + 1}"
+        if h in seen:
+            seen[h] += 1
+            h = f"{h}_{seen[h]}"
+        else:
+            seen[h] = 0
+        out.append(h)
+    return out
+
+
+class Engine:
+    def __init__(self, memory_limit=None):
+        self.dir = tempfile.mkdtemp(prefix="stellura_engine_")
+        self.lock = threading.RLock()
+        self.db = duckdb.connect(
+            os.path.join(self.dir, "engine.duckdb"),
+            config={
+                "enable_external_access": False,
+                "memory_limit": memory_limit or os.environ.get("STELLURA_ENGINE_MEMORY", "1500MB"),
+                "temp_directory": os.path.join(self.dir, "spill"),
+            },
+        )
+        self.datasets = OrderedDict()   # id -> {"table", "headers", "name", "rows"}
+
+    # ------------------------------------------------------------------ loading
+    def _register(self, arrow_table, headers, name):
+        """Store an Arrow table of strings as dataset; returns its description."""
+        n = len(headers)
+        arrow_table = arrow_table.rename_columns([_col(i) for i in range(n)])
+        ds_id = uuid.uuid4().hex[:12]
+        table = f"d_{ds_id}"
+        with self.lock:
+            cur = self.db.cursor()
+            cur.register("incoming", arrow_table)
+            cur.execute(
+                f"CREATE TABLE {table} AS SELECT (row_number() OVER ()) - 1 AS __rid, * FROM incoming"
+            )
+            cur.unregister("incoming")
+            rows = cur.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            self.datasets[ds_id] = {"table": table, "headers": headers, "name": name, "rows": rows}
+            while len(self.datasets) > MAX_DATASETS:
+                _, old = self.datasets.popitem(last=False)
+                self._drop_tables(cur, old)
+        return self.describe(ds_id)
+
+    def describe(self, ds_id):
+        d = self._ds(ds_id)
+        return {"id": ds_id, "name": d["name"], "headers": d["headers"], "rows": d["rows"]}
+
+    def _ds(self, ds_id):
+        with self.lock:
+            d = self.datasets.get(ds_id)
+            if d is None:
+                raise EngineError("This dataset is no longer loaded. Open the file again.")
+            self.datasets.move_to_end(ds_id)
+            return d
+
+    def load_rows(self, headers, rows, name="data"):
+        """From a list of rows (e.g. data already in the browser)."""
+        headers = unique_headers(headers)
+        n = len(headers)
+        cols = [[] for _ in range(n)]
+        for r in rows:
+            for i in range(n):
+                cols[i].append(_clean(r[i]) if i < len(r) else "")
+        arrow = pa.table({f"x{i}": pa.array(c, type=pa.string()) for i, c in enumerate(cols)})
+        return self._register(arrow, headers, name)
+
+    def load_csv(self, path, name="data"):
+        with open(path, "rb") as f:
+            head = f.read(65536)
+        # a 64 KB read can cut a multi-byte character in half, so decode incrementally
+        try:
+            codecs.getincrementaldecoder("utf-8-sig")().decode(head, final=False)
+            enc, pa_enc = "utf-8-sig", "utf8"
+        except UnicodeDecodeError:
+            enc, pa_enc = "cp1252", "latin1"
+        sample = head.decode(enc, errors="replace")
+        try:
+            delim = csv.Sniffer().sniff(sample.split("\n", 5)[0] + "\n", delimiters=",\t;|").delimiter
+        except csv.Error:
+            delim = ","
+        first = next(csv.reader(io.StringIO(sample), delimiter=delim), [])
+        if not first:
+            raise EngineError("The file is empty.")
+        raw_names = [f"x{i}" for i in range(len(first))]
+        headers = unique_headers(first)
+        # the file's own header row becomes data? no: skip it and use our names
+        table = pacsv.read_csv(
+            path,
+            read_options=pacsv.ReadOptions(column_names=raw_names, skip_rows=1, encoding=pa_enc, block_size=1 << 24),
+            parse_options=pacsv.ParseOptions(delimiter=delim, invalid_row_handler=lambda row: "skip"),
+            convert_options=pacsv.ConvertOptions(
+                column_types={n: pa.string() for n in raw_names}, strings_can_be_null=False
+            ),
+        )
+        return self._register(table, headers, name)
+
+    def load_xlsx(self, path, sheet=None, name="data"):
+        import openpyxl
+
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            names = wb.sheetnames
+            ws = wb[sheet] if sheet and sheet in names else wb[names[0]]
+            it = ws.iter_rows(values_only=True)
+            first = next(it, None)
+            if first is None:
+                raise EngineError("The sheet is empty.")
+            headers = unique_headers(first)
+            n = len(headers)
+            batches, buf = [], [[] for _ in range(n)]
+
+            def flush():
+                if buf[0] or any(buf):
+                    batches.append(pa.record_batch([pa.array(c, type=pa.string()) for c in buf],
+                                                   names=[f"x{i}" for i in range(n)]))
+                    for c in buf:
+                        c.clear()
+
+            for r in it:
+                if r is None or all(v is None or v == "" for v in r):
+                    continue
+                for i in range(n):
+                    buf[i].append(_clean(r[i]) if i < len(r) else "")
+                if len(buf[0]) >= 100_000:
+                    flush()
+            flush()
+            table = pa.Table.from_batches(batches) if batches else pa.table(
+                {f"x{i}": pa.array([], type=pa.string()) for i in range(n)})
+            result = self._register(table, headers, name)
+            result["sheets"] = names
+            return result
+        finally:
+            wb.close()
+
+    def load_parquet(self, path, name="data"):
+        t = pq.read_table(path)
+        headers = unique_headers(t.column_names)
+        t = pa.table({f"x{i}": t.column(i).cast(pa.string()) for i in range(t.num_columns)})
+        return self._register(t, headers, name)
+
+    def drop(self, ds_id):
+        with self.lock:
+            d = self.datasets.pop(ds_id, None)
+            if d:
+                self._drop_tables(self.db.cursor(), d)
+        return d is not None
+
+    @staticmethod
+    def _drop_tables(cur, d):
+        for name in list((d.get("date_dims") or {}).values()) + [d["table"]]:
+            cur.execute(f"DROP TABLE IF EXISTS {name}")
+
+    # ------------------------------------------------------------------ queries
+    def _check_col(self, d, i):
+        try:
+            i = int(i)
+        except (TypeError, ValueError):
+            raise EngineError("Invalid column.")
+        if not 0 <= i < len(d["headers"]):
+            raise EngineError("Column does not exist.")
+        return i
+
+    def _where(self, d, search=None, filters=None):
+        parts, params = [], []
+        n = len(d["headers"])
+        if search:
+            ors = []
+            for i in range(n):
+                ors.append(f"contains(lower({_col(i)}), lower(?))")
+                params.append(search)
+            parts.append("(" + " OR ".join(ors) + ")")
+        for f in filters or []:
+            i = self._check_col(d, f.get("col"))
+            op, v, v2 = f.get("op"), f.get("value"), f.get("value2")
+            c = _col(i)
+            if op == "eq":
+                parts.append(f"{c} = ?"); params.append(str(v))
+            elif op == "neq":
+                parts.append(f"{c} <> ?"); params.append(str(v))
+            elif op == "contains":
+                parts.append(f"contains(lower({c}), lower(?))"); params.append(str(v))
+            elif op == "ieq":                 # same text ignoring capitals and spaces around it (what charts group by)
+                parts.append(f"lower(trim({c})) = lower(trim(?))"); params.append(str(v))
+            elif op == "item":                # one item of a comma-separated list column ("North Indian, Chinese")
+                items = [str(x).strip().lower() for x in (v if isinstance(v, list) else [v])][:500]
+                if not items:
+                    parts.append("FALSE")
+                else:
+                    parts.append(f"list_has_any(string_split(regexp_replace(lower(trim(coalesce({c}, ''))), '\\s*,\\s*', ',', 'g'), ','), [{','.join('?' * len(items))}])"); params += items
+            elif op == "iin":                 # any of several texts, ignoring capitals (several bars of one chart)
+                vals = [str(x).strip().lower() for x in (v or [])][:5000]
+                if not vals:
+                    parts.append("FALSE")
+                else:
+                    parts.append(f"lower(trim({c})) IN ({','.join('?' * len(vals))})"); params += vals
+            elif op == "bucket":              # a day / month / quarter / financial year / year / weekday of a date column (one or several)
+                mode, keys = str(v), (v2 if isinstance(v2, list) else [v2])
+                dd = self._date_dim(d, i)
+                if mode == "weekday":
+                    keys = [str(k) for k in keys][:7]
+                    parts.append(f"{c} IN (SELECT v FROM {dd} WHERE strftime(xd, '%a') IN ({','.join('?' * len(keys))}))"); params += keys
+                else:
+                    spans = [self._bucket_range(mode, str(k)) for k in keys][:400]
+                    ors = " OR ".join("(xd >= CAST(? AS DATE) AND xd < CAST(? AS DATE))" for _ in spans) or "FALSE"
+                    parts.append(f"{c} IN (SELECT v FROM {dd} WHERE {ors})")
+                    for lo, hi in spans:
+                        params += [lo, hi]
+            elif op == "in":
+                vals = [str(x) for x in (v or [])][:5000]
+                if not vals:
+                    parts.append("FALSE")
+                else:
+                    parts.append(f"{c} IN ({','.join('?' * len(vals))})"); params += vals
+            elif op in ("gt", "gte", "lt", "lte"):
+                sym = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[op]
+                parts.append(f"{_num(i)} {sym} ?"); params.append(float(v))
+            elif op == "between":
+                parts.append(f"{_num(i)} BETWEEN ? AND ?"); params += [float(v), float(v2)]
+            elif op == "eqcol":                                             # two number columns hold the same value in the row
+                j = self._check_col(d, c.get("col2"))
+                extra.append(f"({_num(i)} = {_num(j)})")
+            elif op == "empty":
+                parts.append(f"({c} IS NULL OR trim({c}) = '')")
+            elif op == "notempty":
+                parts.append(f"({c} IS NOT NULL AND trim({c}) <> '')")
+            else:
+                raise EngineError(f"Unknown filter '{op}'.")
+        return (" WHERE " + " AND ".join(parts)) if parts else "", params
+
+    def rows(self, ds_id, offset=0, limit=100, sort=None, desc=False, numeric=False,
+             search=None, filters=None, count=False):
+        d = self._ds(ds_id)
+        limit = max(1, min(int(limit), MAX_PAGE))
+        offset = max(0, int(offset))
+        where, params = self._where(d, search, filters)
+        order = "__rid"
+        if sort is not None and sort != "":
+            i = self._check_col(d, sort)
+            key = _num(i) if numeric else _col(i)
+            order = f"{key} {'DESC' if desc else 'ASC'} NULLS LAST, __rid"
+        cols = ", ".join(_col(i) for i in range(len(d["headers"])))
+        cur = self.db.cursor()
+        data = cur.execute(
+            f"SELECT __rid, {cols} FROM {d['table']}{where} ORDER BY {order} LIMIT {limit} OFFSET {offset}",
+            params).fetchall()
+        out = {"rows": [list(r[1:]) for r in data], "ids": [r[0] for r in data], "offset": offset}
+        if count:
+            out["matched"] = cur.execute(f"SELECT count(*) FROM {d['table']}{where}", params).fetchone()[0]
+        out["total"] = d["rows"]
+        return out
+
+    def profile(self, ds_id, max_cols=80):
+        d = self._ds(ds_id)
+        n = min(len(d["headers"]), max_cols)
+        sel = []
+        for i in range(n):
+            c = _col(i)
+            sel += [
+                f"count(*) FILTER (WHERE {c} IS NULL OR trim({c}) = '')",
+                f"approx_count_distinct({c})",
+                f"count({_num(i)})",
+                f"min({_num(i)})", f"max({_num(i)})", f"avg({_num(i)})", f"sum({_num(i)})",
+                # codes such as phone numbers or file numbers keep leading zeros: they are text, not quantities
+                f"count(*) FILTER (WHERE regexp_matches({c}, '^0[0-9]+$'))",
+            ]
+        cur = self.db.cursor()
+        r = cur.execute(f"SELECT {', '.join(sel)} FROM {d['table']}").fetchone()
+        total = d["rows"]
+        cols = []
+        for i in range(n):
+            empty, distinct, numcount, mn, mx, avg, sm, lead0 = r[i * 8:(i + 1) * 8]
+            filled = total - empty
+            is_num = filled > 0 and numcount / filled >= 0.9 and lead0 / filled < 0.5
+            cols.append({
+                "index": i, "name": d["headers"][i],
+                "type": "number" if is_num else ("categorical" if distinct <= max(20, total * 0.05) else "text"),
+                "empty": empty, "filled": filled, "distinct": distinct,
+                "min": mn if is_num else None, "max": mx if is_num else None,
+                "avg": avg if is_num else None, "sum": sm if is_num else None,
+            })
+        return {"rows": total, "columns": cols}
+
+    def top_values(self, ds_id, col, limit=10):
+        d = self._ds(ds_id)
+        c = _col(self._check_col(d, col))
+        data = self.db.cursor().execute(
+            f"SELECT {c}, count(*) n FROM {d['table']} WHERE {c} IS NOT NULL AND trim({c}) <> '' "
+            f"GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {max(1, min(int(limit), 200))}").fetchall()
+        return [{"value": v, "count": n} for v, n in data]
+
+    AGG = {
+        "sum": "sum({n})", "avg": "avg({n})", "min": "min({n})", "max": "max({n})",
+        "median": "median({n})", "count": "count(*)", "count_distinct": "count(DISTINCT {c})",
+    }
+
+    def aggregate(self, ds_id, group_by, aggs, order_desc=True, limit=500, search=None, filters=None):
+        d = self._ds(ds_id)
+        gcols = [self._check_col(d, g) for g in (group_by or [])][:2]
+        if not aggs:
+            aggs = [{"fn": "count"}]
+        exprs, names = [], []
+        for k, a in enumerate(aggs[:8]):
+            fn = a.get("fn")
+            if fn not in self.AGG:
+                raise EngineError(f"Unknown function '{fn}'.")
+            if fn == "count":
+                exprs.append("count(*)"); names.append("Count")
+            else:
+                i = self._check_col(d, a.get("col"))
+                exprs.append(self.AGG[fn].format(n=_num(i), c=_col(i)))
+                names.append(f"{fn} of {d['headers'][i]}")
+        where, params = self._where(d, search, filters)
+        sel = [_col(g) for g in gcols] + [f"{e} AS a{k}" for k, e in enumerate(exprs)]
+        grp = f" GROUP BY {', '.join(str(j + 1) for j in range(len(gcols)))}" if gcols else ""
+        order = f" ORDER BY a0 {'DESC' if order_desc else 'ASC'} NULLS LAST" if gcols else ""
+        limit = max(1, min(int(limit), 5000))
+        data = self.db.cursor().execute(
+            f"SELECT {', '.join(sel)} FROM {d['table']}{where}{grp}{order} LIMIT {limit}", params).fetchall()
+        return {"headers": [d["headers"][g] for g in gcols] + names,
+                "rows": [[("" if v is None else v) for v in r] for r in data]}
+
+    def query(self, ds_id, sql):
+        """Read-only SQL over a view called `data` whose columns carry the real header names."""
+        d = self._ds(ds_id)
+        cur = self.db.cursor()
+        try:
+            stmts = cur.extract_statements(sql)
+        except Exception as exc:
+            raise EngineError(f"SQL error: {exc}")
+        if len(stmts) != 1 or stmts[0].type != duckdb.StatementType.SELECT:
+            raise EngineError("Only a single SELECT statement is allowed.")
+        sel = ", ".join(f'{_col(i)} AS "{h.replace(chr(34), chr(34) * 2)}"' for i, h in enumerate(d["headers"]))
+        cur.execute(f"CREATE OR REPLACE TEMP VIEW data AS SELECT {sel} FROM {d['table']}")
+        try:
+            res = cur.execute(f"SELECT * FROM ({sql.rstrip().rstrip(';')}) LIMIT {MAX_QUERY_ROWS + 1}")
+            names = [c[0] for c in res.description]
+            data = res.fetchall()
+        except Exception as exc:
+            raise EngineError(f"SQL error: {exc}")
+        return {"headers": names, "rows": [["" if v is None else v for v in r] for r in data[:MAX_QUERY_ROWS]],
+                "truncated": len(data) > MAX_QUERY_ROWS}
+
+
+    # ------------------------------------------------------------------ charts
+    # Everything below answers a chart from the whole table inside DuckDB and returns only a small result
+    # (a few hundred groups, bins, quartiles or a sample of points), so a chart of 5 million rows is as light as one of 500.
+    DATE_FORMATS = ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%m-%d-%Y", "%m/%d/%Y", "%m.%d.%Y"]
+    TIME_MODES = ("day", "month", "quarter", "fy", "year", "weekday")
+    OTHERS = "(others)"
+
+    @classmethod
+    def _date_expr(cls, c):
+        """Text -> DATE the way the browser reads dates: day first (15-02-2025), then month first only if day first is impossible."""
+        txt = f"regexp_extract(translate({c}, '०१२३४५६७८९', '0123456789'), '^[0-9]{{1,4}}[-/.][0-9]{{1,2}}[-/.][0-9]{{1,4}}')"
+        return "CAST(coalesce(" + ", ".join(f"try_strptime({txt}, '{f}')" for f in cls.DATE_FORMATS) + ") AS DATE)"
+
+    def _date_dim(self, d, i):
+        """A small table of every different text in a date column and the date it means. Dates repeat a lot (a few
+        thousand days in millions of rows), so each text is read once, not once per row. Cached for the dataset."""
+        with self.lock:
+            dims = d.setdefault("date_dims", {})
+            if i not in dims:
+                name = f"{d['table']}_dd{i}"
+                self.db.cursor().execute(
+                    f"CREATE TABLE {name} AS SELECT v, {self._date_expr('v')} AS xd "
+                    f"FROM (SELECT DISTINCT {_col(i)} AS v FROM {d['table']} WHERE {_col(i)} IS NOT NULL)")
+                dims[i] = name
+            return dims[i]
+
+    @staticmethod
+    def _bucket_label(xd, mode):
+        fy = f"(CASE WHEN month({xd}) >= 4 THEN year({xd}) ELSE year({xd}) - 1 END)"
+        return {
+            "year": f"strftime({xd}, '%Y')",
+            "month": f"strftime({xd}, '%Y-%m')",
+            "quarter": f"(strftime({xd}, '%Y') || '-Q' || CAST(quarter({xd}) AS VARCHAR))",
+            "fy": f"(CAST({fy} AS VARCHAR) || '-' || lpad(CAST(({fy} + 1) % 100 AS VARCHAR), 2, '0'))",
+            "weekday": f"strftime({xd}, '%a')",
+            "day": f"strftime({xd}, '%Y-%m-%d')",
+        }[mode]
+
+    @staticmethod
+    def _bucket_range(mode, key):
+        """The first day of a period and the first day after it, from its label ('2025-03', '2025-Q2', '2024-25', '2025')."""
+        try:
+            if mode == "year":
+                y = int(key); return date(y, 1, 1).isoformat(), date(y + 1, 1, 1).isoformat()
+            if mode == "month":
+                y, m = (int(v) for v in key.split("-")); n = date(y + (m == 12), m % 12 + 1, 1)
+                return date(y, m, 1).isoformat(), n.isoformat()
+            if mode == "quarter":
+                y, q = key.split("-Q"); y, q = int(y), int(q); m = 3 * (q - 1) + 1
+                n = date(y + (m + 3 > 12), (m + 3 - 1) % 12 + 1, 1)
+                return date(y, m, 1).isoformat(), n.isoformat()
+            if mode == "fy":
+                a = int(key.split("-")[0]); return date(a, 4, 1).isoformat(), date(a + 1, 4, 1).isoformat()
+            if mode == "day":
+                d0 = date.fromisoformat(key); return d0.isoformat(), date.fromordinal(d0.toordinal() + 1).isoformat()
+        except (ValueError, IndexError):
+            pass
+        raise EngineError("That period is not valid.")
+
+    _FN_SQL = {"sum": "sum({m})", "avg": "avg({m})", "min": "min({m})", "max": "max({m})",
+               "median": "median({m})", "count": "count(*)", "distinct": "count(DISTINCT lower({t}))"}
+
+    @staticmethod
+    def _numz(i, nozero):
+        """The column as a number; with `nozero`, 0 becomes empty (a rating of 0 usually means 'not rated')."""
+        return f"NULLIF({_num(i)}, 0)" if nozero else _num(i)
+
+    def _yx(self, yi, nozero, yspec=None):
+        """The outcome of a comparison as a number: the column itself, its log (a few huge values), or 1/0 for "how often it is <value>"."""
+        yspec = yspec or {}
+        if yspec.get("is") is not None:
+            c = _col(yi)
+            v = str(yspec["is"]).replace("'", "''")
+            one = float(yspec.get("scale") or 1)                                  # 100: the answer is read in percent, a gap in percentage points
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN NULL WHEN trim({c}) = '{v}' THEN CAST({one!r} AS DOUBLE) ELSE CAST(0 AS DOUBLE) END"
+        x = self._numz(yi, nozero)
+        return f"ln(1 + greatest({x}, 0))" if yspec.get("log") else x
+
+    PCT_OPS = {"<": "<", "<=": "<=", ">": ">", ">=": ">=", "=": "=", "!=": "<>"}
+
+    @staticmethod
+    def _band_sql(expr, edges):
+        """A number cut into bands by its edges [e0, e1, ... en]; the label is the band number b000, b001 ... (the browser names it)."""
+        try:
+            e = [float(x) for x in edges][:61]
+        except (TypeError, ValueError):
+            raise EngineError("Invalid bands.")
+        if len(e) < 2 or any(not math.isfinite(x) for x in e):
+            raise EngineError("Invalid bands.")
+        n = len(e) - 1
+        whens = " ".join(f"WHEN {expr} < {e[i + 1]!r} THEN 'b{i:03d}'" for i in range(n - 1))
+        return f"(CASE WHEN {expr} IS NULL THEN NULL {whens} ELSE 'b{n - 1:03d}' END)"
+
+    def _pct_sql(self, c, op, value, nozero=False):
+        """% of rows (with a value) where the cell meets a condition: numbers compared as numbers, text ignoring case."""
+        if op not in self.PCT_OPS:
+            raise EngineError("Unknown condition.")
+        sym = self.PCT_OPS[op]
+        try:
+            v = float(str(value).replace(",", "").strip())
+            if not math.isfinite(v):
+                raise ValueError
+            m = NUM.format(c=c)
+            if nozero:
+                m = f"NULLIF({m}, 0)"
+            return f"avg(CASE WHEN {m} IS NULL THEN NULL WHEN {m} {sym} {v!r} THEN 100.0 ELSE 0.0 END)"
+        except (TypeError, ValueError):
+            lit = "'" + str(value).strip().lower().replace("'", "''")[:200] + "'"
+            return f"avg(CASE WHEN {c} IS NULL OR trim({c}) = '' THEN NULL WHEN lower(trim({c})) {sym} {lit} THEN 100.0 ELSE 0.0 END)"
+
+    def _opt_col(self, d, i):
+        if i is None or i == "":
+            return None
+        try:
+            if int(i) < 0:
+                return None
+        except (TypeError, ValueError):
+            raise EngineError("Invalid column.")
+        return self._check_col(d, i)
+
+    def chart_agg(self, ds_id, x=None, time=None, g=None, g2=None, measures=None, rank="value",
+                  max_cats=300, max_groups=9, search=None, filters=None, multi=False, nozero=False, min_rows=0, xbands=None):
+        """Group by up to three columns (x, g, g2) with up to six measures. Groups beyond the biggest `max_cats`
+        (x) or `max_groups - 1` (g, g2) are folded into '(Others)' and calculated from the real rows, so even an
+        average of the leftovers is exact. A date column is cut into day / month / quarter / fy / year / weekday."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        xi, gi, g2i = self._opt_col(d, x), self._opt_col(d, g), self._opt_col(d, g2)
+        time = time if time in self.TIME_MODES else None
+        ms = []
+        pcts = {}
+        for m in (measures or [{"col": -1, "fn": "count"}])[:6]:
+            fn, ci = m.get("fn", "sum"), self._opt_col(d, m.get("col", -1))
+            if fn != "pct" and fn not in self._FN_SQL:
+                raise EngineError(f"Unknown function '{fn}'.")
+            if fn == "pct" and ci is not None:
+                pcts[len(ms)] = self._pct_sql(f"p{len(ms)}", m.get("op", "="), m.get("value", ""), nozero)
+            ms.append((ci, "count" if ci is None else fn))
+        max_cats = max(1, min(int(max_cats), 5000)); max_groups = max(2, min(int(max_groups), 60)); min_rows = max(0, min(int(min_rows or 0), 100000))
+        multi = bool(multi) and xi is not None and not time
+        nozero = bool(nozero)
+
+        def text(i):
+            c = "xmv" if (multi and i == xi) else _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+
+        s_cols, k_cols, dims = [], [], []                 # k_cols: key + label of every dimension
+        if xi is None:
+            s_cols.append("'' AS xl")
+        elif time:
+            s_cols.append(f"{_col(xi)} AS xraw")
+        elif xbands:
+            s_cols.append(f"coalesce({self._band_sql(_num(xi), xbands)}, '(blank)') AS xl")
+        else:
+            s_cols.append(f"{text(xi)} AS xl")
+        for n, i in (("g", gi), ("g2", g2i)):
+            if i is not None:
+                s_cols.append(f"{text(i)} AS {n}l")
+        for k, (ci, fn) in enumerate(ms):
+            if ci is not None and fn == "pct":
+                s_cols.append(f"{_col(ci)} AS p{k}")
+            elif ci is not None:
+                s_cols.append(f"{self._numz(ci, nozero and fn not in ('count', 'distinct'))} AS m{k}")
+                if fn == "distinct":
+                    s_cols.append(f"trim({_col(ci)}) AS t{k}")
+        x_label = self._bucket_label("xd", time) if (xi is not None and time) else "xl"
+        k_cols.append(f"{x_label} AS xl")
+        k_cols.append("lower(" + x_label + ") AS xk" if not time else f"{x_label} AS xk")
+        for n, i in (("g", gi), ("g2", g2i)):
+            if i is not None:
+                k_cols += [f"{n}l", f"lower({n}l) AS {n}k"]
+        for k, (ci, fn) in enumerate(ms):
+            if ci is not None:
+                k_cols.append(f"p{k}" if fn == "pct" else f"m{k}")
+                if fn == "distinct":
+                    k_cols.append(f"t{k}")
+        dd = self._date_dim(d, xi) if (xi is not None and time) else None
+        k_from = f"s JOIN {dd} ON s.xraw = {dd}.v WHERE xd IS NOT NULL" if dd else "s"
+        agg = [pcts[k] if fn == "pct" else self._FN_SQL[fn].format(m=f"m{k}", t=f"t{k}") for k, (ci, fn) in enumerate(ms)]
+        rank_expr = "xk DESC" if rank == "label" else f"abs(coalesce({agg[0]}, 0)) DESC, xk"
+        src = (f"(SELECT *, unnest(string_split(coalesce({_col(xi)}, ''), ',')) AS xmv FROM {d['table']}{where})" if multi else f"{d['table']}{where}")
+        cur = self.db.cursor()
+        hidden = 0
+        k_sel = f"SELECT {', '.join(k_cols)} FROM {k_from}"
+        if min_rows > 0 and xi is not None:                                       # drop groups too small to average (rows that carry a value), but never leave fewer than two
+            sized = ("count(p0)" if ms[0][1] == "pct" else "count(m0)") if ms[0][0] is not None and ms[0][1] not in ("count",) else "count(*)"
+            chk = (f"WITH s AS (SELECT {', '.join(s_cols)} FROM {src}), k0 AS ({k_sel}) "
+                   f"SELECT count(*), count(*) FILTER (WHERE n >= {min_rows}) FROM (SELECT xk, {sized} AS n FROM k0 GROUP BY xk)")
+            total_g, ok_g = cur.execute(chk, params).fetchone()
+            if 2 <= ok_g < total_g:
+                hidden = total_g - ok_g
+                k_cte = (f"k0 AS ({k_sel}), k AS (SELECT * FROM k0 WHERE xk IN (SELECT xk FROM k0 GROUP BY xk HAVING {sized} >= {min_rows}))")
+            else:
+                k_cte = f"k AS ({k_sel})"
+        else:
+            k_cte = f"k AS ({k_sel})"
+        ctes = [f"s AS (SELECT {', '.join(s_cols)} FROM {src})",
+                k_cte,
+                f"tx AS (SELECT xk FROM k GROUP BY xk ORDER BY {rank_expr} LIMIT {max_cats})"]
+        fold = [f"CASE WHEN xk IN (SELECT xk FROM tx) THEN xk ELSE '{self.OTHERS}' END AS fx"]
+        keys, labels = ["fx"], ["min(xl) AS lx"]
+        for n, i in (("g", gi), ("g2", g2i)):
+            if i is not None:
+                ctes.append(f"t{n} AS (SELECT {n}k FROM k GROUP BY {n}k ORDER BY count(*) DESC, {n}k LIMIT {max_groups - 1})")
+                fold.append(f"CASE WHEN {n}k IN (SELECT {n}k FROM t{n}) THEN {n}k ELSE '{self.OTHERS}' END AS f{n}")
+                keys.append(f"f{n}"); labels.append(f"min({n}l) AS l{n}")
+        sel_agg = ", ".join(f"{a} AS a{k}" for k, a in enumerate(agg))
+        extra = ", ".join(c for c in ["xl"] + [f"{n}l" for n, i in (("g", gi), ("g2", g2i)) if i is not None] +
+                          [c2 for k, (ci, fn) in enumerate(ms) if ci is not None for c2 in ([f"p{k}" if fn == "pct" else f"m{k}"] + ([f"t{k}"] if fn == "distinct" else []))])
+        sql = (f"WITH {', '.join(ctes)}, f AS (SELECT {', '.join(fold)}, {extra} FROM k) "
+               f"SELECT {', '.join(keys)}, {', '.join(labels)}, {sel_agg} FROM f GROUP BY {', '.join(keys)} LIMIT 20000")
+        try:
+            data = cur.execute(sql, params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not calculate this chart: {exc}")
+        nd = len(keys)
+        rows = []
+        for r in data:
+            lab = [self.OTHERS_LABEL if r[j] == self.OTHERS else r[nd + j] for j in range(nd)]
+            rows.append(lab + list(r[2 * nd:]))
+        matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}", params).fetchone()[0]
+        zeros = 0
+        zm = [ci for ci, fn in ms if ci is not None and fn not in ("count", "distinct", "pct")]
+        if nozero and zm:
+            zeros = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(zm[0])} = 0", params).fetchone()[0]
+        return {"rows": rows, "matched": matched, "dims": nd, "measures": len(ms), "total": d["rows"], "hiddenSmall": hidden, "zeroSkipped": zeros,
+                "zeroName": d["headers"][zm[0]] if zm else ""}
+
+    OTHERS_LABEL = "(Others)"
+
+    def chart_hist(self, ds_id, col, bins=0, search=None, filters=None, nozero=False):
+        d = self._ds(ds_id)
+        i = self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        cur = self.db.cursor()
+        base = f"SELECT {self._numz(i, nozero)} AS v FROM {d['table']}{where}"
+        n, mn, mx, mean, med, sd = cur.execute(
+            f"SELECT count(v), min(v), max(v), avg(v), median(v), stddev_pop(v) FROM ({base}) WHERE v IS NOT NULL", params).fetchone()
+        out = {"n": n, "min": mn, "max": mx, "mean": mean, "median": med, "sd": sd, "edges": [], "counts": [], "zeroSkipped": 0}
+        if nozero:
+            out["zeroSkipped"] = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(i)} = 0", params).fetchone()[0]
+        if not n:
+            return out
+        k = int(bins) if int(bins or 0) > 1 else max(5, min(40, math.ceil(math.log2(n) + 1)))
+        if mn == mx:
+            out["edges"], out["counts"] = [mn - 0.5, mx + 0.5], [n]
+            return out
+        w = (mx - mn) / k
+        counts = [0] * k
+        for b, c in cur.execute(
+                f"SELECT least({k - 1}, CAST(floor((v - ?) / ?) AS INTEGER)) AS b, count(*) FROM ({base}) WHERE v IS NOT NULL GROUP BY 1",
+                [mn, w] + params).fetchall():
+            counts[int(b)] += c
+        out["edges"] = [mn + w * j for j in range(k + 1)]
+        out["counts"] = counts
+        return out
+
+    def chart_box(self, ds_id, x, col, top=20, search=None, filters=None, nozero=False):
+        d = self._ds(ds_id)
+        xi, ci = self._check_col(d, x), self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        xc = _col(xi)
+        top = max(1, min(int(top), 40))
+        sql = (f"WITH v AS (SELECT lower(trim({xc})) AS xk, trim({xc}) AS xl, {self._numz(ci, nozero)} AS v FROM {d['table']}{where}), "
+               f"v2 AS (SELECT * FROM v WHERE xk <> '' AND v IS NOT NULL), "
+               f"tp AS (SELECT xk FROM v2 GROUP BY xk HAVING count(*) >= 3 ORDER BY count(*) DESC, xk LIMIT {top}), "
+               f"q AS (SELECT xk, min(xl) AS xl, count(*) AS n, quantile_cont(v, 0.25) AS q1, quantile_cont(v, 0.5) AS q2, quantile_cont(v, 0.75) AS q3 "
+               f"      FROM v2 WHERE xk IN (SELECT xk FROM tp) GROUP BY xk) "
+               f"SELECT q.xl, q.n, q.q1, q.q2, q.q3, "
+               f"  min(v) FILTER (WHERE v >= q.q1 - 1.5 * (q.q3 - q.q1)), max(v) FILTER (WHERE v <= q.q3 + 1.5 * (q.q3 - q.q1)) "
+               f"FROM v2 JOIN q USING (xk) GROUP BY q.xk, q.xl, q.n, q.q1, q.q2, q.q3 ORDER BY q.n DESC, q.xk")
+        cur = self.db.cursor()
+        rows = cur.execute(sql, params).fetchall()
+        labels = [r[0] for r in rows]
+        stats = [[r[5], r[2], r[3], r[4], r[6]] for r in rows]
+        outliers = []
+        if rows:
+            odd = cur.execute(
+                f"WITH v AS (SELECT lower(trim({xc})) AS xk, {self._numz(ci, nozero)} AS v FROM {d['table']}{where}), "
+                f"v2 AS (SELECT * FROM v WHERE xk <> '' AND v IS NOT NULL), "
+                f"q AS (SELECT xk, quantile_cont(v, 0.25) AS q1, quantile_cont(v, 0.75) AS q3 FROM v2 GROUP BY xk HAVING count(*) >= 3) "
+                f"SELECT v2.xk, v FROM v2 JOIN q USING (xk) WHERE v < q1 - 1.5 * (q3 - q1) OR v > q3 + 1.5 * (q3 - q1) "
+                f"ORDER BY hash(v2.xk || CAST(v AS VARCHAR)) LIMIT 4000", params).fetchall()
+            pos = {lab.strip().lower(): n for n, lab in enumerate(labels)}
+            outliers = [[pos[k], v] for k, v in odd if k in pos][:600]
+        return {"labels": labels, "stats": stats, "outliers": outliers, "counts": [r[1] for r in rows]}
+
+    def chart_points(self, ds_id, xnum, ynum, size=None, g=None, limit=5000, search=None, filters=None, max_groups=8, nozero=False):
+        d = self._ds(ds_id)
+        xi, yi = self._check_col(d, xnum), self._check_col(d, ynum)
+        zi, gi = self._opt_col(d, size), self._opt_col(d, g)
+        where, params = self._where(d, search, filters)
+        limit = max(100, min(int(limit), 20000))
+        max_groups = max(2, min(int(max_groups), 60))
+        cols = [f"__rid", f"{self._numz(xi, nozero)} AS x", f"{self._numz(yi, nozero)} AS y"]
+        if zi is not None:
+            cols.append(f"{_num(zi)} AS z")
+        if gi is not None:
+            cols.append(f"CASE WHEN {_col(gi)} IS NULL OR trim({_col(gi)}) = '' THEN '(blank)' ELSE trim({_col(gi)}) END AS g")
+        need = "x IS NOT NULL AND y IS NOT NULL" + (" AND z IS NOT NULL" if zi is not None else "")
+        base = f"SELECT {', '.join(cols)} FROM {d['table']}{where}"
+        cur = self.db.cursor()
+        n, slope, icpt, r, xmin, xmax = cur.execute(
+            f"SELECT count(*), regr_slope(y, x), regr_intercept(y, x), corr(y, x), min(x), max(x) FROM ({base}) WHERE {need}", params).fetchone()
+        pts = []
+        if n:
+            gsel = ""
+            if gi is not None:
+                gsel = (f", CASE WHEN g IN (SELECT g FROM (SELECT g FROM b WHERE {need} GROUP BY g ORDER BY count(*) DESC, g LIMIT {max_groups - 1})) "
+                        f"THEN g ELSE '{self.OTHERS_LABEL}' END AS g2")
+            order = f"SELECT __rid, x, y{', z' if zi is not None else ''}{gsel} FROM b WHERE {need} ORDER BY hash(__rid) LIMIT {limit}"
+            for row in cur.execute(f"WITH b AS ({base}) {order}", params).fetchall():
+                pts.append(list(row))
+        zs = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} ({_num(xi)} = 0 OR {_num(yi)} = 0)", params).fetchone()[0] if nozero else 0
+        return {"n": n, "points": pts, "zeroSkipped": zs, "sampled": n > len(pts), "hasSize": zi is not None, "hasGroup": gi is not None,
+                "reg": {"slope": slope, "intercept": icpt, "r": r, "n": n, "xmin": xmin, "xmax": xmax} if n >= 3 else None}
+
+    def fair_cells(self, ds_id, y, factor, adjusters=None, nozero=False, search=None, filters=None, max_levels=40, bands=None, yspec=None, sample_rows=None):
+        """For a fair comparison: rows grouped by (group, adjuster levels ...) with the count, sum and sum of squares of the
+        outcome. The browser fits the regression from these few cells, so the whole file is used, not a sample."""
+        d = self._ds(ds_id)
+        yi, fi = self._check_col(d, y), self._check_col(d, factor)
+        adj = [self._check_col(d, a) for a in (adjusters or [])][:4]
+        if fi in adj or yi in adj or yi == fi:
+            raise EngineError("Choose different columns for the outcome, the groups and the adjustments.")
+        where, params = self._where(d, search, filters)
+        nozero = bool(nozero)
+        dims = [fi] + adj
+        lim = [12] + [max(2, min(int(max_levels), 60))] * len(adj)
+
+        bands = {int(k): v for k, v in (bands or {}).items()}
+
+        def text(i):
+            if i in bands:                                                        # a number column cut into bands (b000, b001 ...)
+                return f"coalesce({self._band_sql(_num(i), bands[i])}, '(blank)')"
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+        sel = ", ".join(f"{text(i)} AS d{n}" for n, i in enumerate(dims))
+        src = f"(SELECT * FROM {d['table']}{where}) USING SAMPLE reservoir({int(sample_rows)} ROWS) REPEATABLE (42)" if sample_rows else f"{d['table']}{where}"
+        cte = [f"s AS (SELECT {sel}, {self._yx(yi, nozero, yspec)} AS y FROM {src})", "k AS (SELECT * FROM s WHERE y IS NOT NULL)"]
+        fold = []
+        for n in range(len(dims)):
+            cte.append(f"t{n} AS (SELECT d{n} FROM k GROUP BY d{n} ORDER BY count(*) DESC, d{n} LIMIT {lim[n]})")
+            fold.append(f"CASE WHEN d{n} IN (SELECT d{n} FROM t{n}) THEN d{n} ELSE '(Others)' END AS f{n}")
+        keys = ", ".join(f"f{n}" for n in range(len(dims)))
+        sql = (f"WITH {', '.join(cte)}, g AS (SELECT {', '.join(fold)}, y FROM k) "
+               f"SELECT {keys}, count(*), sum(y), sum(y * y) FROM g GROUP BY {keys} LIMIT 20000")
+        cur = self.db.cursor()
+        try:
+            data = cur.execute(sql, params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not calculate this comparison: {exc}")
+        zeros = 0
+        if nozero:
+            zeros = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {_num(yi)} = 0", params).fetchone()[0]
+        matched = cur.execute(f"SELECT count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {self._yx(yi, False, yspec)} IS NOT NULL", params).fetchone()[0]
+        return {"cells": [{"k": list(r[:len(dims)]), "n": r[len(dims)], "sy": r[len(dims) + 1], "syy": r[len(dims) + 2]} for r in data],
+                "matched": matched, "zeroSkipped": zeros}
+
+    def fair_pairs(self, ds_id, y, pairs, nozero=False, search=None, filters=None, bands=None, yspec=None, sample_rows=None):
+        """Cells for many (column, stronger column) pairs in one request: is a column still linked to the outcome
+        INSIDE the groups of a stronger one? Each pair is one grouped scan."""
+        out = []
+        for p in (pairs or [])[:200]:
+            zs = p.get("z") if isinstance(p.get("z"), list) else [p.get("z")]      # one stronger column, or several together
+            used = {int(p.get("x"))} | {int(z) for z in zs}
+            r = self.fair_cells(ds_id, y, p.get("x"), zs[:3], nozero, search, filters,
+                                bands={k: v for k, v in (bands or {}).items() if int(k) in used}, yspec=yspec, sample_rows=sample_rows)
+            out.append({"x": p.get("x"), "z": p.get("z"), "cells": r["cells"]})
+        return {"pairs": out}
+
+    def pair_grid(self, ds_id, y, pairs, nozero=False, search=None, filters=None, bands=None, yspec=None):
+        """The cells (count, sum, sum of squares of the outcome) of MANY pairs of columns from ONE pass over the rows
+        (grouping sets). Same answer as fair_pairs, for when every pair of a dozen columns is wanted (the 'it depends on' check)."""
+        d = self._ds(ds_id)
+        yi = self._check_col(d, y)
+        pl = [(self._check_col(d, p.get("x")), self._check_col(d, p.get("z")) if p.get("z") is not None else None) for p in (pairs or [])[:200]]      # z empty: that column alone
+        cols = sorted({c for pr in pl for c in pr if c is not None})
+        if yi in cols or not pl or any(a == b for a, b in pl):
+            raise EngineError("Choose different columns for the outcome and the pairs.")
+        where, params = self._where(d, search, filters)
+        bands = {int(k): v for k, v in (bands or {}).items()}
+
+        def text(i):
+            if i in bands:
+                return f"coalesce({self._band_sql(_num(i), bands[i])}, '(blank)')"
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+        names = {c: f"c{n}" for n, c in enumerate(cols)}
+        sel = ", ".join(f"{text(c)} AS {names[c]}" for c in cols)
+        sets = ", ".join(f"({names[a]}, {names[b]})" if b is not None else f"({names[a]})" for a, b in pl)
+        allc = ", ".join(names[c] for c in cols)
+        sql = (f"WITH s AS (SELECT {sel}, {self._yx(yi, nozero, yspec)} AS y FROM {d['table']}{where}), k AS (SELECT * FROM s WHERE y IS NOT NULL) "
+               f"SELECT {allc}, grouping_id({allc}) AS gid, count(*), sum(y), sum(y * y) FROM k GROUP BY GROUPING SETS ({sets})")
+        try:
+            data = self.db.cursor().execute(sql, params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not calculate these pairs: {exc}")
+        nc = len(cols)
+        # grouping_id: the first listed column is the highest bit; a set bit means the column is NOT in that grouping set
+        gid_of = {}
+        for k, (a, b) in enumerate(pl):
+            g = 0
+            for n, c in enumerate(cols):
+                if c != a and c != b:
+                    g |= 1 << (nc - 1 - n)
+            gid_of[g] = k
+        out = [{"x": pairs[k].get("x"), "z": pairs[k].get("z"), "cells": []} for k in range(len(pl))]
+        pos = {c: n for n, c in enumerate(cols)}
+        for r in data:
+            k = gid_of.get(r[nc])
+            if k is None:
+                continue
+            a, b = pl[k]
+            out[k]["cells"].append({"k": [r[pos[a]]] + ([r[pos[b]]] if b is not None else []), "n": r[nc + 1], "sy": r[nc + 2], "syy": r[nc + 3]})
+        return {"pairs": out}
+
+    def label_sample(self, ds_id, label, cols, per_class=1500, total=20000, search=None, filters=None):
+        """A sample that keeps every label: up to `per_class` rows of each value of the label column (always the same
+        ones), with how many rows each value has in the whole file, so the browser can weigh them back."""
+        d = self._ds(ds_id)
+        li = self._check_col(d, label)
+        ci = [self._check_col(d, c) for c in (cols or [])][:40]
+        where, params = self._where(d, search, filters)
+        lab = f"trim(coalesce({_col(li)}, ''))"
+        cond = f"{where}{' AND' if where else ' WHERE'} {lab} <> ''"
+        cur = self.db.cursor()
+        counts = cur.execute(f"SELECT {lab} AS l, count(*) FROM {d['table']}{cond} GROUP BY l ORDER BY count(*) DESC LIMIT 60", params).fetchall()
+        k = max(1, len(counts))
+        per = max(50, min(int(per_class), int(total) // k))
+        sel = ", ".join([lab] + [_col(i) for i in ci])
+        rows = cur.execute(
+            f"SELECT {sel} FROM (SELECT *, row_number() OVER (PARTITION BY {lab} ORDER BY hash(__rid)) AS rn FROM {d['table']}{cond}) "
+            f"WHERE rn <= {per} ORDER BY {lab}, hash(__rid), __rid", params).fetchall()
+        return {"rows": [["" if v is None else v for v in r] for r in rows], "counts": {str(l): n for l, n in counts}, "cols": [li] + ci}
+
+    def rule_check(self, ds_id, label, rules, default, search=None, filters=None):
+        """How an ordered rule list does on EVERY row: the first rule that fits gives the label, else `default`.
+        rules: [{label, conds: [{col, min?, max?}]}]   (min: value >= min, an empty value counts as above;  max: value < max)"""
+        d = self._ds(ds_id)
+        li = self._check_col(d, label)
+        where, params = self._where(d, search, filters)
+        lab = f"trim(coalesce({_col(li)}, ''))"
+        whens, wp = [], []
+        for n, r in enumerate((rules or [])[:60]):
+            parts = []
+            for c in r.get("conds") or []:
+                ci = self._check_col(d, c.get("col"))
+                vals = c.get("values") if c.get("values") is not None else c.get("notValues")
+                if vals is not None:                                   # a text column: is (not) one of these values
+                    vals = [str(v) for v in vals][:500]
+                    marks = ", ".join("?" for _ in vals) or "NULL"
+                    parts.append(f"trim(coalesce({_col(ci)}, '')) {'IN' if c.get('values') is not None else 'NOT IN'} ({marks})"); wp.extend(vals)
+                    continue
+                x = _num(ci)
+                if c.get("min") is not None:
+                    parts.append(f"({x} >= ? OR {x} IS NULL)"); wp.append(float(c["min"]))
+                if c.get("max") is not None:
+                    parts.append(f"{x} < ?"); wp.append(float(c["max"]))
+            whens.append(f"WHEN {' AND '.join(parts) or 'TRUE'} THEN {n}")
+        pred_case = "CASE " + " ".join(whens) + " ELSE -1 END" if whens else "-1"
+        labels = [str(r.get("label", "")) for r in (rules or [])[:60]]
+        cond = f"{where}{' AND' if where else ' WHERE'} {lab} <> ''"
+        sql = f"SELECT r, l, count(*) FROM (SELECT {pred_case} AS r, {lab} AS l FROM {d['table']}{cond}) GROUP BY r, l"
+        try:
+            data = self.db.cursor().execute(sql, wp + params).fetchall()
+        except Exception as exc:
+            raise EngineError(f"Could not check the rule: {exc}")
+        stats = [{"n": 0, "right": 0} for _ in labels]
+        other = {"n": 0, "right": 0}
+        total = right = 0
+        for r, l, n in data:
+            want = labels[r] if r >= 0 else str(default)
+            st = stats[r] if r >= 0 else other
+            st["n"] += n; total += n
+            if l == want:
+                st["right"] += n; right += n
+        return {"rules": stats, "otherwise": other, "n": total, "right": right}
+
+    def fair_linear(self, ds_id, y, factor, cat_adj=None, lin_adj=None, nozero=False, search=None, filters=None, ref=None, curve=False, yspec=None):
+        """Fair comparison with NUMBER adjusters as straight lines: an exact row-level linear regression of y on the
+        group (0/1 columns), text adjusters (0/1 columns) and number adjusters (one slope each), with HC3 robust errors
+        - streamed in two passes over the rows, so every row is used. Also the fit with each adjuster alone (for
+        "which factor moves the gap"), from sub-blocks of the same sums.
+        Returns {levels: {level: [diff, se]}, r2, n, alone: [{levels}], ref}"""
+        import numpy as np
+        d = self._ds(ds_id)
+        yi, fi = self._check_col(d, y), self._check_col(d, factor)
+        cats = [self._check_col(d, c) for c in (cat_adj or [])][:4]
+        lins = [self._check_col(d, c) for c in (lin_adj or [])][:4]
+        if fi in cats + lins or yi in [fi] + cats + lins:
+            raise EngineError("Choose different columns for the outcome, the groups and the adjustments.")
+        where, params = self._where(d, search, filters)
+
+        def text(i):
+            c = _col(i)
+            return f"CASE WHEN {c} IS NULL OR trim({c}) = '' THEN '(blank)' ELSE trim({c}) END"
+        conds = [f"{self._yx(yi, nozero, yspec)} IS NOT NULL"] + [f"{_num(i)} IS NOT NULL" for i in lins]
+        base = f"FROM {d['table']}{where}{' AND' if where else ' WHERE'} " + " AND ".join(conds)
+        cur = self.db.cursor()
+        dims, levels = [fi] + cats, []
+        for n, i in enumerate(dims):                                              # the values of each text column, most rows first
+            lim = 12 if n == 0 else 60
+            lv = [r[0] for r in cur.execute(f"SELECT {text(i)} AS v, count(*) {base} GROUP BY v ORDER BY count(*) DESC, v LIMIT {lim}", params).fetchall()]
+            levels.append(lv)
+        if len(levels[0]) < 2:
+            raise EngineError("The groups column needs at least two values.")
+        r0 = ref if ref in levels[0] else levels[0][0]
+        refs = [r0] + [lv[0] for lv in levels[1:]]
+        # design columns: intercept | group levels (not the reference) | each text adjuster's levels | each number adjuster
+        blocks, colnames, p = [], [], 1
+        for n, lv in enumerate(levels):
+            keep = [v for v in lv if v != refs[n]] + (["(Others)"] if n > 0 or len(lv) >= 12 else [])
+            blocks.append((p, keep)); colnames += [(n, v) for v in keep]; p += len(keep)
+        nz = len(lins) * (2 if curve else 1)                                       # a curve: each number also as its centred square
+        lin_at = list(range(p, p + nz)); p += nz
+        means = [cur.execute(f"SELECT avg({_num(i)}) {base}", params).fetchone()[0] or 0.0 for i in lins] if curve else []
+        # each text column arrives as the number of its design column (0 = the reference value: no column)
+        codes, cparams = [], []
+        for n, i in enumerate(dims):
+            st, keep = blocks[n]
+            known = [v for v in levels[n] if v != refs[n]]
+            other = (keep.index("(Others)") + 1) if "(Others)" in keep else 0
+            codes.append(f"CASE WHEN {text(i)} = ? THEN 0 ELSE coalesce(list_position(?::VARCHAR[], {text(i)}), {other}) END")
+            cparams += [refs[n], known]
+        sel = ", ".join(codes + [_num(i) for i in lins] + [self._yx(yi, nozero, yspec)])
+        sql = f"SELECT {sel} {base}"
+        qparams = cparams + params
+        subsets = [list(range(p))]                                                 # the full fit, then group + one adjuster
+        grp = [0] + list(range(blocks[0][0], blocks[0][0] + len(blocks[0][1])))
+        for n in range(1, len(dims)):
+            st, keep = blocks[n]; subsets.append(grp + list(range(st, st + len(keep))))
+        for k in range(len(lins)):
+            subsets.append(grp + ([lin_at[k], lin_at[len(lins) + k]] if curve else [lin_at[k]]))
+
+        def chunks():
+            rel = self.db.cursor().sql(sql, params=qparams)                         # its own cursor; a relation streams without an extra copy
+            reader = rel.to_arrow_reader(100000) if hasattr(rel, "to_arrow_reader") else rel.fetch_arrow_reader(100000)
+            for batch in reader:
+                m = batch.num_rows
+                X = np.zeros((m, p)); X[:, 0] = 1.0
+                rr = np.arange(m)
+                for n in range(len(dims)):
+                    st = blocks[n][0]
+                    code = np.asarray(batch.column(n).to_numpy(zero_copy_only=False), dtype=np.int64)
+                    on = code > 0
+                    X[rr[on], st + code[on] - 1] = 1.0
+                for k in range(len(lins)):
+                    z = np.asarray(batch.column(len(dims) + k).to_numpy(zero_copy_only=False), dtype=float)
+                    X[:, lin_at[k]] = z
+                    if curve:
+                        X[:, lin_at[len(lins) + k]] = (z - means[k]) ** 2
+                yv = np.asarray(batch.column(len(dims) + len(lins)).to_numpy(zero_copy_only=False), dtype=float)
+                yield X, yv
+        XtX, Xty, n, sy, syy = np.zeros((p, p)), np.zeros(p), 0, 0.0, 0.0
+        for X, yv in chunks():
+            XtX += X.T @ X; Xty += X.T @ yv; n += len(yv); sy += yv.sum(); syy += (yv * yv).sum()
+        if n <= p:
+            raise EngineError("Too few rows for this comparison.")
+        fits = []
+        for sub in subsets:
+            A = np.linalg.pinv(XtX[np.ix_(sub, sub)], rcond=1e-10)
+            fits.append({"sub": sub, "A": A, "b": A @ Xty[sub], "meat": np.zeros((len(sub), len(sub))), "sse": 0.0,
+                         "rank": int(np.linalg.matrix_rank(XtX[np.ix_(sub, sub)]))})
+        for X, yv in chunks():
+            for f in fits:
+                Xs = X[:, f["sub"]]
+                e = yv - Xs @ f["b"]
+                h = np.einsum("ij,jk,ik->i", Xs, f["A"], Xs)
+                w = (e / np.maximum(1 - h, 1e-6)) ** 2
+                f["meat"] += (Xs * w[:, None]).T @ Xs; f["sse"] += float(e @ e)
+        sst = syy - sy * sy / n
+
+        def result(f):
+            V = f["A"] @ f["meat"] @ f["A"]
+            out = {}
+            for j, col in enumerate(f["sub"]):
+                if 1 <= col < 1 + len(blocks[0][1]):
+                    out[blocks[0][1][col - 1]] = [float(f["b"][j]), float(math.sqrt(max(V[j, j], 0)))]
+            return out
+        sse, rank = fits[0]["sse"], fits[0]["rank"]
+        return {"levels": result(fits[0]), "r2": 1 - sse / sst if sst > 0 else 0.0, "n": n, "ref": r0, "sse": sse, "p": rank,
+                "aic": n * math.log(max(sse, 1e-300) / n) + 2 * rank, "curve": bool(curve),
+                "alone": [result(f) for f in fits[1:]], "adjusters": [int(c) for c in cats] + [int(c) for c in lins]}
+
+    FORMULA_SQL = {
+        "mulsub": "({a} * {b} - {c3})", "add": "({a} + {b})", "sub": "({a} - {b})", "mul": "({a} * {b})", "div": "({a} / NULLIF({b}, 0))",
+        "pctof": "({a} * {b} / 100)", "less": "({a} * (1 - {b} / 100))", "more": "({a} * (1 + {b} / 100))",
+        "divless": "({a} / NULLIF(1 - {b} / 100, 0))", "share": "({a} / NULLIF({b}, 0) * 100)",
+        "cdiv": "((? - {a}) / NULLIF({b}, 0))", "divc": "(({a} - ?) / NULLIF({b}, 0))", "lin": "(? * {a} + ?)",
+        "kdiv": "(? * {a} / NULLIF({b}, 0))", "divp1": "({a} / ({b} + 1))",
+    }
+
+    def column_checks(self, ds_id, formulas=None, caps=None, search=None, filters=None):
+        """Formulas between columns and caps, checked on EVERY row: per formula how many rows fit (allowing for the
+        rounding of the result column), per cap how many rows sit exactly on the value."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        cur = self.db.cursor()
+        out_f, out_c = [], []
+        for f in (formulas or [])[:40]:
+            op = f.get("op")
+            if op not in self.FORMULA_SQL:
+                raise EngineError("Unknown formula.")
+            t = _num(self._check_col(d, f.get("t")))
+            a = _num(self._check_col(d, f.get("a")))
+            b = _num(self._check_col(d, f.get("b"))) if op != "lin" else "NULL"
+            c3 = _num(self._check_col(d, f.get("c3"))) if op == "mulsub" else "NULL"
+            expr = self.FORMULA_SQL[op].format(a=a, b=b, c3=c3)
+            ep = [float(f.get("c") or 0)] if op in ("cdiv", "divc", "kdiv") else ([float(f.get("k", 1)), float(f.get("c") or 0)] if op == "lin" else [])
+            dec = max(0, min(int(f.get("d", 6)), 6))
+            tol = f"(0.5 * {10.0 ** -dec!r} * 1.01 + 0.002 * abs(t) + 1e-9)"
+            sql = (f"SELECT count(*), count(*) FILTER (WHERE abs(p - t) <= {tol}) FROM "
+                   f"(SELECT {t} AS t, {expr} AS p FROM {d['table']}{where}) WHERE t IS NOT NULL AND p IS NOT NULL AND isfinite(p)")
+            n, ok = cur.execute(sql, ep + params).fetchone()
+            out_f.append({"n": n, "ok": ok})
+        for c in (caps or [])[:40]:
+            x = _num(self._check_col(d, c.get("col")))
+            n, cnt = cur.execute(f"SELECT count({x}), count(*) FILTER (WHERE {x} = ?) FROM {d['table']}{where}",
+                                 [float(c.get("value"))] + params).fetchone()
+            out_c.append({"n": n, "count": cnt})
+        return {"formulas": out_f, "caps": out_c}
+
+    def band_edges(self, ds_id, cols, k=5, search=None, filters=None):
+        """Exact quantile edges of number columns over EVERY row (the browser cuts a number into equal-count bands with them)."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        cur, out = self.db.cursor(), {}
+        k = max(2, min(int(k), 20))
+        qs = [i / k for i in range(1, k)]
+        for c in (cols or [])[:40]:
+            i = self._check_col(d, c)
+            x = _num(i)
+            row = cur.execute(f"SELECT min({x}), max({x}), quantile_cont({x}, {qs}) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {x} IS NOT NULL", params).fetchone()
+            if row[0] is None:
+                continue
+            lo, hi, quant = row[0], row[1], row[2] or []
+            e = [lo]
+            for q in quant:
+                if q > e[-1]:
+                    e.append(q)
+            if hi > e[-1]:
+                e.append(hi)
+            elif len(e) == 1:
+                e.append(lo + 1)
+            out[str(i)] = e
+        return {"edges": out}
+
+    def column_values(self, ds_id, cols, limit=41, search=None, filters=None):
+        """The exact number of different values and the commonest ones of text columns, over every row."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        cur, out = self.db.cursor(), {}
+        for c in (cols or [])[:60]:
+            i = self._check_col(d, c)
+            t = f"trim({_col(i)})"
+            cond = f"{_col(i)} IS NOT NULL AND {t} <> ''"
+            nd = cur.execute(f"SELECT count(DISTINCT {t}) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {cond}", params).fetchone()[0]
+            top = cur.execute(f"SELECT {t} AS v, count(*) FROM {d['table']}{where}{' AND' if where else ' WHERE'} {cond} GROUP BY v ORDER BY count(*) DESC, v LIMIT {int(limit)}", params).fetchall()
+            out[str(i)] = {"distinct": nd, "values": [[r[0], r[1]] for r in top]}
+        return {"values": out}
+
+    def scalar(self, ds_id, y=None, fn="count", conds=None, search=None, filters=None):
+        """One number over every row that meets the conditions (column = value): count, sum, average or median."""
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        extra = []
+        for c in (conds or [])[:6]:
+            i = self._check_col(d, c.get("col"))
+            op = c.get("op")
+            if op == "contains":                                            # the text contains these letters (capitals ignored)
+                extra.append(f"contains(lower({_col(i)}), lower(?))")
+                params = list(params) + [str(c.get("value")).strip()]
+            elif op == "empty":                                             # the cell is empty
+                extra.append(f"({_col(i)} IS NULL OR trim({_col(i)}) = '')")
+            elif op == "word":                                              # the text contains this whole word
+                extra.append(f"list_contains({self.WORDS_SQL.format(c=_col(i))}, lower(?))")
+                params = list(params) + [str(c.get("value")).strip()]
+            else:
+                extra.append(f"trim({_col(i)}) = ?")
+                params = list(params) + [str(c.get("value")).strip()]
+        w = where + ((" AND " if where else " WHERE ") + " AND ".join(extra) if extra else "")
+        cur = self.db.cursor()
+        if fn == "count" or y in (None, -1):
+            return {"n": cur.execute(f"SELECT count(*) FROM {d['table']}{w}", params).fetchone()[0], "value": None, "total": d["rows"]}
+        if fn == "distinct":
+            c = _col(self._check_col(d, y))
+            n, v = cur.execute(f"SELECT count(NULLIF(trim({c}), '')), count(DISTINCT NULLIF(trim({c}), '')) FROM {d['table']}{w}", params).fetchone()
+            return {"n": n, "value": v, "total": d["rows"]}
+        x = _num(self._check_col(d, y))
+        expr = {"sum": f"sum({x})", "avg": f"avg({x})", "median": f"quantile_cont({x}, 0.5)"}.get(fn)
+        if not expr:
+            raise EngineError("Unknown calculation.")
+        n, v = cur.execute(f"SELECT count({x}), {expr} FROM {d['table']}{w}", params).fetchone()
+        return {"n": n, "value": v, "total": d["rows"]}
+
+    # ------------------------------------------------------------------ new tables from old ones
+    # "Link two files" and "One row per …" build a NEW dataset inside the engine (all columns as text, like a loaded file); nothing is guessed:
+    # a key that is repeated in the file being looked up is left blank (or the first row is taken, if asked), and every count is reported.
+    @staticmethod
+    def _keyx(c):
+        """The text of a key column made comparable: spaces, capitals and a trailing .0 (5008804.0 = 5008804) do not matter."""
+        return f"lower(regexp_replace(trim({c}), '\\.0+$', ''))"
+
+    def _register_select(self, select_sql, params, headers, name):
+        """select_sql yields one text column per header (in order); stored as a dataset with the usual c0, c1 … names."""
+        n = len(headers)
+        ds_id = uuid.uuid4().hex[:12]
+        table = f"d_{ds_id}"
+        cols = ", ".join(f"COALESCE(CAST(s{i} AS VARCHAR), '') AS {_col(i)}" for i in range(n))
+        with self.lock:
+            cur = self.db.cursor()
+            cur.execute(f"CREATE TABLE {table} AS SELECT (row_number() OVER ()) - 1 AS __rid, {cols} FROM ({select_sql}) q", params)
+            rows = cur.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            self.datasets[ds_id] = {"table": table, "headers": headers, "name": name, "rows": rows}
+            while len(self.datasets) > MAX_DATASETS:
+                _, old = self.datasets.popitem(last=False)
+                self._drop_tables(cur, old)
+        return self.describe(ds_id)
+
+    def link_check(self, ds_id, other_id, key, other_key):
+        """How well two files fit together on a key column, before anything is built."""
+        d, o = self._ds(ds_id), self._ds(other_id)
+        lk, ok = self._keyx(_col(self._check_col(d, key))), self._keyx(_col(self._check_col(o, other_key)))
+        cur = self.db.cursor()
+        rk = cur.execute(f"SELECT count(*) FILTER (WHERE k <> ''), count(DISTINCT k) FILTER (WHERE k <> ''), "
+                         f"count(DISTINCT k) FILTER (WHERE k <> '' AND n > 1), count(*) FILTER (WHERE k <> '' AND n > 1) "
+                         f"FROM (SELECT {ok} AS k, count(*) OVER (PARTITION BY {ok}) AS n FROM {o['table']})").fetchone()
+        lres = cur.execute(
+            f"SELECT count(*), count(*) FILTER (WHERE k <> ''), count(DISTINCT k) FILTER (WHERE k <> ''), "
+            f"count(*) FILTER (WHERE k <> '' AND m), count(DISTINCT k) FILTER (WHERE k <> '' AND m), "
+            f"count(*) FILTER (WHERE k <> '' AND m AND rep), count(DISTINCT k) FILTER (WHERE k <> '' AND m AND rep) "
+            f"FROM (SELECT {lk} AS k, {lk} IN (SELECT {ok} FROM {o['table']} WHERE {ok} <> '') AS m, "
+            f"{lk} IN (SELECT {ok} FROM {o['table']} GROUP BY {ok} HAVING count(*) > 1) AS rep FROM {d['table']})").fetchone()
+        return {"left_rows": lres[0], "left_filled": lres[1], "left_keys": lres[2], "matched_rows": lres[3], "matched_keys": lres[4],
+                "ambiguous_rows": lres[5], "ambiguous_keys": lres[6],
+                "other_rows": o["rows"], "other_filled": rk[0], "other_keys": rk[1], "other_repeated_keys": rk[2], "other_repeated_rows": rk[3]}
+
+    def link(self, ds_id, other_id, key, other_key, cols, how="left", on_repeat="blank", name=None):
+        """Add columns of another file to this one by a key column (like VLOOKUP, but every row is checked).
+        on_repeat: what to do when the key is repeated in the other file ('blank' = leave empty, 'first' = take its first row)."""
+        d, o = self._ds(ds_id), self._ds(other_id)
+        key, other_key = self._check_col(d, key), self._check_col(o, other_key)
+        cols = [self._check_col(o, c) for c in (cols or []) if int(c) != other_key] if cols else [i for i in range(len(o["headers"])) if i != other_key]
+        if not cols:
+            raise EngineError("Choose at least one column to bring in.")
+        if how not in ("left", "inner") or on_repeat not in ("blank", "first"):
+            raise EngineError("Unknown option.")
+        lk, ok = self._keyx(_col(key)), self._keyx(_col(other_key))
+        have = list(d["headers"])
+        new_names = []
+        for c in cols:
+            nm = o["headers"][c]
+            if nm in have or nm in new_names:
+                nm = f"{nm} ({o['name']})"
+            while nm in have or nm in new_names:
+                nm += " "
+            new_names.append(nm)
+        headers = have + new_names
+        keep = "n = 1" if on_repeat == "blank" else "rn = 1"
+        ocols = ", ".join(f"{_col(c)} AS o{j}" for j, c in enumerate(cols))
+        sel = ", ".join([f"l.{_col(i)} AS s{i}" for i in range(len(have))] + [f"r.o{j} AS s{len(have) + j}" for j in range(len(cols))])
+        sql = (f"SELECT {sel} FROM {d['table']} l LEFT JOIN (SELECT k, {', '.join(f'o{j}' for j in range(len(cols)))} FROM ("
+               f"SELECT {ok} AS k, {ocols}, count(*) OVER (PARTITION BY {ok}) AS n, row_number() OVER (PARTITION BY {ok} ORDER BY __rid) AS rn "
+               f"FROM {o['table']}) WHERE k <> '' AND {keep}) r ON {lk} = r.k"
+               + (" WHERE r.k IS NOT NULL" if how == "inner" else "") + " ORDER BY l.__rid")
+        return self._register_select(sql, [], headers, name or d["name"])
+
+    SUMMARY_FNS = ("count", "sum", "avg", "min", "max", "first", "last", "distinct", "countif", "shareif", "anyif")
+
+    def summarize(self, ds_id, key, outs, name=None, search=None, filters=None):
+        """One row for each value of the key column (a person, a case, a month …). Each output is
+        {"fn": count|sum|avg|min|max|first|last|distinct|countif|shareif|anyif, "col": column, "values": [..] (for the *if ones), "name": heading}."""
+        d = self._ds(ds_id)
+        key = self._check_col(d, key)
+        if not outs:
+            raise EngineError("Choose what to work out for each row of the new table.")
+        where, params = self._where(d, search, filters)
+        kc = _col(key)
+        sel, headers, params2 = [], [d["headers"][key]], []
+        for o in outs[:60]:
+            fn = o.get("fn")
+            if fn not in self.SUMMARY_FNS:
+                raise EngineError("Unknown calculation.")
+            if fn == "count":
+                x, nm = "count(*)", o.get("name") or "Rows"
+            else:
+                i = self._check_col(d, o.get("col"))
+                c, num = _col(i), _num(i)
+                nm = o.get("name") or f"{fn} {d['headers'][i]}"
+                if fn in ("sum", "avg", "min", "max"):
+                    x = f"{fn}({num})" if fn != "avg" else f"avg({num})"
+                    x = f"round({x}, 6)"
+                elif fn == "first":
+                    x = f"arg_min(trim({c}), __rid) FILTER (WHERE trim({c}) <> '')"
+                elif fn == "last":
+                    x = f"arg_max(trim({c}), __rid) FILTER (WHERE trim({c}) <> '')"
+                elif fn == "distinct":
+                    x = f"count(DISTINCT NULLIF(trim({c}), ''))"
+                else:
+                    vals = [str(v).strip() for v in (o.get("values") or [])][:50]
+                    if not vals:
+                        raise EngineError("Choose at least one value to look for.")
+                    ph = ", ".join("?" for _ in vals)
+                    cnt = f"count(*) FILTER (WHERE trim({c}) IN ({ph}))"
+                    params2 += vals
+                    if fn == "countif":
+                        x = cnt
+                    elif fn == "shareif":
+                        x = f"round(100.0 * {cnt} / count(*), 2)"
+                    else:
+                        x = f"CASE WHEN {cnt} > 0 THEN 'Yes' ELSE 'No' END"
+            sel.append(x)
+            headers.append(nm)
+        headers = unique_headers(headers)
+        w = (where + " AND " if where else " WHERE ") + f"trim({kc}) <> ''"
+        cols = ", ".join([f"trim({kc}) AS s0"] + [f"{x} AS s{j + 1}" for j, x in enumerate(sel)])
+        sql = f"SELECT {cols} FROM {d['table']}{w} GROUP BY trim({kc}) ORDER BY min(__rid)"
+        return self._register_select(sql, list(params2) + list(params), headers, name or d["name"])
+
+    def replace_value(self, ds_id, col, old, new="", name=None):
+        """A copy of the dataset in which every cell of one column that equals `old` becomes `new` (e.g. a placeholder code → blank)."""
+        d = self._ds(ds_id)
+        col = self._check_col(d, col)
+        n = len(d["headers"])
+        sel = ", ".join((f"CASE WHEN trim({_col(i)}) = ? THEN ? ELSE {_col(i)} END AS s{i}" if i == col else f"{_col(i)} AS s{i}") for i in range(n))
+        info = self._register_select(f"SELECT {sel} FROM {d['table']} ORDER BY __rid", [str(old).strip(), str(new)], list(d["headers"]), name or d["name"])
+        hit = self.db.cursor().execute(f"SELECT count(*) FROM {d['table']} WHERE trim({_col(col)}) = ?", [str(old).strip()]).fetchone()[0]
+        info["changed"] = hit
+        return info
+
+    # ------------------------------------------------------------------ words and repeats in a text column
+    STOPWORDS = frozenset("""a an the of in on at to for from by with and or but if so as is are was were be been being am do does did have has had having
+        i me my mine we our us you your he she him her his hers it its they them their this that these those there here what which who whom when where why how
+        not no nor can could will would shall should may might must just than then too very also about into over under again more most some any all each
+        only own same such up down out off s t don im ive id ill dont didnt doesnt isnt wasnt cant couldnt wont wouldnt thats youre theyre one
+        because while after before during through between until though although both few other another many much even still yet ever get got let
+        है हैं था थी थे हो ही का की के को में से पर और भी एक यह वह कि जो तो ने भी है। हूँ हूं रहा रही रहे गया गई गए कर करें करना लिए इस उस जा जी""".split())
+    WORDS_SQL = "list_distinct(string_split(trim(regexp_replace(lower({c}), '[^\\p{{L}}\\p{{M}}\\p{{N}}'']+', ' ', 'g')), ' '))"
+
+    # ------------------------------------------------------------------ unusual values
+    def outliers(self, ds_id, col, by=None, k=3.5, limit=40, min_group=8, search=None, filters=None):
+        """Rows whose number is far from what is usual FOR THEIR OWN GROUP (or for the whole column when `by` is empty).
+        'Far' = more than k robust deviations from the median (modified z-score: 0.6745 * (x - median) / MAD, the Iglewicz-Hoaglin rule).
+        Every row is tested; a group with fewer than `min_group` numbers, or with no spread (MAD = 0), is not judged."""
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        gx = f"COALESCE(NULLIF(trim({_col(self._check_col(d, by))}), ''), '(blank)')" if by is not None and int(by) >= 0 else "'all'"
+        x = _num(ci)
+        cur = self.db.cursor()
+        base = (f"WITH s AS (SELECT __rid, {gx} AS g, {x} AS x FROM {d['table']}{where}), v AS (SELECT * FROM s WHERE x IS NOT NULL), "
+                f"m AS (SELECT g, count(*) AS n, quantile_cont(x, 0.5) AS med FROM v GROUP BY g), "
+                f"a AS (SELECT v.__rid, v.g, v.x, m.n, m.med, abs(v.x - m.med) AS ad FROM v JOIN m USING (g)), "
+                f"mad AS (SELECT g, quantile_cont(ad, 0.5) AS mad FROM a GROUP BY g), "
+                f"z AS (SELECT a.__rid, a.g, a.x, a.n, a.med, mad.mad, 0.6745 * (a.x - a.med) / mad.mad AS z FROM a JOIN mad USING (g) WHERE a.n >= {int(min_group)} AND mad.mad > 0)")
+        tested = cur.execute(base + " SELECT count(*), count(DISTINCT g) FROM z", params).fetchone()
+        flagged = cur.execute(base + f" SELECT count(*), count(*) FILTER (WHERE z > 0) FROM z WHERE abs(z) > {float(k)!r}", params).fetchone()
+        top = cur.execute(base + f" SELECT __rid, g, x, med, mad, z FROM z WHERE abs(z) > {float(k)!r} ORDER BY abs(z) DESC, __rid LIMIT {int(limit)}", params).fetchall()
+        cols = ", ".join(_col(i) for i in range(len(d["headers"])))
+        rows = []
+        for rid, g, xv, med, mad, z in top:
+            cells = cur.execute(f"SELECT {cols} FROM {d['table']} WHERE __rid = ?", [rid]).fetchone()
+            rows.append({"rid": rid, "group": g, "value": xv, "median": med, "mad": mad, "z": z, "cells": list(cells)})
+        return {"tested": tested[0], "groups": tested[1], "flagged": flagged[0], "high": flagged[1], "low": flagged[0] - flagged[1],
+                "k": float(k), "headers": d["headers"], "rows": rows}
+
+    def monthly_series(self, ds_id, date_col, y=None, fn="sum", search=None, filters=None):
+        """One value per calendar month (a date column in any common format): the sum, average or count of a number, from every row.
+        Months with no row are not invented; the result says which months are missing between the first and the last."""
+        d = self._ds(ds_id)
+        di = self._check_col(d, date_col)
+        where, params = self._where(d, search, filters)
+        expr = self._date_expr(_col(di))
+        if y is None or int(y) < 0 or fn == "count":
+            val, xin = "count(*)", "1"
+        else:
+            if fn not in ("sum", "avg"):
+                raise EngineError("Unknown calculation.")
+            val, xin = f"{fn}(x)", _num(self._check_col(d, y))
+        cur = self.db.cursor()
+        rows = cur.execute(
+            f"SELECT strftime(date_trunc('month', dt), '%Y-%m') AS m, {val} AS v, count(*) AS n FROM (SELECT {expr} AS dt, {xin} AS x FROM {d['table']}{where}) "
+            f"WHERE dt IS NOT NULL GROUP BY 1 ORDER BY 1", params).fetchall()
+        undated = cur.execute(f"SELECT count(*) FROM (SELECT {expr} AS dt FROM {d['table']}{where}) WHERE dt IS NULL", params).fetchone()[0]
+        series = [{"month": m, "value": v, "rows": n} for m, v, n in rows]
+        missing = []
+        if series:
+            y0, m0 = int(series[0]["month"][:4]), int(series[0]["month"][5:])
+            y1, m1 = int(series[-1]["month"][:4]), int(series[-1]["month"][5:])
+            have = {s["month"] for s in series}
+            yy, mm = y0, m0
+            while (yy, mm) <= (y1, m1):
+                key = f"{yy:04d}-{mm:02d}"
+                if key not in have:
+                    missing.append(key)
+                mm += 1
+                if mm > 12:
+                    yy, mm = yy + 1, 1
+        return {"series": series, "missing": missing, "undated": undated}
+
+    def add_text_stats(self, ds_id, col, name=None):
+        """A new dataset with two more columns for a text column: its length in characters and its number of words (blank text = 0)."""
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        have = list(d["headers"])
+        base = have[ci]
+        names = unique_headers(have + [f"{base}_characters", f"{base}_words"])
+        c = _col(ci)
+        sel = ", ".join([f"{_col(i)} AS s{i}" for i in range(len(have))] +
+                        [f"length(trim(COALESCE({c}, ''))) AS s{len(have)}",
+                         f"CASE WHEN trim(COALESCE({c}, '')) = '' THEN 0 ELSE len(string_split(regexp_replace(trim({c}), '\\s+', ' ', 'g'), ' ')) END AS s{len(have) + 1}"])
+        return self._register_select(f"SELECT {sel} FROM {d['table']} ORDER BY __rid", [], names, name or d["name"])
+
+    # ------------------------------------------------------------------ tags and feeling of a text column
+    @staticmethod
+    def _lit(s):
+        return "'" + str(s).replace("'", "''") + "'"
+
+    def tag_text(self, ds_id, col, tags=None, whole=True, sentiment=False, extra_pos=None, extra_neg=None, name=None):
+        """Up to two new columns for a text column (every row is read, nothing is sampled):
+          * <col>_topic   - the names of the tags whose words the text contains ('a; b' if several, 'Other' if none, blank if the text is blank)
+          * <col>_feeling - Positive / Negative / Neutral from the built-in word lists (lexicon.py), 'not' turning a word round.
+        whole=True matches whole words only ('late' does not match 'plate'); False matches the letters anywhere (for Hindi word endings)."""
+        import re as _re
+        from lexicon import table as lex_table, NEGATORS, POST_NEGATORS
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        have = list(d["headers"])
+        n = len(have)
+        c = "t." + _col(ci)
+        tags = [t for t in (tags or []) if str(t.get("name", "")).strip() and [w for w in t.get("words", []) if str(w).strip()]]
+        if not tags and not sentiment:
+            raise EngineError("Add at least one tag (a name with some words), or choose the feeling of the comments.")
+        if len(tags) > 40:
+            raise EngineError("Use at most 40 tags.")
+        newh, extras, ctes = [], [], []
+        base = have[ci]
+        text = f"lower(COALESCE({c}, ''))"
+        nonblank = f"trim(COALESCE({c}, '')) <> ''"
+        conds = []
+        L = r"[^\p{L}\p{M}\p{N}]"
+        if tags:
+            for t in tags:
+                ws = [str(w).strip().lower() for w in t["words"] if str(w).strip()][:200]
+                if whole:
+                    cond = " OR ".join(f"regexp_matches({text}, {self._lit('(^|' + L + ')' + _re.escape(w) + '($|' + L + ')')})" for w in ws)
+                else:
+                    cond = " OR ".join(f"contains({text}, {self._lit(w)})" for w in ws)
+                conds.append((str(t["name"]).strip(), cond))
+            case = ", ".join(f"CASE WHEN {cd} THEN {self._lit(nm)} END" for nm, cd in conds)
+            extras.append(f"CASE WHEN NOT ({nonblank}) THEN '' ELSE COALESCE(NULLIF(concat_ws('; ', {case}), ''), 'Other') END")
+            newh.append(f"{base}_topic")
+        if sentiment:
+            lex = lex_table(extra_pos or [], extra_neg or [])
+            vals = ", ".join(f"({self._lit(w)}, {v})" for w, v in lex.items())
+            neg = ", ".join(self._lit(w) for w in NEGATORS)
+            post = ", ".join(self._lit(w) for w in POST_NEGATORS)
+            splitter = r"[^\p{L}\p{M}\p{N}'|]+"
+            lexlist = ", ".join(self._lit(w) for w in lex)
+            # a full stop, comma, etc. becomes a '|' token: a "not" never reaches across it
+            clean = f"regexp_replace(replace(lower(COALESCE(t.{_col(ci)}, '')), '’', ''''), '[.,;:!?।…()]+', ' | ', 'g')"
+            toks = f"string_split(trim(regexp_replace({clean}, {self._lit(splitter)}, ' ', 'g')), ' ')"
+            ctes.append(f"lex(w, v) AS (VALUES {vals})")
+            ctes.append(f"tk AS (SELECT __rid, {toks} AS toks FROM {d['table']} t)")
+            ctes.append("u AS (SELECT __rid, toks, unnest(toks) AS w, unnest(range(1, len(toks) + 1)) AS i FROM tk)")
+            ctes.append(f"sc AS (SELECT __rid, sum(v * CASE WHEN (i > 1 AND list_contains([{neg}], toks[i-1])) "
+                        f"OR (i > 2 AND list_contains([{neg}], toks[i-2]) AND toks[i-1] <> '|' AND NOT list_contains([{lexlist}], toks[i-1])) "
+                        f"OR (i < len(toks) AND list_contains([{post}], toks[i+1])) THEN -1 ELSE 1 END) AS s FROM u JOIN lex ON u.w = lex.w GROUP BY __rid)")
+            extras.append(f"CASE WHEN NOT ({nonblank}) THEN '' WHEN sc.s > 0 THEN 'Positive' WHEN sc.s < 0 THEN 'Negative' ELSE 'Neutral' END")
+            newh.append(f"{base}_feeling")
+        names = unique_headers(have + newh)
+        sel = ", ".join([f"t.{_col(i)} AS s{i}" for i in range(n)] + [f"({x}) AS s{n + k}" for k, x in enumerate(extras)])
+        withs = ("WITH " + ", ".join(ctes) + " ") if ctes else ""
+        join = " LEFT JOIN sc ON sc.__rid = t.__rid" if sentiment else ""
+        info = self._register_select(f"{withs}SELECT {sel} FROM {d['table']} t{join} ORDER BY t.__rid", [], names, name or d["name"])
+        tbl = self.datasets[info["id"]]["table"]
+        cur = self.db.cursor()
+        res = {"info": info, "columns": names[n:], "counts": {}, "other": 0, "feeling": {}, "examples": {}, "tag_examples": {}}
+        if tags:
+            k = _col(n)
+            for nm, _ in conds:
+                res["tag_examples"][nm] = [r[0] for r in cur.execute(
+                    f"SELECT {_col(ci)} FROM {tbl} WHERE ({k} = ? OR {k} LIKE ? OR {k} LIKE ? OR {k} LIKE ?) ORDER BY __rid LIMIT 3",
+                    [nm, nm + "; %", "%; " + nm, "%; " + nm + "; %"]).fetchall()]
+            for nm, _ in conds:
+                res["counts"][nm] = cur.execute(
+                    f"SELECT count(*) FROM {tbl} WHERE {k} = ? OR {k} LIKE ? OR {k} LIKE ? OR {k} LIKE ?",
+                    [nm, nm + "; %", "%; " + nm, "%; " + nm + "; %"]).fetchone()[0]
+            res["other"] = cur.execute(f"SELECT count(*) FROM {tbl} WHERE {k} = 'Other'").fetchone()[0]
+        if sentiment:
+            k = _col(n + len(newh) - 1)
+            for lab, cnt in cur.execute(f"SELECT {k}, count(*) FROM {tbl} WHERE {k} <> '' GROUP BY 1").fetchall():
+                res["feeling"][lab] = cnt
+            for lab in ("Positive", "Negative"):
+                res["examples"][lab] = [r[0] for r in cur.execute(f"SELECT {_col(ci)} FROM {tbl} WHERE {k} = ? ORDER BY __rid LIMIT 4", [lab]).fetchall()]
+        return res
+
+    def word_counts(self, ds_id, col, by=None, top=25, stand=12, ignore_common=True, min_rows=30, search=None, filters=None):
+        """Which words a text column uses, and (with `by`) which words stand out for each group of another column.
+        A word is counted once per row. Every row is read; nothing is sampled."""
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        c = _col(ci)
+        g = f"COALESCE(NULLIF(trim({_col(self._check_col(d, by))}), ''), '(blank)')" if by is not None and int(by) >= 0 else "'all'"
+        cur = self.db.cursor()
+        w = (where + " AND " if where else " WHERE ") + f"{c} IS NOT NULL AND trim({c}) <> ''"
+        tot = {r[0]: r[1] for r in cur.execute(f"SELECT {g}, count(*) FROM {d['table']}{w} GROUP BY 1", params).fetchall()}
+        if by is not None and int(by) >= 0 and len(tot) > 40:
+            raise EngineError("That column has too many different values to compare words by. Choose a column with a few values.")
+        rows = cur.execute(
+            f"SELECT g, word, count(*) FROM (SELECT {g} AS g, unnest({self.WORDS_SQL.format(c=c)}) AS word FROM {d['table']}{w}) "
+            f"WHERE length(word) >= 2 GROUP BY g, word", params).fetchall()
+        n = sum(tot.values())
+        allc, per = {}, {}
+        for gname, word, k in rows:
+            if ignore_common and word in self.STOPWORDS:
+                continue
+            allc[word] = allc.get(word, 0) + k
+            per.setdefault(word, {})[gname] = k
+        common = sorted(allc.items(), key=lambda kv: (-kv[1], kv[0]))[: int(top)]
+        groups = sorted(tot.items(), key=lambda kv: (-kv[1], str(kv[0])))
+        out = {"n": n, "groups": [{"g": k, "n": v} for k, v in groups], "distinct_words": len(allc),
+               "common": [{"w": w_, "rows": k, "by": per[w_]} for w_, k in common], "standout": {}}
+        if by is not None and int(by) >= 0:
+            for gname, ng in groups:
+                floor = max(int(min_rows), int(0.002 * ng))
+                cand = []
+                for w_, k in allc.items():
+                    kg = per[w_].get(gname, 0)
+                    if kg >= floor and k > 0:
+                        lift = (kg / ng) / (k / n)
+                        cand.append((lift, kg, w_, k))
+                cand.sort(key=lambda x: (-x[0], -x[1], x[2]))
+                out["standout"][gname] = [{"w": w_, "rows": kg, "share": kg / ng, "share_all": k / n, "lift": lift} for lift, kg, w_, k in cand[: int(stand)]]
+        return out
+
+    def repeats(self, ds_id, key, check=None, examples=8, search=None, filters=None):
+        """How many values of the key column(s) are repeated, how many rows that involves, and (if `check` is given) in how many repeated
+        values the check column is NOT the same in every row (e.g. the same text with different labels). Capitals and spaces are ignored."""
+        d = self._ds(ds_id)
+        keys = [self._check_col(d, k) for k in (key if isinstance(key, list) else [key])][:4]
+        where, params = self._where(d, search, filters)
+        kx = " || chr(31) || ".join(f"lower(trim({_col(k)}))" for k in keys)
+        chk = f"count(DISTINCT lower(trim({_col(self._check_col(d, check))})))" if check is not None and int(check) >= 0 else "1"
+        cur = self.db.cursor()
+        w = (where + " AND " if where else " WHERE ") + f"({kx}) <> '' AND ({kx}) <> chr(31)"
+        base = f"SELECT {kx} AS k, count(*) AS n, {chk} AS dv, min(__rid) AS first FROM {d['table']}{w} GROUP BY k"
+        r = cur.execute(
+            f"SELECT count(*), coalesce(sum(n), 0), count(*) FILTER (WHERE n > 1), coalesce(sum(n) FILTER (WHERE n > 1), 0), "
+            f"coalesce(sum(n - 1) FILTER (WHERE n > 1), 0), count(*) FILTER (WHERE n > 1 AND dv > 1), coalesce(sum(n) FILTER (WHERE n > 1 AND dv > 1), 0) FROM ({base})", params).fetchone()
+        out = {"rows": r[1], "values": r[0], "repeated_values": r[2], "rows_in_repeats": r[3], "extra_copies": r[4], "conflicting_values": r[5], "rows_in_conflicts": r[6], "examples": []}
+        if check is not None and int(check) >= 0 and r[5]:
+            ci = _col(self._check_col(d, check))
+            ex = cur.execute(
+                f"SELECT k, n, first FROM ({base}) WHERE n > 1 AND dv > 1 ORDER BY n DESC, first LIMIT {int(examples)}", params).fetchall()
+            for k, n, first in ex:
+                vals = [x[0] for x in cur.execute(
+                    f"SELECT DISTINCT trim({ci}) FROM {d['table']} WHERE ({kx}) = ? ORDER BY 1 LIMIT 12", [k]).fetchall()]
+                out["examples"].append({"key": k.replace("\x1f", " | ")[:200], "rows": n, "values": vals})
+        return out
+
+    def sample(self, ds_id, n=4000):
+        """An evenly random handful of rows (always the same ones) so the browser can tell which columns are
+        numbers, dates or categories without loading the file."""
+        d = self._ds(ds_id)
+        n = max(100, min(int(n), 20000))
+        cols = ", ".join(_col(i) for i in range(len(d["headers"])))
+        data = self.db.cursor().execute(
+            f"SELECT {cols} FROM {d['table']} USING SAMPLE reservoir({n} ROWS) REPEATABLE (42)").fetchall()
+        return {"headers": d["headers"], "rows": [["" if v is None else v for v in r] for r in data], "total": d["rows"]}
+
+    # ------------------------------------------------------------------ export
+    def to_arrow(self, ds_id, search=None, filters=None, sort=None, desc=False, numeric=False, limit=None):
+        d = self._ds(ds_id)
+        where, params = self._where(d, search, filters)
+        order = "__rid"
+        if sort not in (None, ""):
+            i = self._check_col(d, sort)
+            order = f"{_num(i) if numeric else _col(i)} {'DESC' if desc else 'ASC'} NULLS LAST, __rid"
+        cols = ", ".join(f'{_col(i)}' for i in range(len(d["headers"])))
+        lim = f" LIMIT {int(limit)}" if limit else ""
+        sql = f"SELECT {cols} FROM {d['table']}{where} ORDER BY {order}{lim}"
+        cur = self.db.cursor()
+        rel = cur.sql(sql, params=params)
+        # duckdb 1.4+ calls it to_arrow_table; older releases fetch_arrow_table
+        t = rel.to_arrow_table() if hasattr(rel, "to_arrow_table") else rel.fetch_arrow_table()
+        return t.rename_columns(d["headers"])
+
+    def close(self):
+        try:
+            self.db.close()
+        finally:
+            shutil.rmtree(self.dir, ignore_errors=True)
+
+
+_engine = None
+_engine_lock = threading.Lock()
+
+
+def get_engine():
+    global _engine
+    with _engine_lock:
+        if _engine is None:
+            _engine = Engine()
+        return _engine

@@ -113,6 +113,8 @@ tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /I "ollama.exe" >nul 2>&1
 if not errorlevel 1 goto :ollama_running
 echo  [..] Starting Ollama service...
 start /min "Ollama" "%OLLAMA%" serve
+:: Remember that WE started Ollama, so stop.bat only stops it in that case
+echo started> "runtime\ollama_started_by_stellura"
 timeout /t 4 /nobreak >nul
 :ollama_running
 echo  [OK] Ollama service running
@@ -138,7 +140,6 @@ echo  [OK] AI model ready
 :: ---------- STEP 7: Launch Stellura ----------------------
 :start_flask
 echo  [..] Starting Stellura server...
-taskkill /F /FI "WINDOWTITLE eq Stellura*" >nul 2>&1
 start "" "%PYTHONW%" app.py
 timeout /t 3 /nobreak >nul
 

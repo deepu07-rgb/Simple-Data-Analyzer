@@ -1,0 +1,301 @@
+/* === end P5 ============================================================= */
+/* ===== P6 — Onboarding, Empty States, Final Polish ===================== */
+
+/* --- Smooth text rendering across the app ------------------------------ */
+body,input,button,select,textarea{
+  -webkit-font-smoothing:antialiased!important;
+  -moz-osx-font-smoothing:grayscale!important;
+  text-rendering:optimizeLegibility!important
+}
+
+/* --- Tour overlay backdrop: deeper blur -------------------------------- */
+#dd-tour-backdrop{
+  background:rgba(5,8,22,.82)!important;
+  backdrop-filter:blur(8px) saturate(120%)!important;
+  -webkit-backdrop-filter:blur(8px) saturate(120%)!important
+}
+
+/* Tour card entrance */
+@keyframes p6TourIn{
+  from{opacity:0;transform:translate(-50%,-50%) scale(.92)}
+  to{opacity:1;transform:translate(-50%,-50%) scale(1)}
+}
+@keyframes p6TourInAnchored{
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:translateY(0)}
+}
+
+/* --- Tour card: glass system ------------------------------------------ */
+.dd-tour-card{
+  background:rgba(16,12,24,.96)!important;
+  backdrop-filter:blur(48px) saturate(160%)!important;
+  -webkit-backdrop-filter:blur(48px) saturate(160%)!important;
+  border:1px solid rgba(221,184,255,.32)!important;
+  border-radius:20px!important;
+  padding:26px 24px 18px!important;
+  box-shadow:
+    0 32px 80px rgba(0,0,0,.75),
+    0 0 0 1px rgba(221,184,255,.06),
+    0 0 40px rgba(221,184,255,.06)!important;
+  min-width:280px!important;max-width:360px!important
+}
+.dd-tour-card[style*="translate(-50%,-50%)"]{
+  animation:p6TourIn .3s cubic-bezier(.34,1.26,.64,1) both
+}
+
+/* Tour dots: larger, softer */
+.dd-tour-dots{margin-bottom:16px!important}
+.dd-tour-dot{
+  width:8px!important;height:8px!important;
+  background:rgba(221,184,255,.18)!important;
+  transition:background .25s,transform .25s!important
+}
+.dd-tour-dot.active{
+  background:var(--dd-primary,#ddb8ff)!important;
+  transform:scale(1.25)!important
+}
+
+/* Tour title: Sora headline */
+.dd-tour-title{
+  font:700 16px/1.3 'Sora','Inter',sans-serif!important;
+  color:#f0e8f6!important;
+  margin:0 0 9px!important;
+  letter-spacing:-.2px!important
+}
+
+/* Tour body: Inter, readable */
+.dd-tour-body{
+  font:400 12.5px/1.7 'Inter',sans-serif!important;
+  color:rgba(234,223,237,.72)!important;
+  margin-bottom:20px!important
+}
+
+/* Tour next button: cosmic gradient */
+.dd-tour-next{
+  height:34px!important;padding:0 20px!important;
+  background:linear-gradient(120deg,var(--dd-primary,#ddb8ff),var(--dd-secondary,#4cd7f6))!important;
+  border-radius:10px!important;
+  color:#1c1430!important;
+  font:700 11.5px/1 'Sora','Inter',sans-serif!important;
+  box-shadow:0 4px 16px rgba(221,184,255,.35)!important;
+  border:none!important
+}
+.dd-tour-next:hover{
+  box-shadow:0 6px 22px rgba(221,184,255,.5)!important;
+  transform:translateY(-1px)!important
+}
+
+/* Skip link: muted */
+.dd-tour-skip{
+  font:400 11px/1 'Inter',sans-serif!important;
+  color:rgba(234,223,237,.38)!important;
+  letter-spacing:.02em!important
+}
+.dd-tour-skip:hover{color:rgba(234,223,237,.65)!important}
+
+/* Empty tour button (agents canvas): already glass from P5; refine */
+.dd-empty-tour-btn{
+  font:600 11px/1 'Sora','Inter',sans-serif!important
+}
+
+/* --- Onboarding tip: glass upgrade ------------------------------------- */
+#onboarding-tip{
+  background:rgba(16,12,24,.96)!important;
+  backdrop-filter:blur(36px) saturate(140%)!important;
+  -webkit-backdrop-filter:blur(36px) saturate(140%)!important;
+  border:1px solid rgba(221,184,255,.26)!important;
+  border-radius:14px!important;
+  box-shadow:0 16px 48px rgba(0,0,0,.55),0 0 0 1px rgba(221,184,255,.05)!important;
+  color:rgba(234,223,237,.9)!important;
+  font:400 12px/1.6 'Inter',sans-serif!important
+}
+[data-theme="light"] #onboarding-tip{
+  background:rgba(255,255,255,.96)!important;
+  border-color:rgba(126,34,206,.20)!important;
+  color:#102033!important
+}
+
+/* --- X-Ray empty state ------------------------------------------------- */
+.xr-empty{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:center!important;
+  gap:10px!important;
+  padding:36px 16px!important;
+  font:400 12px/1.7 'Inter',sans-serif!important;
+  color:rgba(221,184,255,.45)!important;
+  text-align:center!important
+}
+.xr-empty::before{
+  content:'⊙';
+  font-size:28px!important;
+  opacity:.35!important;
+  display:block!important;
+  line-height:1!important
+}
+
+/* X-Ray detail empty */
+.xr-detail-empty{
+  font:400 11px/1.5 'Inter',sans-serif!important;
+  color:rgba(234,223,237,.28)!important
+}
+
+/* --- What-If empty state ----------------------------------------------- */
+.wi-nodata{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:center!important;
+  justify-content:center!important;
+  height:100%!important;
+  gap:10px!important;
+  padding:48px 24px!important;
+  font:400 13px/1.7 'Inter',sans-serif!important;
+  color:rgba(221,184,255,.50)!important;
+  text-align:center!important
+}
+.wi-nodata::before{
+  content:'∿';
+  font-size:36px!important;
+  opacity:.30!important;
+  display:block!important;
+  line-height:1!important
+}
+
+/* --- Audit empty states ------------------------------------------------- */
+.pv-detail-empty{
+  font:400 11.5px/1.6 'Inter',sans-serif!important;
+  color:rgba(234,223,237,.30)!important;
+  padding:20px 12px!important;
+  text-align:center!important
+}
+/* Empty event list: shown via JS as first child */
+#pv-event-list:empty::after{
+  content:'No events yet — start working with your data कोई घटना नहीं — डेटा के साथ काम शुरू करें';
+  white-space:pre;
+  display:block!important;
+  padding:32px 16px!important;
+  text-align:center!important;
+  font:400 11.5px/1.7 'Inter',sans-serif!important;
+  color:rgba(221,184,255,.35)!important
+}
+
+/* --- View-transition fade: slightly faster + smooth ------------------- */
+#content{transition:opacity .12s ease!important}
+
+/* --- Light-theme dual-surface audit ------------------------------------ */
+/* Tour card in light mode */
+[data-theme="light"] .dd-tour-card{
+  background:rgba(255,255,255,.97)!important;
+  border-color:rgba(126,34,206,.20)!important;
+  box-shadow:0 24px 60px rgba(0,0,0,.18),0 0 0 1px rgba(126,34,206,.06)!important
+}
+[data-theme="light"] .dd-tour-title{color:#1c1430!important}
+[data-theme="light"] .dd-tour-body{color:rgba(28,20,48,.65)!important}
+[data-theme="light"] #dd-tour-backdrop{background:rgba(200,195,220,.55)!important}
+
+/* Light-mode empty state text */
+[data-theme="light"] .xr-empty,
+[data-theme="light"] .wi-nodata,
+[data-theme="light"] .pv-detail-empty,
+[data-theme="light"] #pv-event-list:empty::after{
+  color:rgba(126,34,206,.45)!important
+}
+
+/* --- Anchor-chip hover: tighten focus ring ----------------------------- */
+.dd-anchor:focus-visible{
+  outline:2px solid var(--dd-primary,#ddb8ff)!important;
+  outline-offset:2px!important
+}
+
+/* === end P6 ============================================================= */
+
+
+
+
+
+
+/* ============================================================ */
+/* CONSTELLA living cosmos — parallax starfield, drifting        */
+/* planets + shooting stars. Pure CSS, offline, GPU transforms.  */
+/* Sits at z-index 0 behind #app; the data grid stays solid.     */
+/* ============================================================ */
+#dd-cosmos{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;contain:strict}
+.cz{position:absolute;inset:-60%;will-change:transform,opacity}
+/* Three star layers at different depths/speeds = parallax */
+.cz-stars{background-repeat:repeat}
+.cz-stars-1{background-size:380px 380px;opacity:.9;
+  background-image:
+    radial-gradient(1px 1px at 24% 12%, #fff, transparent),
+    radial-gradient(1px 1px at 62% 38%, rgba(255,255,255,.85), transparent),
+    radial-gradient(1px 1px at 8% 64%, rgba(255,255,255,.7), transparent),
+    radial-gradient(1px 1px at 88% 74%, rgba(255,255,255,.8), transparent),
+    radial-gradient(1px 1px at 44% 88%, rgba(221,184,255,.75), transparent),
+    radial-gradient(1px 1px at 73% 6%, rgba(76,215,246,.7), transparent),
+    radial-gradient(1px 1px at 33% 52%, rgba(255,255,255,.6), transparent),
+    radial-gradient(1px 1px at 95% 46%, rgba(255,255,255,.65), transparent);
+  animation:czDrift1 200s linear infinite, czTwinkle 5.5s ease-in-out infinite}
+.cz-stars-2{background-size:260px 260px;opacity:.8;
+  background-image:
+    radial-gradient(1.4px 1.4px at 18% 28%, #fff, transparent),
+    radial-gradient(1.4px 1.4px at 54% 8%, rgba(221,184,255,.9), transparent),
+    radial-gradient(1.4px 1.4px at 80% 56%, rgba(255,255,255,.85), transparent),
+    radial-gradient(1.4px 1.4px at 36% 78%, rgba(76,215,246,.8), transparent),
+    radial-gradient(1.4px 1.4px at 68% 90%, rgba(255,255,255,.8), transparent),
+    radial-gradient(1.4px 1.4px at 6% 44%, rgba(255,255,255,.7), transparent);
+  animation:czDrift2 130s linear infinite, czTwinkle 4s ease-in-out infinite .6s}
+.cz-stars-3{background-size:170px 170px;opacity:.95;
+  background-image:
+    radial-gradient(2px 2px at 30% 22%, #fff, transparent 60%),
+    radial-gradient(2px 2px at 76% 64%, rgba(221,184,255,.95), transparent 60%),
+    radial-gradient(2px 2px at 50% 86%, rgba(76,215,246,.9), transparent 60%),
+    radial-gradient(1.6px 1.6px at 12% 70%, #fff, transparent 60%);
+  animation:czDrift3 80s linear infinite, czTwinkle 3.2s ease-in-out infinite .3s}
+@keyframes czDrift1{from{transform:translate3d(0,0,0)}to{transform:translate3d(-380px,-190px,0)}}
+@keyframes czDrift2{from{transform:translate3d(0,0,0)}to{transform:translate3d(260px,-150px,0)}}
+@keyframes czDrift3{from{transform:translate3d(0,0,0)}to{transform:translate3d(-170px,120px,0)}}
+@keyframes czTwinkle{0%,100%{opacity:.35}50%{opacity:.95}}
+
+/* Drifting gas-giant planets with soft self-shadow + glow */
+.cz-planet{position:absolute;border-radius:50%;will-change:transform}
+.cz-planet-a{width:170px;height:170px;top:9%;right:7%;
+  background:radial-gradient(circle at 32% 28%, #e3c8ff 0%, #c79bf2 22%, #7e22ce 62%, #3a1366 100%);
+  box-shadow:0 0 90px rgba(126,34,206,.45), inset -14px -12px 46px rgba(0,0,0,.55), inset 8px 6px 22px rgba(255,255,255,.18);
+  animation:czFloatA 30s ease-in-out infinite}
+.cz-planet-b{width:84px;height:84px;bottom:14%;left:9%;
+  background:radial-gradient(circle at 35% 30%, #bdeefb 0%, #4cd7f6 30%, #1f7fa6 70%, #0c3a52 100%);
+  box-shadow:0 0 64px rgba(76,215,246,.4), inset -10px -8px 30px rgba(0,0,0,.5), inset 6px 5px 16px rgba(255,255,255,.22);
+  animation:czFloatB 24s ease-in-out infinite}
+.cz-planet-c{width:54px;height:54px;top:62%;right:18%;
+  background:radial-gradient(circle at 36% 32%, #ffe6b0 0%, #f6c25a 34%, #b3792a 74%, #5e3a12 100%);
+  box-shadow:0 0 44px rgba(246,194,90,.35), inset -8px -6px 22px rgba(0,0,0,.5);
+  animation:czFloatC 34s ease-in-out infinite}
+.cz-ring{position:absolute;left:50%;top:50%;width:118px;height:34px;
+  transform:translate(-50%,-50%) rotate(-24deg);border-radius:50%;
+  border:3px solid rgba(246,210,150,.5);border-top-color:transparent;border-bottom-color:rgba(246,210,150,.18);
+  box-shadow:0 0 14px rgba(246,210,150,.25)}
+@keyframes czFloatA{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(-18px,24px,0)}}
+@keyframes czFloatB{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(22px,-16px,0)}}
+@keyframes czFloatC{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(-14px,-18px,0)}}
+
+/* Occasional shooting stars sweeping the field */
+.cz-shoot{position:absolute;width:2px;height:2px;border-radius:50%;background:#fff;
+  box-shadow:0 0 8px 2px rgba(255,255,255,.85);opacity:0}
+.cz-shoot::before{content:'';position:absolute;right:1px;top:50%;width:140px;height:1px;transform:translateY(-50%);
+  background:linear-gradient(270deg,rgba(255,255,255,.9),transparent)}
+.cz-shoot-1{top:-4%;left:68%;animation:czShoot1 11s ease-in 3s infinite}
+.cz-shoot-2{top:-6%;left:32%;animation:czShoot2 16s ease-in 8s infinite}
+@keyframes czShoot1{0%{opacity:0;transform:translate3d(0,0,0) rotate(28deg)}4%{opacity:1}14%{opacity:1}20%{opacity:0;transform:translate3d(-440px,820px,0) rotate(28deg)}100%{opacity:0}}
+@keyframes czShoot2{0%{opacity:0;transform:translate3d(0,0,0) rotate(34deg)}3%{opacity:1}11%{opacity:1}16%{opacity:0;transform:translate3d(420px,700px,0) rotate(34deg)}100%{opacity:0}}
+
+/* Light theme: keep cosmos a whisper so the bright grid dominates */
+[data-theme="light"] #dd-cosmos{opacity:.16}
+/* Respect reduced motion / auto-calm: freeze everything, no drift */
+html.reduce-motion #dd-cosmos .cz,
+html.reduce-motion #dd-cosmos .cz-planet,
+html.reduce-motion #dd-cosmos .cz-shoot{animation:none!important}
+html.reduce-motion #dd-cosmos .cz-shoot{display:none}
+@media (prefers-reduced-motion:reduce){
+  #dd-cosmos .cz,#dd-cosmos .cz-planet{animation:none!important}
+  #dd-cosmos .cz-shoot{display:none}
+}
+

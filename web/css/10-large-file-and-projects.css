@@ -1,0 +1,89 @@
+/* ===== LARGE FILE MODE + PROJECTS ===== */
+#bigview{display:none;position:absolute;inset:0;z-index:40;flex-direction:column;background:var(--bg-primary);color:var(--text-primary);min-width:0}
+#bigview.visible{display:flex}
+.big-top{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.big-title{display:flex;align-items:center;gap:8px;min-width:0}
+.big-title b{max-width:26ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.big-badge{background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:.04em;white-space:nowrap}
+.big-dim{color:var(--text-muted);font-size:12px;font-variant-numeric:tabular-nums}
+.big-input,.big-select,.big-sql{background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius-md,6px);padding:6px 9px;font:inherit;font-size:12.5px;min-width:0}
+.big-top .big-input{flex:1 1 200px;max-width:340px}
+.big-actions{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.big-filters{display:none;gap:6px;flex-wrap:wrap;align-items:center;padding:6px 12px;border-bottom:1px solid var(--border)}
+.big-chip{background:var(--bg-secondary);border:1px solid var(--accent);border-radius:999px;padding:2px 4px 2px 10px;font-size:12px;display:inline-flex;gap:6px;align-items:center}
+.big-chip button{border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1}
+.big-link{background:none;border:0;color:var(--accent);cursor:pointer;font-size:12px;text-decoration:underline}
+.big-body{flex:1;display:flex;min-height:0}
+.big-scroll{flex:1;overflow:auto;position:relative;min-width:0;background:var(--grid-bg,var(--bg-primary))}
+.big-head{position:sticky;top:0;z-index:3;height:34px;background:var(--bg-secondary);border-bottom:1px solid var(--border)}
+.big-hrow,.big-row{display:flex;height:30px;white-space:nowrap}
+.big-hrow{height:34px}
+.big-hc,.big-c,.big-idc{flex:none;padding:0 9px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;border-right:1px solid var(--border);box-sizing:border-box;font-size:12.5px}
+.big-hc{font-weight:600;cursor:pointer;user-select:none;gap:5px}
+.big-hc:hover{background:var(--bg-tertiary,rgba(127,127,127,.12))}
+.big-kind{color:var(--accent);font-size:10px;font-weight:700;opacity:.8}
+.big-idc{color:var(--text-muted);justify-content:flex-end;font-variant-numeric:tabular-nums;background:var(--bg-secondary)}
+.big-spacer{position:relative}
+.big-rows{position:absolute;left:0;right:0}
+.big-row{border-bottom:1px solid var(--border)}
+.big-row.odd{background:rgba(127,127,127,.06)}
+.big-row.big-skel{opacity:.45}
+.big-c span,.big-c{display:flex}
+.big-c{display:block;line-height:30px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.big-c.num{text-align:right;font-variant-numeric:tabular-nums}
+.big-side{width:340px;max-width:42vw;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0;background:var(--bg-secondary)}
+.big-tabs{display:flex;border-bottom:1px solid var(--border)}
+.big-tabs button{flex:1;padding:9px 4px;background:none;border:0;border-bottom:2px solid transparent;color:var(--text-secondary);cursor:pointer;font:inherit;font-size:12px;font-weight:600}
+.big-tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+.big-pane{flex:1;overflow:auto;padding:10px}
+.big-note{font-size:11.5px;color:var(--text-muted);margin-bottom:8px;line-height:1.5}
+.big-l{display:block;font-size:11px;color:var(--text-muted);margin:8px 0 3px;text-transform:uppercase;letter-spacing:.06em}
+.big-pane .big-select{width:100%}
+.big-card{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:7px;cursor:pointer;background:var(--bg-primary)}
+.big-card:hover{border-color:var(--accent)}
+.big-card-h{display:flex;justify-content:space-between;gap:8px;font-size:12.5px}
+.big-card-h b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.big-tag{font-size:10px;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:0 6px;white-space:nowrap}
+.big-bar{height:4px;background:var(--border);border-radius:2px;margin:6px 0 4px}
+.big-bar i{display:block;height:100%;background:var(--accent);border-radius:2px}
+.big-sub{font-size:11px;color:var(--text-muted)}
+.big-val{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 6px;border-radius:5px;margin-top:3px;background:rgba(127,127,127,.08)}
+.big-val:hover{background:var(--accent);color:#fff}
+.big-val span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.big-val em{font-style:normal;font-variant-numeric:tabular-nums;opacity:.8}
+.big-tbl{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.big-tbl th,.big-tbl td{border-bottom:1px solid var(--border);padding:4px 6px;text-align:left}
+.big-tbl td.num{text-align:right;font-variant-numeric:tabular-nums}
+.big-tbl-wrap{overflow:auto;max-height:55vh}
+.big-sql{width:100%;font-family:ui-monospace,Consolas,monospace;resize:vertical;margin-bottom:6px}
+.big-err{background:rgba(239,68,68,.12);border:1px solid #ef4444;border-radius:6px;padding:8px;font-size:12px;margin-top:8px;color:var(--text-primary)}
+.big-status{padding:5px 12px;border-top:1px solid var(--border);font-size:11.5px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.big-pop{position:absolute;top:56px;right:14px;z-index:5;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:7px;width:290px;box-shadow:0 12px 36px rgba(0,0,0,.35)}
+.big-pop-t{font-weight:700;font-size:13px}
+.big-pop-a{display:flex;justify-content:flex-end;gap:6px}
+.big-busy{position:fixed;inset:0;z-index:200;background:rgba(5,8,22,.55);display:flex;align-items:center;justify-content:center}
+.big-busy-box{background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:12px;padding:20px 26px;display:flex;gap:14px;align-items:center;font-size:14px}
+.big-spin{width:20px;height:20px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:bigspin .8s linear infinite}
+@keyframes bigspin{to{transform:rotate(360deg)}}
+.prj-overlay{align-items:flex-start;padding-top:8vh}
+.prj-box{background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:14px;width:min(620px,94vw);max-height:80vh;overflow:auto;padding:16px 18px}
+.prj-h{display:flex;justify-content:space-between;align-items:center;font-size:16px;margin-bottom:10px}
+.prj-h button{background:none;border:0;color:var(--text-muted);font-size:22px;cursor:pointer}
+.prj-save label,.prj-sub{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin:8px 0 5px}
+.prj-row{display:flex;gap:8px}.prj-row .big-input{flex:1}
+.prj-item{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.prj-n{flex:1;min-width:160px;display:flex;flex-direction:column;gap:2px}.prj-n span{font-size:11.5px;color:var(--text-muted)}
+.prj-foot{margin-top:10px;font-size:11px;color:var(--text-muted);word-break:break-all}
+@media (max-width:820px){.big-side{display:none}}
+@media (prefers-reduced-motion:reduce){.big-spin{animation:none}}
+
+/* the app's green/red button skins have too little contrast on this bar */
+#bigview .tb-btn.success{background:var(--accent);color:#fff;border-color:transparent;text-shadow:none}
+#bigview .tb-btn.danger{background:transparent;color:#f87171;border:1px solid #f87171;text-shadow:none}
+#bigview .tb-btn.danger:hover{background:#f87171;color:#1a1020}
+.prj-box .tb-btn.danger{background:transparent;color:#f87171;border:1px solid #f87171;text-shadow:none}
+/* charts in Large File mode */
+.big-chip-chart{background:rgba(109,91,208,.14);border-color:rgba(109,91,208,.45)}
+.big-chart{margin-left:auto;border:0;background:transparent;cursor:pointer;font-size:14px;opacity:.55;padding:0 4px;border-radius:6px}
+.big-chart:hover{opacity:1;background:rgba(109,91,208,.14)}
+body.cs-open #bigview .big-side{display:none}

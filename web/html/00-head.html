@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!-- ================================================================
+  Stellura — Data Vision Studio  |  Single-file SPA
+  SYNC RULE: download/Simple-Data-Analyser.html and
+             public/Simple-Data-Analyser.html MUST remain byte-identical.
+  Verify (PowerShell before every commit):
+    $a=(Get-FileHash 'download\Simple-Data-Analyser.html').Hash
+    $b=(Get-FileHash 'public\Simple-Data-Analyser.html').Hash
+    if($a -ne $b){throw 'FILES OUT OF SYNC'}
+
+  CHANGELOG — Batch 14 (retirement + perf hardening):
+  • Removed legacy left icon rail: #sidebar HTML + all sidebar CSS blocks
+  • Removed .mobile-toggle hamburger button (sidebar gone)
+  • Stripped sidebar icon activation lines from switchTool()
+  • Made toggleSidebar() a no-op (no remaining callers)
+  • Added ⚙ Settings button to commandbar so panel stays reachable
+  • Debounced _ddSaveNodes() with 400 ms timer (reduces localStorage churn)
+  • RAF-gated _ddRedrawEdges() inside _ddNodeDragMove() (one redraw/frame)
+================================================================ -->
+<html lang="en" data-theme="light" data-stel-mode="simple" data-stel-view="sheet">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>try{if(localStorage.getItem('sda_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');var m=localStorage.getItem('stellura_mode');if(m)document.documentElement.setAttribute('data-stel-mode',m)}catch(e){}</script>
+<title>Stellura — Living Data Intelligence</title>
+<!-- Chart.js loaded dynamically on demand -->
+<script src="/static/js/xlsx.full.min.js"></script>
+<script src="/static/js/jspdf.umd.min.js"></script>
+<script src="/static/js/jspdf.plugin.autotable.min.js"></script>
+<script src="/static/js/html2canvas.min.js"></script>

@@ -1,0 +1,58 @@
+
+<!-- Batch 7: result drag-to-sheet drop overlay -->
+<div id="dd-sheet-drop-overlay">
+  <div id="ddz-cell" class="dd-drop-zone">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:block;margin:0 auto 5px"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    Active Cell<br><span style="font-size:9px;opacity:.65;font-weight:400">सक्रिय सेल में</span>
+  </div>
+  <div id="ddz-col" class="dd-drop-zone">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:block;margin:0 auto 5px"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+    New Column<br><span style="font-size:9px;opacity:.65;font-weight:400">नया स्तंभ</span>
+  </div>
+  <div id="ddz-dash" class="dd-drop-zone">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:block;margin:0 auto 5px"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+    Dashboard<br><span style="font-size:9px;opacity:.65;font-weight:400">डैशबोर्ड में</span>
+  </div>
+</div>
+<div id="dd-res-ghost"></div>
+
+<!-- Batch 11: Focus / 360 overlay -->
+<div id="dd-focus-overlay" role="dialog" aria-modal="true" aria-label="Focus Mode / फोकस मोड">
+  <div id="dd-focus-dock" role="navigation" aria-label="Active modules / सक्रिय मॉड्यूल"></div>
+  <div id="dd-focus-modal-wrap">
+    <button class="dd-focus-nav" id="dd-focus-prev" onclick="_ddFocusNav(-1)" type="button" aria-label="Previous / पिछला">&#8592;</button>
+    <div id="dd-focus-modal" class="glass-panel" role="region" aria-live="polite"></div>
+    <button class="dd-focus-nav" id="dd-focus-next" onclick="_ddFocusNav(1)" type="button" aria-label="Next / अगला">&#8594;</button>
+  </div>
+  <button id="dd-focus-exit" onclick="_ddExitFocus()" type="button" aria-label="Exit focus mode / फोकस मोड बंद करें">&#x2715; Exit / बाहर</button>
+</div>
+
+<!-- Batch 12: Save Agent dialog -->
+<div id="dd-save-agent-dialog" class="dd-sag-overlay" role="dialog" aria-modal="true" aria-label="Save Agent">
+  <div class="dd-sag-box glass-panel">
+    <div class="dd-sag-title">Save as Agent / एजेंट सेव करें</div>
+    <label class="dd-sag-lbl" for="dd-sag-name-en">Name (English)</label>
+    <input type="text" id="dd-sag-name-en" class="dd-sag-inp" placeholder="e.g. Salary Analysis" autocomplete="off" onkeydown="if(event.key==='Enter')_ddConfirmSaveAgent();if(event.key==='Escape')_ddHideSaveAgentDialog();" />
+    <label class="dd-sag-lbl" for="dd-sag-name-hi">नाम (हिंदी) — optional</label>
+    <input type="text" id="dd-sag-name-hi" class="dd-sag-inp" placeholder="जैसे: वेतन विश्लेषण" autocomplete="off" onkeydown="if(event.key==='Enter')_ddConfirmSaveAgent();if(event.key==='Escape')_ddHideSaveAgentDialog();" />
+    <div class="dd-sag-btns">
+      <button type="button" class="dd-sag-cancel" onclick="_ddHideSaveAgentDialog()">Cancel / रद्द</button>
+      <button type="button" class="dd-sag-ok" onclick="_ddConfirmSaveAgent()">Save / सेव करें</button>
+    </div>
+  </div>
+</div>
+
+<!-- Batch 12: Column remap dialog -->
+<div id="dd-remap-dialog" class="dd-sag-overlay" role="dialog" aria-modal="true" aria-label="Map columns">
+  <div class="dd-remap-body glass-panel"></div>
+</div>
+
+<!-- Batch 13: First-run guided tour -->
+<div id="dd-tour-overlay" role="dialog" aria-modal="true" aria-labelledby="dd-tour-title" aria-label="Getting started / शुरू करें">
+  <div id="dd-tour-backdrop"></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     Batch 15 — Living Data Model v1: Data X-Ray / डेटा एक्स-रे
+     ═══════════════════════════════════════════════════════════════════════ -->

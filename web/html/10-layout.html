@@ -1,0 +1,1634 @@
+</style>
+</head>
+<body>
+<!-- ==== Stellura living cosmos (pure-CSS, offline, behind all chrome) ==== -->
+<div id="dd-cosmos" aria-hidden="true">
+  <div class="cz cz-stars cz-stars-1"></div>
+  <div class="cz cz-stars cz-stars-2"></div>
+  <div class="cz cz-stars cz-stars-3"></div>
+  <div class="cz-planet cz-planet-a"></div>
+  <div class="cz-planet cz-planet-b"></div>
+  <div class="cz-planet cz-planet-c"><i class="cz-ring"></i></div>
+  <div class="cz-shoot cz-shoot-1"></div>
+  <div class="cz-shoot cz-shoot-2"></div>
+</div>
+<div id="app">
+  <!-- Sidebar -->
+  <!-- Main Area -->
+  <div id="main">
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <div class="product-brand">
+        <div class="product-mark" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+            <path d="M5 7v18l5-4 5 4V7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M22 7v18M19 7h6M19 25h6" stroke="#58d2c4" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <div class="product-name">Stellura</div>
+          <div class="product-subtitle">स्टेल्यूरा · Worksheet Intelligence Studio</div>
+        </div>
+      </div>
+      <div class="document-meta">
+        <div class="document-name" id="documentName">Untitled Analysis</div>
+        <div class="save-state"><span class="save-state-dot"></span><span id="saveStateText">Ready</span></div>
+      </div>
+      <!-- Batch 2: segmented view switch (centered in toolbar) -->
+      <div class="tb-spacer"></div>
+      <div class="dd-view-switch">
+        <button class="dd-view-btn active" data-view="sheet" onclick="switchDDView('sheet')"><span data-i18n="viewSheet">Sheet</span></button>
+        <button class="dd-view-btn" data-view="agents" onclick="switchDDView('agents')"><span data-i18n="viewAgents">Agents</span></button>
+        <button class="dd-view-btn" data-view="reports" onclick="switchDDView('reports')"><span data-i18n="viewReports">Reports</span></button>
+        <button class="dd-view-btn" data-view="xray" onclick="switchDDView('xray')"><span data-i18n="viewXray">X-Ray</span></button>
+        <button class="dd-view-btn" data-view="whatif" onclick="switchDDView('whatif')"><span data-i18n="viewWhatif">What-If</span></button>
+        <button class="dd-view-btn" data-view="audit" onclick="switchDDView('audit')"><span data-i18n="viewAudit">Audit</span></button>
+      </div>
+      <div class="tb-spacer"></div>
+      <button class="tb-btn" onclick="undoAction()" title="Undo (Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-12.36L1 10"/></svg><span data-i18n="undo">Undo</span></button>
+      <button class="tb-btn" onclick="redoAction()" title="Redo (Ctrl+Y)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-5.64-12.36L23 10"/></svg><span data-i18n="redo">Redo</span></button>
+      <button class="tb-btn" onclick="toggleTheme()" title="Toggle Dark/Light Mode (Ctrl+D)" id="themeToggle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="themeIcon"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </button>
+      <button class="tb-btn primary" onclick="saveState()" title="Save Session (Ctrl+S)"><span data-i18n="save">Save</span></button>
+      <select id="uiLanguageSelect" onchange="setUiLanguage(this.value)" title="Interface language" style="height:28px;padding:0 7px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--bg-secondary);color:var(--text-primary);font-size:11px;font-weight:700">
+        <option value="en">EN</option>
+        <option value="hi">हिंदी</option>
+        <option value="bi">EN + हिंदी</option>
+      </select>
+      <div id="profileInitials" class="profile-initials" onclick="switchTool('profile')" title="User Profile" style="display:none"></div>
+    </div>
+    <div id="commandbar">
+      <!-- Primary actions -->
+      <button class="tb-btn" onclick="document.getElementById('fileInput').click()" title="Import File (Ctrl+O)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span data-i18n="import">Import</span></button>
+      <button class="tb-btn" onclick="pasteFromClipboard()" title="Paste from Clipboard"><span data-i18n="paste">Paste</span></button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="switchTool('analysis')"><span data-i18n="analyze">Analyze</span></button>
+      <button class="tb-btn" onclick="switchTool('chart')"><span data-i18n="chart">Chart</span></button>
+      <button class="tb-btn" onclick="switchTool('filter')"><span data-i18n="filter">Filter</span></button>
+      <button class="tb-btn success" onclick="openCleanupWizard()" title="Guided data cleaning — चरण-दर-चरण डेटा सफाई"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg><span data-i18n="smartClean">Clean</span></button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn" onclick="showExportExcelDialog()" title="Export to Excel"><span data-i18n="excel">Excel</span></button>
+      <button class="tb-btn" onclick="showExportPDFDialog()" title="Export to PDF"><span data-i18n="pdf">PDF</span></button>
+      <button class="tb-btn danger" onclick="deleteSelectedRows()" title="Delete Selected Rows / चयनित पंक्तियाँ हटाएं" id="btnDeleteRows" style="display:none"><span data-i18n="deleteRows">Delete Rows</span></button>
+      <div class="tb-sep"></div>
+      <!-- AI + SQL status pills -->
+      <button class="api-status-btn" id="ollama-status-badge" onclick="checkOllamaStatus()" title="Local AI status — click to refresh">&#129504; Checking AI...</button>
+      <button class="api-status-btn sql-js" id="sql-engine-badge" onclick="_dbInit()" title="SQL engine / SQL इंजन">&#128190; SQL</button>
+      <!-- Spacer pushes overflow menu to far right -->
+      <div class="tb-spacer"></div>
+      <!-- Overflow ⋮ menu -->
+      <div class="p2-overflow-wrap" id="p2OverflowWrap">
+        <button class="tb-btn p2-overflow-trigger" onclick="_p2ToggleOverflow()" title="More actions / अधिक विकल्प" aria-haspopup="true" aria-expanded="false" id="p2OverflowBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/></svg>
+          <span>More</span>
+        </button>
+        <div class="p2-overflow-menu" id="p2OverflowMenu" role="menu">
+          <button class="p2-ovf-item" onclick="switchTool('formulas');_p2CloseOverflow()" role="menuitem"><span data-i18n="functions">Functions</span></button>
+          <button class="p2-ovf-item" onclick="switchTool('pivot');_p2CloseOverflow()" role="menuitem"><span data-i18n="pivotTable">Pivot Table</span></button>
+          <button class="p2-ovf-item" onclick="switchTool('validation');_p2CloseOverflow()" role="menuitem"><span data-i18n="validate">Validate</span></button>
+          <div class="p2-ovf-sep"></div>
+          <button class="p2-ovf-item" onclick="autoFormatWorksheet();_p2CloseOverflow()" role="menuitem"><span data-i18n="autoFormat">Auto Format</span></button>
+          <button class="p2-ovf-item" id="inspectorToggleBtn" onclick="toggleLiveInspector();_p2CloseOverflow()" role="menuitem"><span data-i18n="inspector">Inspector</span></button>
+          <button class="p2-ovf-item" onclick="showPrintPreview();_p2CloseOverflow()" role="menuitem"><span data-i18n="printLayout">Print Layout</span></button>
+          <div class="p2-ovf-sep"></div>
+          <button class="p2-ovf-item" onclick="PRJ.openDialog();_p2CloseOverflow()" role="menuitem">Projects / प्रोजेक्ट…</button>
+          <button class="p2-ovf-item" onclick="BIG.pickFile();_p2CloseOverflow()" role="menuitem">Open large file / बड़ी फ़ाइल खोलें…</button>
+          <div class="p2-ovf-sep"></div>
+          <button class="p2-ovf-item" onclick="switchTool('settings');_p2CloseOverflow()" role="menuitem">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            Settings / सेटिंग्स
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- Formatting Toolbar -->
+    <div id="fmt-toolbar">
+      <select id="fontSelect" class="fmt-select" onchange="applyFontToSelection(this.value)" title="Font Style" style="width:128px">
+        <option value="default">Inter</option>
+        <option value="Manrope">Manrope</option>
+        <option value="Georgia">Georgia</option>
+        <option value="Arial">Arial</option>
+        <option value="Mangal">Unicode Mangal</option>
+        <option value="Krutidev 010">Krutidev 010</option>
+        <option value="Devlys 010">Devlys 010</option>
+      </select>
+      <div class="fmt-sep"></div>
+      <button class="fmt-btn" id="btn-bold" onclick="toggleCellFormat('bold')" title="Bold (Ctrl+B)"><b style="font-size:13px;font-family:Georgia,serif">B</b></button>
+      <button class="fmt-btn" id="btn-italic" onclick="toggleCellFormat('italic')" title="Italic (Ctrl+I)"><i style="font-size:13px;font-family:Georgia,serif">I</i></button>
+      <button class="fmt-btn" id="btn-underline" onclick="toggleCellFormat('underline')" title="Underline (Ctrl+U)"><span style="font-size:12px;text-decoration:underline;font-family:Georgia,serif">U</span></button>
+      <div class="fmt-sep"></div>
+      <select class="fmt-select" id="fontSizeSelect" onchange="setCellFontSize(this.value)" title="Font Size" style="width:56px">
+        <option value="">Sz</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10">10</option>
+        <option value="11">11</option>
+        <option value="12" selected>12</option>
+        <option value="14">14</option>
+        <option value="16">16</option>
+        <option value="18">18</option>
+        <option value="20">20</option>
+        <option value="24">24</option>
+      </select>
+      <button class="fmt-btn" onclick="stepSelectionFontSize(-1)" title="Decrease font size">−</button>
+      <button class="fmt-btn" onclick="stepSelectionFontSize(1)" title="Increase font size">+</button>
+      <div class="fmt-sep"></div>
+      <div style="position:relative">
+        <div class="fmt-color-btn" onclick="document.getElementById('fontColorInput').click()" title="Font Color">
+          <span class="color-char" id="fontColorChar" style="font-family:Georgia,serif;font-weight:700">A</span>
+          <div class="color-bar" id="fontColorBar" style="background:#000000"></div>
+        </div>
+        <input type="color" id="fontColorInput" value="#000000" onchange="setCellColor('font',this.value)" style="position:absolute;opacity:0;width:1px;height:1px;top:0;left:0">
+      </div>
+      <div style="position:relative">
+        <div class="fmt-color-btn" onclick="document.getElementById('bgColorInput').click()" title="Cell Background Color">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" style="color:var(--text-secondary)"><rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>
+          <div class="color-bar" id="bgColorBar" style="background:#ffffff"></div>
+        </div>
+        <input type="color" id="bgColorInput" value="#ffffff" onchange="setCellColor('bg',this.value)" style="position:absolute;opacity:0;width:1px;height:1px;top:0;left:0">
+      </div>
+      <div class="fmt-sep"></div>
+      <button class="fmt-btn" onclick="alignSelection('left')" title="Align Left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg></button>
+      <button class="fmt-btn" onclick="alignSelection('center')" title="Align Center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6" y1="12" x2="18" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></button>
+      <button class="fmt-btn" onclick="alignSelection('right')" title="Align Right"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg></button>
+      <button class="fmt-btn" onclick="alignSelection('justify')" title="Justify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+      <div class="fmt-sep"></div>
+      <button class="fmt-btn" onclick="mergeSelectedCells()" title="Merge Cells" style="width:auto;padding:0 7px;gap:3px;font-size:10px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="9" height="18" rx="1"/><rect x="13" y="3" width="9" height="18" rx="1"/><line x1="11" y1="12" x2="13" y2="12"/><polyline points="9,10 11,12 9,14"/><polyline points="15,10 13,12 15,14"/></svg>Merge</button>
+      <button class="fmt-btn" onclick="demergeSelectedCells()" title="Split Merged Cells" style="width:auto;padding:0 7px;gap:3px;font-size:10px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="9" height="18" rx="1"/><rect x="13" y="3" width="9" height="18" rx="1"/><line x1="11" y1="12" x2="13" y2="12"/><polyline points="13,10 11,12 13,14"/><polyline points="11,10 13,12 11,14"/></svg>Split</button>
+      <div class="fmt-sep"></div>
+      <button class="fmt-btn" onclick="toggleWrapSelection()" title="Toggle Text Wrap" style="width:auto;padding:0 7px;gap:3px;font-size:10px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17,1 21,5 17,9"/><path d="M3 5h12a5 5 0 0 1 0 10H8"/><polyline points="7,15 3,19 7,23"/></svg>Wrap</button>
+      <button class="fmt-btn" onclick="autoFitColumns()" title="Auto-Fit Column Widths" style="width:auto;padding:0 7px;gap:3px;font-size:10px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="21" y1="12" x2="3" y2="12"/><polyline points="8,7 3,12 8,17"/><polyline points="16,7 21,12 16,17"/></svg>Fit</button>
+      <div class="fmt-sep"></div>
+      <div style="position:relative">
+        <button class="fmt-btn" onclick="toggleNumFmtMenu()" title="Number Format" style="width:auto;padding:0 7px;gap:3px;font-size:10px;font-weight:600" id="numFmtBtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h7"/></svg>Format <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg></button>
+        <div class="numfmt-menu" id="numFmtMenu">
+          <div class="numfmt-item" onclick="applyNumFormat('general')">General</div>
+          <div class="numfmt-item" onclick="applyNumFormat('number')">1,234.56 (Number)</div>
+          <div class="numfmt-item" onclick="applyNumFormat('currency_inr')">&#8377;1,234.56 (INR)</div>
+          <div class="numfmt-item" onclick="applyNumFormat('currency_usd')">$1,234.56 (USD)</div>
+          <div class="numfmt-item" onclick="applyNumFormat('percent')">12.34% (Percent)</div>
+          <div class="numfmt-item" onclick="applyNumFormat('percent0')">12% (Percent 0dp)</div>
+          <div class="numfmt-item" onclick="applyNumFormat('integer')">1,235 (Integer)</div>
+          <div class="numfmt-item" onclick="applyNumFormat('date_dmy')">DD/MM/YYYY</div>
+          <div class="numfmt-item" onclick="applyNumFormat('date_mdy')">MM/DD/YYYY</div>
+          <div class="numfmt-item" onclick="applyNumFormat('date_ymd')">YYYY-MM-DD</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Formula Bar -->
+    <div id="formula-bar">
+      <div class="name-box" id="activeCellName" title="Active cell or selected range">No selection</div>
+      <label onclick="switchTool('formulas')" style="cursor:pointer" title="Open Formula Studio">fx</label>
+      <input type="text" id="formulaInput" placeholder="Enter formula: =SUM(Column), =IF(Col>100,&quot;High&quot;,&quot;Low&quot;), =CONCAT(Col1,&quot; &quot;,Col2)">
+      <button class="tb-btn" onclick="switchTool('formulas')" title="Formula Studio" style="height:28px;font-size:11px;margin-right:4px">Formula Studio</button>
+      <button class="tb-btn primary" onclick="applyFormula()" style="height:28px;font-size:11px">Apply</button>
+    </div>
+
+    <div id="workspace-stage">
+    <!-- Batch 2: Module Drawer (glass, always visible, placeholder bubbles — real registry in Batch 3) -->
+    <div id="dd-module-drawer" class="glass-panel" aria-label="Module Drawer" style="display:none">
+      <div class="dd-drawer-header">
+        <div class="dd-drawer-title"><span data-i18n="modules">Modules</span></div>
+        <div class="dd-drawer-subtitle"><span data-i18n="dragToWorkspace">Drag to Workspace</span></div>
+      </div>
+      <!-- Batch 12: drawer tab switcher -->
+      <div class="dd-drawer-tabs" role="tablist">
+        <button class="dd-dtab active" data-tab="modules" onclick="_ddDrawerTab('modules')" type="button" role="tab" aria-selected="true">Modules</button>
+        <button class="dd-dtab" data-tab="agents" onclick="_ddDrawerTab('agents')" type="button" role="tab" aria-selected="false">Agents</button>
+      </div>
+      <!-- Modules tab content (existing search + content) -->
+      <div id="dd-drawer-modules">
+        <div class="dd-drawer-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="dd-module-search" placeholder="Search modules..." oninput="filterModuleDrawer(this.value)">
+        </div>
+        <!-- Batch 3: rendered from DD.modules registry by renderModuleDrawer() -->
+        <div id="dd-drawer-content"></div>
+      </div>
+      <!-- Agents tab content (Batch 12) -->
+      <div id="dd-drawer-agents"></div>
+    </div>
+    <!-- Content -->
+    <div id="content">
+      <!-- Welcome Screen -->
+      <div id="welcome">
+        <div class="hero-section">
+          <h1>Stellura</h1>
+          <div style="font-family:'Noto Sans Devanagari','Outfit',sans-serif;font-size:17px;font-weight:700;color:var(--accent);letter-spacing:0.5px;margin-top:-4px;margin-bottom:8px;opacity:0.85">स्टेल्यूरा</div>
+          <p class="hero-tagline">Intelligent offline data analysis &amp; reporting for government &amp; business &mdash; simple for everyone, powerful for professionals. Bilingual: Hindi (&#2361;&#2367;&#2344;&#2381;&#2342;&#2368;) &amp; English.</p>
+        </div>
+        <div class="drop-zone" id="dropZone" ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" onclick="document.getElementById('fileInput').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <h3>Drop your CSV / Excel file here</h3>
+          <p>or click to browse &bull; Supports CSV, TSV, XLSX, XLS</p>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.tsv,.xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+        <div class="paste-area">
+          <textarea id="pasteTextarea" placeholder="Or paste your data here (TSV/CSV from Excel, Google Sheets, etc.)..." onpaste="handlePasteArea(event)"></textarea>
+          <div class="action-btns">
+            <button class="tb-btn primary" onclick="importPastedText()" style="height:36px;padding:0 20px;font-size:13px">&#128203; Import Pasted Data</button>
+            <button class="tb-btn" onclick="loadSampleData()" style="height:36px;padding:0 20px;font-size:13px">&#128202; Load Sample Data</button>
+          </div>
+        </div>
+        <!-- Government Sample Datasets (Patch 7 + Batch 22) -->
+        <div style="width:100%;max-width:520px;margin-top:16px">
+          <div style="font-size:10.5px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;text-align:center">
+            &#127968; Try Government Sample Data &bull; सरकारी नमूना डेटा
+          </div>
+          <!-- Large samples row -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <div class="sample-ds-card" onclick="loadSampleEnglish()" style="border-color:rgba(221,184,255,.4);background:rgba(221,184,255,.06)">
+              <div class="sds-icon">&#127968;</div>
+              <div class="sds-name" style="color:#ddb8ff">Police Register<br><span style="font-size:9px;font-weight:400;color:var(--text-muted)">English</span></div>
+              <div class="sds-desc">250 rows &bull; 12 cols &bull; &#10003; Offline</div>
+            </div>
+            <div class="sample-ds-card" onclick="loadSampleHindi()" style="border-color:rgba(76,215,246,.4);background:rgba(76,215,246,.06)">
+              <div class="sds-icon">&#128203;</div>
+              <div class="sds-name" style="color:#4cd7f6">पुलिस पंजी<br><span style="font-size:9px;font-weight:400;color:var(--text-muted)">हिंदी / Unicode</span></div>
+              <div class="sds-desc">250 rows &bull; 12 cols &bull; &#10003; Offline</div>
+            </div>
+          </div>
+          <!-- Flask-dependent smaller samples -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+            <div class="sample-ds-card" onclick="loadSampleDataset('employee_salary')">
+              <div class="sds-icon">&#128188;</div>
+              <div class="sds-name">Salary<br>वेतन पंजी</div>
+              <div class="sds-desc">25 rows &bull; 9 cols</div>
+            </div>
+            <div class="sample-ds-card" onclick="loadSampleDataset('attendance')">
+              <div class="sds-icon">&#128203;</div>
+              <div class="sds-name">Attendance<br>उपस्थिति</div>
+              <div class="sds-desc">15 rows &bull; 7 cols</div>
+            </div>
+            <div class="sample-ds-card" onclick="loadSampleDataset('budget')">
+              <div class="sds-icon">&#128176;</div>
+              <div class="sds-name">Budget<br>बजट पंजी</div>
+              <div class="sds-desc">10 rows &bull; 8 cols</div>
+            </div>
+          </div>
+        </div>
+        <div class="features-grid">
+          <div class="feature-card"><div class="fc-icon">&#128202;</div><h4>Charts &amp; Dashboard</h4><p>Bar, Line, Pie, Scatter, Radar + auto KPI cards</p></div>
+          <div class="feature-card"><div class="fc-icon">&#129504;</div><h4>Intelligence Engine</h4><p>Forecasting, Regression, Anomaly Detection</p></div>
+          <div class="feature-card"><div class="fc-icon">&#128228;</div><h4>Hindi Fonts</h4><p>Krutidev &#8596; Unicode conversion, Devlys support</p></div>
+          <div class="feature-card"><div class="fc-icon">&#128203;</div><h4>Pivot Tables</h4><p>Drag &amp; drop pivot builder with aggregation</p></div>
+          <div class="feature-card"><div class="fc-icon">&#127912;</div><h4>Rich Formatting</h4><p>B/I/U, colors, merge, align, number formats</p></div>
+          <div class="feature-card"><div class="fc-icon">&#128196;</div><h4>Smart Export</h4><p>PDF/Excel with logo, profile, watermark, A4/Legal</p></div>
+        </div>
+        <div class="recent-files" id="recentFilesWrap" style="display:none">
+          <h4>Recent Sessions</h4>
+          <div id="recentFilesList"></div>
+        <div class="welcome-footer" style="margin-top: 30px; text-align: center; font-size: 11px; color: var(--text-muted); opacity: 0.85;">
+          <span class="developer-signature">Developed By - Neeraj Purohit, purohitneeraj87@gmail.com</span><br>
+          Email- rjjo200924001769@rajasthan.in
+        </div>
+      </div>
+      </div>
+
+      <!-- Table View -->
+      <div id="table-wrap">
+        <div class="table-header">
+          <span style="font-size:12px;font-weight:700" id="colInfo">0 columns</span>
+          <div style="flex:1"></div>
+          <div class="search-wrap">
+            <span class="search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+            <input type="text" id="searchInput" placeholder="Search all columns..." oninput="applySearch()">
+          </div>
+          <div class="search-nav" id="searchNav" style="display:none">
+            <span id="searchCount">0/0</span>
+            <button onclick="searchPrev()" title="Previous match">▲</button>
+            <button onclick="searchNext()" title="Next match">▼</button>
+          </div>
+        </div>
+        <div id="virtual-table-container">
+          <table id="virtual-table">
+            <thead id="vthead"></thead>
+            <tbody id="vtbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Dashboard View -->
+      <div id="dashboard-view"></div>
+
+      <!-- Batch 2/4/6/8: Agents Canvas -->
+      <div id="dd-agents-canvas" style="display:none">
+        <!-- Batch 8: Ask bar -->
+        <div id="dd-ask-bar">
+          <div id="dd-ask-input-row">
+            <input id="dd-ask-input" type="text" placeholder="What do you want to know? / क्या जानना है?" autocomplete="off" onkeydown="if(event.key==='Enter')_ddAskPlan()" />
+            <button id="dd-ask-btn" onclick="_ddAskPlan()" type="button">Ask / पूछें</button>
+          </div>
+          <div id="dd-ask-chips">
+            <span class="dd-ask-chip" onclick="_ddAskChip(this)">Average and predict next 3</span>
+            <span class="dd-ask-chip" onclick="_ddAskChip(this)">Missing entries and duplicates</span>
+            <span class="dd-ask-chip" onclick="_ddAskChip(this)">Growth rate and trend</span>
+            <span class="dd-ask-chip" onclick="_ddAskChip(this)">वेतन का औसत और अनुमान</span>
+          </div>
+          <div id="dd-ask-status"></div>
+        </div>
+        <div id="dd-ai-hint">AI built this. You can change it. / एआई ने यह बनाया। आप बदल सकते हैं।</div>
+        <svg id="dd-edge-layer" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="dd-edge-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#ddb8ff"/>
+              <stop offset="100%" stop-color="#4cd7f6"/>
+            </linearGradient>
+            <filter id="dd-edge-glow" x="-30%" y="-300%" width="160%" height="700%" color-interpolation-filters="sRGB">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="2.8" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+        </svg>
+        <div id="dd-nodes-layer"></div>
+        <button id="dd-run-agent-btn" style="display:none" onclick="_ddRunAgent()" type="button">▶ Run Agent / एजेंट चलाएँ</button>
+        <button id="dd-rpt-agent-btn" style="display:none" onclick="_ddGenerateAgentReport()" type="button">Report / रिपोर्ट</button>
+        <button id="dd-focus-btn" style="display:none" onclick="_ddEnterFocus()" type="button">&#9741; Focus / फोकस</button>
+        <div class="dd-agents-empty">
+          <div class="dd-orbital">
+            <div class="dd-orbital-ring dd-orbital-ring-1"></div>
+            <div class="dd-orbital-ring dd-orbital-ring-2"></div>
+            <div class="dd-orbital-ring dd-orbital-ring-3"></div>
+            <div class="dd-orbital-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="34" height="34"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            </div>
+          </div>
+          <h2 class="dd-agents-title" data-i18n="agentsTitle">Agents</h2>
+          <p class="dd-agents-hint" data-i18n="dragModuleHere">Drag a module into your constellation<br><span style="font-size:11px;opacity:.7;font-family:'Noto Sans Devanagari',sans-serif">अपने तारामंडल में मॉड्यूल खींचें</span></p>
+          <button type="button" class="dd-empty-tour-btn" onclick="localStorage.removeItem('sda_first_run');_ddShowTour()">&#128204; Take the Tour / दौरा करें</button>
+        </div>
+      </div>
+
+      <!-- Batch 15: Data X-Ray view -->
+      <div id="dd-xray-view" style="display:none" role="region" aria-label="Data X-Ray / डेटा एक्स-रे">
+        <div class="xr-trust-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span data-i18n="xrayTrustBanner">Detected automatically — please verify &nbsp;/&nbsp; स्वतः पहचाना गया — कृपया जाँचें</span>
+        </div>
+        <div class="xr-body">
+          <div class="xr-panel">
+            <div class="xr-panel-header">
+              <span class="xr-panel-title" data-i18n="xrayFindings">Findings / खोज</span>
+              <button class="xr-rescan-btn" onclick="_ddXraySchedule(true)" aria-label="Re-scan / पुनः स्कैन">↺ Rescan</button>
+            </div>
+            <div id="dd-xray-progress"></div>
+            <div id="dd-xray-findings">
+              <div class="xr-empty">Load data and press ↺ Rescan to discover structure.<br>डेटा लोड करें और ↺ Rescan दबाएं।</div>
+            </div>
+          </div>
+          <div class="xr-graph-area">
+            <svg id="dd-xray-svg" xmlns="http://www.w3.org/2000/svg" aria-label="Structure graph / संरचना ग्राफ">
+              <text x="50%" y="50%" text-anchor="middle" fill="rgba(221,184,255,.25)" font-size="13" font-family="Sora,Segoe UI Variable,sans-serif">Load data and click ↺ Rescan / डेटा लोड करें</text>
+            </svg>
+            <div id="dd-xray-detail" class="xr-detail">
+              <div class="xr-detail-empty">Click a node or edge for details / नोड या एज पर क्लिक करें</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Batch 16: What-If Simulation view -->
+      <div id="dd-whatif-view" style="display:none" role="region" aria-label="What-If Simulation / क्या-अगर सिमुलेशन">
+        <div class="wi-trust-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span>Estimate based on past patterns — not a guarantee / पिछले पैटर्न पर आधारित अनुमान — गारंटी नहीं</span>
+        </div>
+        <div class="wi-body">
+          <div class="wi-panel">
+            <div class="wi-panel-header">
+              <div class="wi-target-label">What-If Target / लक्ष्य</div>
+              <select id="dd-wi-target" class="wi-target-select" onchange="_wiSelectTarget(this.value)">
+                <option value="">— Select metric —</option>
+              </select>
+            </div>
+            <div id="dd-wi-drivers"></div>
+            <div class="wi-footer-btns">
+              <button type="button" class="wi-btn-reset" onclick="_wiReset()">↺ Reset</button>
+              <button type="button" class="wi-btn-save" onclick="_wiSaveScenario()">💾 Save</button>
+            </div>
+          </div>
+          <div class="wi-content" id="dd-wi-content">
+            <div class="wi-nodata">Select a target metric to begin simulation.<br>लक्ष्य मीट्रिक चुनें और सिमुलेशन शुरू करें।</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Batch 17: Audit / Provenance Time-Machine view -->
+      <div id="dd-audit-view" style="display:none" role="region" aria-label="Audit Trail / ऑडिट रिकॉर्ड">
+        <div class="pv-topbar">
+          <span class="pv-topbar-title">Audit Trail / ऑडिट रिकॉर्ड</span>
+          <span class="pv-event-count" id="pv-event-count">0 events</span>
+          <button type="button" class="pv-topbar-btn pv-btn-verify" onclick="_pvVerify()">🔒 Verify / सत्यापित करें</button>
+          <button type="button" class="pv-topbar-btn pv-btn-export" onclick="_pvExportPDF()">📄 Export PDF</button>
+          <button type="button" class="pv-topbar-btn pv-btn-clear" onclick="_pvClear()">🗑 Clear</button>
+          <div class="pv-verify-banner" id="pv-verify-banner" style="display:none"></div>
+        </div>
+        <div class="pv-body">
+          <div class="pv-timeline">
+            <div class="pv-filter-row">
+              <button type="button" class="pv-filter-btn active" id="pvf-all" onclick="_pvFilter('all')">All</button>
+              <button type="button" class="pv-filter-btn" id="pvf-user" onclick="_pvFilter('user')">User</button>
+              <button type="button" class="pv-filter-btn" id="pvf-ai" onclick="_pvFilter('ai')">AI</button>
+              <button type="button" class="pv-filter-btn" id="pvf-module" onclick="_pvFilter('module')">Module</button>
+            </div>
+            <div id="pv-event-list"></div>
+            <div class="pv-replay-bar">
+              <div class="pv-replay-label">Time-Machine / समय-यंत्र</div>
+              <div class="pv-replay-row">
+                <input type="range" class="pv-replay-slider" id="pv-replay-slider" min="0" max="0" value="0" oninput="_pvReplaySet(this.value)" />
+                <span class="pv-replay-idx" id="pv-replay-idx">0 / 0</span>
+              </div>
+            </div>
+          </div>
+          <div class="pv-detail" id="pv-detail">
+            <div class="pv-detail-empty">Select an event to see its lineage / घटना चुनकर वंशावली देखें</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== PANELS ===== -->
+
+      <!-- Analysis Panel -->
+      <div class="panel" id="analysis-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Column Analysis</h3><button class="panel-close" onclick="closePanel('analysis')">&times;</button></div>
+        <div class="panel-body">
+          <label>Select Column</label>
+          <select id="analysisCol" onchange="runAnalysis()"></select>
+          <div id="analysisResults"></div>
+        </div>
+      </div>
+
+      <!-- Filter Panel -->
+      <div class="panel" id="filter-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>Filter Data</h3><button class="panel-close" onclick="closePanel('filter')">&times;</button></div>
+        <div class="panel-body">
+          <label>Filter Column</label>
+          <select id="filterCol" onchange="loadFilterValues()"></select>
+          <label>Filter Type</label>
+          <select id="filterType" onchange="onFilterTypeChange()">
+            <option value="values">Select Values</option>
+            <option value="text">Text Contains</option>
+            <option value="gt">Greater Than</option>
+            <option value="lt">Less Than</option>
+            <option value="eq">Equal To</option>
+            <option value="between">Between</option>
+          </select>
+          <div id="filterValuesWrap">
+            <label>Values (click to toggle)</label>
+            <div id="filterValuesList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-md);padding:6px;margin-bottom:12px"></div>
+          </div>
+          <div id="filterTextWrap" style="display:none"><label>Text Search</label><input type="text" id="filterTextVal" placeholder="Enter text..."></div>
+          <div id="filterNumWrap" style="display:none"><label>Value</label><input type="number" id="filterNumVal" placeholder="Enter number"></div>
+          <div id="filterBetweenWrap" style="display:none">
+            <label>From</label><input type="number" id="filterBetweenFrom" placeholder="Min">
+            <label>To</label><input type="number" id="filterBetweenTo" placeholder="Max">
+          </div>
+          <div class="btn-row">
+            <button class="tb-btn primary" onclick="applyFilter()">Apply Filter</button>
+            <button class="tb-btn danger" onclick="clearAllFilters()">Clear All</button>
+          </div>
+          <div id="activeFilters" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- Conditional Formatting Panel -->
+      <div class="panel" id="format-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>Conditional Formatting</h3><button class="panel-close" onclick="closePanel('format')">&times;</button></div>
+        <div class="panel-body">
+          <label>Column</label>
+          <select id="cfCol"></select>
+          <label>Condition</label>
+          <select id="cfCond" onchange="document.getElementById('cfBetweenWrap').style.display=this.value==='between'?'block':'none'">
+            <option value="gt">Greater Than</option>
+            <option value="lt">Less Than</option>
+            <option value="eq">Equal To</option>
+            <option value="neq">Not Equal</option>
+            <option value="contains">Contains</option>
+            <option value="between">Between</option>
+          </select>
+          <label>Value</label>
+          <input type="text" id="cfValue" placeholder="Enter value">
+          <div id="cfBetweenWrap" style="display:none">
+            <label>Value 2 (for Between)</label>
+            <input type="text" id="cfValue2" placeholder="Second value">
+          </div>
+          <label>Color</label>
+          <div class="color-presets" id="cfColorPresets">
+            <div class="color-preset selected" style="background:#ef4444" data-color="#ef4444" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#f59e0b" data-color="#f59e0b" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#22c55e" data-color="#22c55e" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#3b82f6" data-color="#3b82f6" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#f97316" data-color="#f97316" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#a855f7" data-color="#a855f7" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#ec4899" data-color="#ec4899" onclick="selectCFColor(this)"></div>
+            <div class="color-preset" style="background:#14b8a6" data-color="#14b8a6" onclick="selectCFColor(this)"></div>
+          </div>
+          <label>Or pick custom</label>
+          <input type="color" id="cfCustomColor" value="#ef4444" style="width:100%;height:34px;border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:12px;cursor:pointer">
+          <div class="btn-row">
+            <button class="tb-btn primary" onclick="addCFRule()">Apply Format</button>
+            <button class="tb-btn danger" onclick="clearCFRules()">Clear All</button>
+          </div>
+          <div style="margin-top:16px">
+            <label>Active Rules</label>
+            <div id="cfRulesList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cleanup Panel -->
+      <div class="panel" id="cleanup-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Data Cleanup</h3><button class="panel-close" onclick="closePanel('cleanup')">&times;</button></div>
+        <div class="panel-body">
+          <div class="panel-section">
+            <div class="panel-section-title">Quick Actions</div>
+            <button class="col-op-btn" onclick="removeDuplicates()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>Remove Duplicate Rows</button>
+            <button class="col-op-btn" onclick="removeEmptyRows()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Remove Empty Rows</button>
+            <button class="col-op-btn" onclick="trimWhitespace()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>Trim Whitespace</button>
+            <button class="col-op-btn" onclick="convertToUpperCase()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>UPPERCASE Selected Column</button>
+            <button class="col-op-btn" onclick="convertToLowerCase()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>lowercase Selected Column</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Find & Replace</div>
+            <input type="text" id="findVal" placeholder="Find...">
+            <input type="text" id="replaceVal" placeholder="Replace with...">
+            <label style="display:block;font-size:12px;margin:4px 0"><input type="checkbox" id="findCase"> Match capitals (off = “mode” also finds “Mode”, as in Excel)</label>
+            <label>In Column</label>
+            <select id="findCol"><option value="all">All Columns</option></select>
+            <button class="tb-btn primary" onclick="findReplace()" style="width:100%;justify-content:center">Replace All</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart Panel -->
+      <div class="panel" id="chart-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 118 2.83"/><path d="M22 12A10 10 0 0012 2v10z"/></svg>Chart Builder</h3><button class="panel-close" onclick="closePanel('chart')">&times;</button></div>
+        <div class="panel-body">
+          <label>Chart Type</label>
+          <select id="chartType">
+            <option value="bar">Bar Chart</option>
+            <option value="line">Line Chart</option>
+            <option value="pie">Pie Chart</option>
+            <option value="doughnut">Doughnut</option>
+            <option value="scatter">Scatter Plot</option>
+            <option value="radar">Radar</option>
+            <option value="polarArea">Polar Area</option>
+          </select>
+          <label>Available Columns (drag to axis)</label>
+          <div id="chartColumns" style="margin-bottom:8px"></div>
+          <div class="drag-slot" id="xSlot" ondrop="dropAxis(event,'x')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <span class="slot-label">X-Axis:</span> <span id="xSlotField">Drop here</span>
+          </div>
+          <div class="drag-slot" id="ySlot" ondrop="dropAxis(event,'y')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <span class="slot-label">Y-Axis:</span> <span id="ySlotField">Drop here</span>
+          </div>
+          
+          <label>Color Theme</label>
+          <select id="chartThemeSelect" onchange="buildChart()" style="margin-bottom:8px">
+            <option value="government" selected>Government Blue + Teal</option>
+            <option value="corporate">Executive Blue</option>
+            <option value="rajasthan">Rajasthan Sand + Teal</option>
+            <option value="vibrant">High Contrast</option>
+            <option value="pastel">Pastel (Soft Mint/Lavender)</option>
+            <option value="monochrome">Monochrome (Charcoal/Grey)</option>
+          </select>
+          
+          <div class="chart-title-edit">
+            <label style="margin-bottom:0;font-size:11px;width:60px">Title</label>
+            <input type="text" id="chartTitleInput" placeholder="Enter chart title..." oninput="updateChartTitleDesc()">
+          </div>
+
+          <div class="chart-desc-wrap">
+            <label style="font-size:11px">Description</label>
+            <textarea id="chartDescInput" placeholder="Add chart description / notes..." oninput="updateChartTitleDesc()"></textarea>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1.35fr .65fr .65fr;gap:8px">
+            <div>
+              <label>Presentation Font</label>
+              <select id="chartFontFamily" onchange="updateChartTitleDesc()">
+                <option value="Inter" selected>Inter</option>
+                <option value="Manrope">Manrope</option>
+                <option value="Arial">Arial</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Mangal">Mangal</option>
+              </select>
+            </div>
+            <div>
+              <label>Title Size</label>
+              <select id="chartTitleSize" onchange="updateChartTitleDesc()">
+                <option value="14">14</option>
+                <option value="16" selected>16</option>
+                <option value="18">18</option>
+                <option value="20">20</option>
+                <option value="24">24</option>
+              </select>
+            </div>
+            <div>
+              <label>Text Size</label>
+              <select id="chartTextSize" onchange="updateChartTitleDesc()">
+                <option value="9">9</option>
+                <option value="10" selected>10</option>
+                <option value="11">11</option>
+                <option value="12">12</option>
+                <option value="14">14</option>
+              </select>
+            </div>
+          </div>
+
+          <button class="tb-btn primary" onclick="buildChart()" style="width:100%;justify-content:center;margin-bottom:8px;margin-top:8px">Create Chart</button>
+          
+          <div class="chart-canvas-wrap">
+            <canvas id="chartCanvas"></canvas>
+          </div>
+          <div id="chartDescDisplay" style="margin-top:8px;font-size:11px;color:var(--text-secondary);font-style:italic;white-space:pre-wrap;text-align:center"></div>
+          
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
+            <button class="tb-btn" onclick="downloadChart()" style="justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download PNG</button>
+            <button class="tb-btn" onclick="downloadChartPDF()" style="justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Download PDF</button>
+            <button class="tb-btn" onclick="downloadChartExcel()" style="justify-content:center">Chart Excel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hindi Font Panel -->
+      <div class="panel" id="hindi-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>Hindi Font Converter</h3><button class="panel-close" onclick="closePanel('hindi')">&times;</button></div>
+        <div class="panel-body">
+          <div class="panel-section">
+            <div class="panel-section-title">Convert Table Data</div>
+            <label>Source Font</label>
+            <select id="hindiSrcFont">
+              <option value="auto">Auto-Detect</option>
+              <option value="krutidev">Krutidev</option>
+              <option value="devlys">Devlys</option>
+              <option value="unicode">Unicode (Mangal)</option>
+            </select>
+            <label>Target Font</label>
+            <select id="hindiTgtFont">
+              <option value="unicode">Unicode (Mangal)</option>
+              <option value="krutidev">Krutidev</option>
+            </select>
+            <label>Apply to Column</label>
+            <select id="hindiCol"><option value="all">All Text Columns</option></select>
+            <button class="tb-btn primary" onclick="convertHindi()" style="width:100%;justify-content:center;margin-top:4px">Convert Fonts</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Quick Test</div>
+            <label>Input Text</label>
+            <textarea id="hindiTestInput" rows="3" placeholder="Type or paste Krutidev/Unicode text here..."></textarea>
+            <label>Output</label>
+            <textarea id="hindiTestOutput" rows="3" readonly style="background:var(--bg-primary)"></textarea>
+            <button class="tb-btn" onclick="testHindiConversion()" style="width:100%;justify-content:center;margin-top:4px">Test Convert</button>
+          </div>
+          <div style="padding:12px;background:var(--bg-primary);border-radius:var(--radius-md);font-size:11px;color:var(--text-secondary)">
+            <strong>Supported conversions:</strong><br>
+            • Krutidev → Unicode (Mangal)<br>
+            • Devlys → Unicode (Mangal)<br>
+            • Unicode → Krutidev<br>
+            • Auto-detect encoding from data
+          </div>
+        </div>
+      </div>
+
+      <!-- Column Operations Panel -->
+      <div class="panel" id="columns-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>Column Operations</h3><button class="panel-close" onclick="closePanel('columns')">&times;</button></div>
+        <div class="panel-body">
+          <label>Select Column</label>
+          <select id="colOpsCol"></select>
+          <div class="panel-section">
+            <button class="col-op-btn" onclick="addColumnLeft()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Column Left</button>
+            <button class="col-op-btn" onclick="addColumnRight()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Column Right</button>
+            <button class="col-op-btn" onclick="deleteColumn()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>Delete Column</button>
+            <button class="col-op-btn" onclick="renameColumn()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>Rename Column</button>
+            <button class="col-op-btn" id="unhideColsBtn" onclick="unhideAllColumns()" style="display:none;color:var(--accent);border-color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Unhide All Columns</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Transform</div>
+            <label>Change Type</label>
+            <select id="colChangeType" style="margin-bottom:8px">
+              <option value="text">Text</option>
+              <option value="number">Number</option>
+              <option value="date">Date</option>
+            </select>
+            <button class="tb-btn" onclick="changeColumnType()" style="width:100%;justify-content:center;margin-bottom:8px">Apply Type</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Split Column</div>
+            <label>Delimiter</label>
+            <input type="text" id="splitDelimiter" placeholder="e.g., comma, space, -">
+            <button class="tb-btn primary" onclick="splitColumn()" style="width:100%;justify-content:center">Split</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Merge Columns</div>
+            <label>Merge With</label>
+            <select id="mergeWithCol"></select>
+            <label>Separator</label>
+            <input type="text" id="mergeSeparator" placeholder="e.g., space, comma" value=" ">
+            <button class="tb-btn primary" onclick="mergeColumns()" style="width:100%;justify-content:center">Merge</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Transpose Worksheet</div>
+            <button class="tb-btn" onclick="transposeData()" style="width:100%;justify-content:center">⇅ Transpose Rows ↔ Columns</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pivot Table Panel -->
+      <div class="panel" id="pivot-panel" style="width:500px">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Pivot Table</h3><button class="panel-close" onclick="closePanel('pivot')">&times;</button></div>
+        <div class="panel-body">
+          <label>Available Columns (drag to zones)</label>
+          <div id="pivotColumns" style="margin-bottom:12px"></div>
+          <div class="pivot-zone" id="pivotRowZone" ondrop="pivotDrop(event,'rows')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <div class="pivot-zone-label">Row Fields</div>
+            <div id="pivotRowFields"></div>
+          </div>
+          <div class="pivot-zone" id="pivotColZone" ondrop="pivotDrop(event,'cols')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <div class="pivot-zone-label">Column Fields</div>
+            <div id="pivotColFields"></div>
+          </div>
+          <div class="pivot-zone" id="pivotValZone" ondrop="pivotDrop(event,'vals')" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')">
+            <div class="pivot-zone-label">Value Fields</div>
+            <div id="pivotValFields"></div>
+          </div>
+          <label>Aggregation</label>
+          <select id="pivotAgg">
+            <option value="sum">Sum</option>
+            <option value="count">Count</option>
+            <option value="avg">Average</option>
+            <option value="min">Min</option>
+            <option value="max">Max</option>
+          </select>
+          <button class="tb-btn primary" onclick="buildPivotTable()" style="width:100%;justify-content:center;margin-bottom:12px">Build Pivot Table</button>
+          <div id="pivotResult" style="max-height:400px;overflow:auto"></div>
+          <button class="tb-btn" onclick="exportPivotExcel()" style="width:100%;justify-content:center;margin-top:8px">Export Pivot to Excel</button>
+        </div>
+      </div>
+
+      <!-- Validation Panel -->
+      <div class="panel" id="validation-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Data Validation</h3><button class="panel-close" onclick="closePanel('validation')">&times;</button></div>
+        <div class="panel-body">
+          <div class="panel-section">
+            <div class="panel-section-title">Add Validation Rule</div>
+            <label>Column</label>
+            <select id="validCol"></select>
+            <label>Rule Type</label>
+            <select id="validType">
+              <option value="required">Required (not empty)</option>
+              <option value="number">Must be a Number</option>
+              <option value="min">Min Value</option>
+              <option value="max">Max Value</option>
+              <option value="range">Value Range (min-max)</option>
+              <option value="maxlen">Max Text Length</option>
+              <option value="regex">Regex Pattern</option>
+            </select>
+            <label>Value(s)</label>
+            <input type="text" id="validValue" placeholder="Value, or min-max for range">
+            <button class="tb-btn primary" onclick="addValidationRule()" style="width:100%;justify-content:center">Add Rule</button>
+          </div>
+          <div class="panel-section">
+            <div class="panel-section-title">Active Rules</div>
+            <div id="validRulesList"></div>
+          </div>
+          <div class="panel-section">
+            <button class="tb-btn" onclick="runValidation()" style="width:100%;justify-content:center">Run Validation</button>
+            <div id="validSummary" style="margin-top:8px;font-size:12px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings Panel -->
+      <div class="panel" id="settings-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>Settings</h3><button class="panel-close" onclick="closePanel('settings')">&#215;</button></div>
+        <div class="panel-body">
+          <div class="settings-group">
+            <div class="settings-group-title">&#127912; Appearance</div>
+            <div class="settings-row"><label>Dark Mode</label><div class="toggle-switch" id="darkToggle" onclick="toggleTheme();this.classList.toggle('on')"></div></div>
+            <div class="settings-row"><label>Zebra Stripes</label><div class="toggle-switch" id="zebraToggle" onclick="toggleZebra(this)"></div></div>
+            <div class="settings-row"><label>Show Row Numbers</label><div class="toggle-switch on" id="rnToggle" onclick="toggleRowNumbers(this)"></div></div>
+            <div class="settings-row"><label>Formatting Toolbar</label><div class="toggle-switch" id="fmtBarToggle" onclick="toggleFmtToolbar();this.classList.toggle('on')"></div></div>
+            <div class="settings-row"><label>Calm Mode / शांत मोड <span style="font-size:10px;font-weight:400;color:var(--text-muted)">– stops animations</span></label><div class="toggle-switch" id="reduceMotionToggle" onclick="_ddToggleReduceMotion(this)" role="switch" aria-checked="false" aria-label="Calm Mode / शांत मोड"></div></div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-group-title">&#128190; Auto-Save</div>
+            <div class="settings-row"><label>Auto-Save Interval</label>
+              <select class="fmt-select" id="autoSaveInterval" onchange="setAutoSaveInterval(this.value)" style="width:100px">
+                <option value="0">Off</option>
+                <option value="30000" selected>30 seconds</option>
+                <option value="60000">1 minute</option>
+                <option value="300000">5 minutes</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-group-title">&#128196; Export Defaults</div>
+            <div class="settings-row"><label>Default Paper Size</label>
+              <select class="fmt-select" id="defPaperSize" style="width:80px">
+                <option value="a4" selected>A4</option>
+                <option value="legal">Legal</option>
+                <option value="letter">Letter</option>
+              </select>
+            </div>
+            <div class="settings-row"><label>Default Orientation</label>
+              <select class="fmt-select" id="defOrientation" style="width:100px">
+                <option value="landscape" selected>Landscape</option>
+                <option value="portrait">Portrait</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-group">
+            <div class="settings-group-title">&#128465; Data Recovery</div>
+            <button class="tb-btn" type="button" onclick="localStorage.removeItem('sda_first_run');closePanel('settings');_ddShowTour()" style="width:100%;justify-content:center;margin-bottom:8px">&#127960; Restart Tour / दौरा फिर से शुरू करें</button>
+            <button class="tb-btn" onclick="showRecycleBin()" style="width:100%;justify-content:center;margin-bottom:8px">&#9851; Open Recycle Bin</button>
+            <button class="tb-btn danger" onclick="clearAllData()" style="width:100%;justify-content:center">&#128465; Clear All Data</button>
+          </div>
+          <div style="padding:10px;background:var(--bg-primary);border-radius:var(--radius-md);font-size:10px;color:var(--text-muted);margin-top:8px">
+            <strong>Privacy:</strong> All data stays on your device. Nothing is uploaded to any server.
+            <br><br>
+            <a href="#" onclick="showDocsModal('privacy')" style="color:var(--accent)">Privacy Policy</a> &middot;
+            <a href="#" onclick="showDocsModal('terms')" style="color:var(--accent)">Terms of Service</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- User Profile Panel -->
+      <div class="panel" id="profile-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>User Profile</h3><button class="panel-close" onclick="closePanel('profile')">&#215;</button></div>
+        <div class="panel-body">
+          <div class="profile-avatar" id="profileAvatar">&#128100;</div>
+          <label>Your Name <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+          <input type="text" id="profileName" placeholder="e.g., Rajesh Kumar" oninput="updateProfile()">
+          <label>Designation <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+          <input type="text" id="profileDesig" placeholder="e.g., Senior Assistant" oninput="updateProfile()">
+          <label>Organization <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+          <input type="text" id="profileOrg" placeholder="e.g., Rajasthan Police" oninput="updateProfile()">
+          <label>Date Format</label>
+          <select id="profileDateFmt">
+            <option value="DD/MM/YYYY">DD/MM/YYYY (Indian)</option>
+            <option value="MM/DD/YYYY">MM/DD/YYYY (US)</option>
+            <option value="YYYY-MM-DD">YYYY-MM-DD (ISO)</option>
+          </select>
+          <div class="settings-row" style="margin-top:8px">
+            <label>Include in Exports</label>
+            <div class="toggle-switch on" id="profileExportToggle" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="settings-row">
+            <label>Auto-fill Date on Export</label>
+            <div class="toggle-switch on" id="profileDateToggle" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <button class="tb-btn primary" onclick="saveProfile()" style="width:100%;justify-content:center;margin-top:12px">Save Profile</button>
+        </div>
+      </div>
+
+      <!-- Intelligence Panel -->
+      <div class="panel" id="intelligence-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>Intelligence Engine</h3><button class="panel-close" onclick="closePanel('intelligence')">&#215;</button></div>
+        <div class="panel-body">
+          <!-- ── AI Chat Interface (Patch 8) ── -->
+          <div style="background:linear-gradient(135deg,var(--accent-light),var(--bg-primary));border-radius:12px;padding:14px;margin-bottom:14px;border:1px solid var(--border)">
+            <!-- Status row -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px">
+              <div style="font-size:12px;font-weight:700;color:var(--accent)">&#129504; Ask Your Data / डेटा से पूछें</div>
+              <div id="chat-api-indicator" style="font-size:10.5px;padding:3px 9px;border-radius:20px;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-muted);cursor:pointer" onclick="checkOllamaStatus()" title="Local AI status">&#129504; Checking...</div>
+            </div>
+            <!-- Language row -->
+            <div class="chat-lang-row">
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600">Input:</span>
+              <button class="chat-lang-btn active" id="chat-in-en" onclick="setChatInputLang('en')">EN</button>
+              <button class="chat-lang-btn" id="chat-in-hi" onclick="setChatInputLang('hi')">हिंदी</button>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600;margin-left:6px">Output:</span>
+              <select class="chat-out-select" id="chat-out-lang">
+                <option value="auto">Auto / स्वचालित</option>
+                <option value="en">English</option>
+                <option value="hi">हिंदी</option>
+              </select>
+            </div>
+            <!-- Tone preset selector (Batch 21) -->
+            <div class="tone-preset-bar">
+              <span class="tone-preset-label">Voice / स्वर:</span>
+              <button type="button" class="tone-btn active" id="tone-friendly" onclick="_toneSelect('friendly')">&#128172; Friendly</button>
+              <button type="button" class="tone-btn" id="tone-official" onclick="_toneSelect('official')">&#128203; Official</button>
+              <button type="button" class="tone-btn" id="tone-executive" onclick="_toneSelect('executive')">&#9889; Brief</button>
+            </div>
+            <!-- Textarea -->
+            <textarea id="ai-query-input" rows="3" id="ai-query-input"
+              placeholder="e.g.: Show top 5 employees by salary&#10;उदाहरण: सबसे अधिक वेतन वाले 5 कर्मचारी दिखाएं"
+              style="width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;font-family:inherit;background:var(--card-bg);color:var(--text-primary);resize:vertical;line-height:1.5;box-sizing:border-box"
+              onkeydown="if(event.ctrlKey&&event.key==='Enter')runAIQuery()"></textarea>
+            <div style="display:flex;gap:6px;margin-top:8px">
+              <button class="tb-btn primary" onclick="runAIQuery()" style="flex:1;justify-content:center;height:34px">
+                &#128269; Ask &nbsp;<span style="font-size:10px;opacity:.7">Ctrl+Enter</span>
+              </button>
+              <button class="tb-btn" onclick="clearAIChat()" title="Clear chat" style="height:34px;padding:0 12px">&#128465;</button>
+            </div>
+          </div>
+          <!-- Chat Response Area -->
+          <div id="ai-response-area" style="display:none;margin-bottom:12px">
+            <div id="ai-explanation" class="chat-response-card">
+              <div class="response-source local" id="ai-source-label">&#128311; Local Analysis</div>
+              <div id="ai-explanation-text" style="color:var(--text-primary);line-height:1.6"></div>
+            </div>
+            <div id="ai-action-buttons"></div>
+          </div>
+          <!-- Query History -->
+          <div id="ai-query-history" style="margin-bottom:10px">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:5px">Recent / हाल की</div>
+            <div id="ai-history-list"></div>
+          </div>
+          <!-- Suggestion Chips -->
+          <div style="margin-bottom:14px">
+            <div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Quick Examples / उदाहरण</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px" id="ai-suggestion-chips"></div>
+          </div>
+          <hr style="border:none;border-top:1px solid var(--border);margin:0 0 12px">
+          <!-- ── Existing Intelligence Tabs ── -->
+          <div class="intel-tabs">
+            <div class="intel-tab active" onclick="switchIntelTab('forecast',this)">&#128200; Forecast</div>
+            <div class="intel-tab" onclick="switchIntelTab('regression',this)">&#128201; Regression</div>
+            <div class="intel-tab" onclick="switchIntelTab('anomaly',this)">&#9888; Anomaly</div>
+            <div class="intel-tab" onclick="switchIntelTab('correlation',this)">&#128279; Correlation</div>
+            <div class="intel-tab" onclick="switchIntelTab('profiling',this)">&#128203; Profile</div>
+          </div>
+          <div id="intel-forecast" class="intel-tab-content">
+            <label>Data Column (Numeric)</label>
+            <select id="forecastDataCol" class="panel-body select"></select>
+            <label>Smoothing Factor (&#945;)</label>
+            <input type="range" id="forecastAlpha" min="0.1" max="0.9" step="0.1" value="0.3" oninput="document.getElementById('forecastAlphaVal').textContent=this.value" style="width:100%;margin-bottom:4px">
+            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px">&#945; = <span id="forecastAlphaVal">0.3</span> (lower = smoother)</div>
+            <label>Forecast Periods</label>
+            <input type="number" id="forecastPeriods" value="5" min="1" max="50">
+            <button class="tb-btn primary" onclick="runForecast()" style="width:100%;justify-content:center">Run Forecast</button>
+            <div id="forecastResult"></div>
+            <canvas id="forecastChart" style="margin-top:12px;display:none"></canvas>
+          </div>
+          <div id="intel-regression" class="intel-tab-content" style="display:none">
+            <label>X (Independent) Column</label>
+            <select id="regrXCol"></select>
+            <label>Y (Dependent) Column</label>
+            <select id="regrYCol"></select>
+            <label>Regression Type</label>
+            <select id="regrType">
+              <option value="linear">Linear Regression</option>
+              <option value="logistic">Logistic Regression (Binary Y)</option>
+            </select>
+            <button class="tb-btn primary" onclick="runRegression()" style="width:100%;justify-content:center">Run Regression</button>
+            <div id="regrResult"></div>
+            <canvas id="regrChart" style="margin-top:12px;display:none"></canvas>
+          </div>
+          <div id="intel-anomaly" class="intel-tab-content" style="display:none">
+            <label>Column to Analyze</label>
+            <select id="anomalyCol"></select>
+            <label>Detection Method</label>
+            <select id="anomalyMethod" onchange="document.getElementById('anomalyThreshWrap').style.display=this.value==='zscore'?'block':'none'">
+              <option value="iqr">IQR (Interquartile Range)</option>
+              <option value="zscore">Z-Score (Standard Deviations)</option>
+            </select>
+            <div id="anomalyThreshWrap" style="display:none">
+              <label>Z-Score Threshold</label>
+              <input type="number" id="anomalyThresh" value="2" min="1" max="4" step="0.5">
+            </div>
+            <button class="tb-btn primary" onclick="runAnomalyDetection()" style="width:100%;justify-content:center">Detect Anomalies</button>
+            <div id="anomalyResult"></div>
+          </div>
+          <div id="intel-correlation" class="intel-tab-content" style="display:none">
+            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">Computes Pearson correlation between all numeric columns. Green = positive, Red = negative correlation.</p>
+            <button class="tb-btn primary" onclick="runCorrelation()" style="width:100%;justify-content:center">Compute Correlation Matrix</button>
+            <div id="correlationResult" style="margin-top:12px;overflow:auto"></div>
+          </div>
+          <div id="intel-profiling" class="intel-tab-content" style="display:none">
+            <p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">Generates a complete quality and statistical profile for all columns in your dataset.</p>
+            <button class="tb-btn primary" onclick="runDataProfiling()" style="width:100%;justify-content:center">&#128269; Profile Dataset</button>
+            <div id="profilingResult" style="margin-top:12px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Group By Panel -->
+      <div class="panel" id="groupby-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>Group By / Aggregation</h3><button class="panel-close" onclick="closePanel('groupby')">&#215;</button></div>
+        <div class="panel-body">
+          <label>Group By Column</label>
+          <select id="groupbyCol"></select>
+          <label>Aggregate Column</label>
+          <select id="groupbyAggCol"></select>
+          <label>Aggregation Function</label>
+          <select id="groupbyFunc">
+            <option value="sum">Sum</option>
+            <option value="avg">Average</option>
+            <option value="count">Count</option>
+            <option value="min">Minimum</option>
+            <option value="max">Maximum</option>
+            <option value="median">Median</option>
+            <option value="stddev">Std Deviation</option>
+          </select>
+          <button class="tb-btn primary" onclick="runGroupBy()" style="width:100%;justify-content:center">&#9654; Run Group By</button>
+          <div class="groupby-result" id="groupbyResult"></div>
+        </div>
+      </div>
+
+      <!-- Comparison Panel -->
+      <div class="panel" id="comparison-panel">
+        <div class="panel-header"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Column Comparison</h3><button class="panel-close" onclick="closePanel('comparison')">&#215;</button></div>
+        <div class="panel-body">
+          <label>Column A</label>
+          <select id="compareColA"></select>
+          <label>Column B</label>
+          <select id="compareColB"></select>
+          <button class="tb-btn primary" onclick="runComparison()" style="width:100%;justify-content:center">&#128202; Compare Columns</button>
+          <div id="comparisonResult" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- Formulas Panel -->
+      <div class="panel" id="formulas-panel">
+        <div class="panel-header">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 17c2 0 2.5-1 2.5-2.5V8.5C11.5 7 11 6 9 6" />
+              <path d="M6 12h8" />
+              <path d="M14 17a2 2 0 0 0 2-2" />
+            </svg>
+            Formula Studio / सूत्र स्टूडियो
+          </h3>
+          <button class="panel-close" onclick="closePanel('formulas')">&#215;</button>
+        </div>
+        
+        <div class="fs-tabs">
+          <button class="fs-tab active" onclick="switchFormulaTab('guided')">Guided Calculate / सरल गणना</button>
+          <button class="fs-tab" onclick="switchFormulaTab('quick')">Quick Apply / त्वरित</button>
+          <button class="fs-tab" onclick="switchFormulaTab('library')">📚 Library / पुस्तकालय</button>
+          <button class="fs-tab" onclick="switchFormulaTab('guide')">📖 Guide / मार्गदर्शिका</button>
+        </div>
+        
+        <div class="fs-content-scroll">
+          <!-- Guided Calculate Tab -->
+          <div id="fs-tab-guided" class="fs-tab-content active">
+            <div class="guided-shell">
+              <div class="guided-card">
+                <h4 data-guided-i18n="guidedTitle">Calculate without writing formulas</h4>
+                <p class="guided-subtitle" data-guided-i18n="guidedSubtitle">Choose the operation, select your data, review excluded cells, and decide where the result should go.</p>
+                <div class="guided-grid">
+                  <div class="guided-field">
+                    <label data-guided-i18n="operationLabel">What do you want to calculate?</label>
+                    <select id="guidedOperation" onchange="updateGuidedControls();previewGuidedCalculation()"></select>
+                  </div>
+                  <div class="guided-field">
+                    <label data-guided-i18n="sourceLabel">Where is the data?</label>
+                    <select id="guidedSourceMode" onchange="updateGuidedControls();previewGuidedCalculation()">
+                      <option value="selection">Current cell selection</option>
+                      <option value="column">Complete column</option>
+                      <option value="visibleColumn">Visible/filtered rows of a column</option>
+                      <option value="row">Complete row</option>
+                      <option value="range">Cell or ranges</option>
+                    </select>
+                  </div>
+                  <div class="guided-field" id="guidedColumnWrap" style="display:none">
+                    <label data-guided-i18n="columnLabel">Column</label>
+                    <select id="guidedColumn" onchange="previewGuidedCalculation()"></select>
+                  </div>
+                  <div class="guided-field" id="guidedRowWrap" style="display:none">
+                    <label data-guided-i18n="rowLabel">Row number</label>
+                    <input id="guidedRow" type="number" min="1" value="1" oninput="previewGuidedCalculation()">
+                  </div>
+                  <div class="guided-field guided-span-2" id="guidedRangeWrap" style="display:none">
+                    <label data-guided-i18n="rangeLabel">Cells or ranges</label>
+                    <input id="guidedRange" type="text" placeholder="Example: B2:B20, D5, F2:F10" oninput="previewGuidedCalculation()">
+                  </div>
+                  <div class="guided-field guided-span-2" id="guidedDelimiterWrap" style="display:none">
+                    <label data-guided-i18n="delimiterLabel">Text separator</label>
+                    <input id="guidedDelimiter" type="text" value=", " oninput="previewGuidedCalculation()">
+                  </div>
+                  <div class="guided-field">
+                    <label data-guided-i18n="destinationLabel">Where should the result go?</label>
+                    <select id="guidedDestination" onchange="updateGuidedControls()">
+                      <option value="selected">Currently selected cell</option>
+                      <option value="cell">Type a cell address</option>
+                      <option value="below">Below the source column</option>
+                      <option value="right">At the end of the source row</option>
+                      <option value="kpi">Dashboard KPI card</option>
+                      <option value="preview">Preview only</option>
+                    </select>
+                  </div>
+                  <div class="guided-field" id="guidedTargetCellWrap" style="display:none">
+                    <label data-guided-i18n="targetCellLabel">Target cell</label>
+                    <div class="guided-target-row">
+                      <input id="guidedTargetCell" type="text" placeholder="Example: H2" oninput="updateGuidedDestinationSummary()">
+                      <button class="tb-btn" type="button" onclick="useActiveCellAsGuidedTarget()">Use selected</button>
+                    </div>
+                  </div>
+                  <div class="guided-destination-summary" id="guidedDestinationSummary">Result will be inserted into the currently selected cell.</div>
+                </div>
+                <div class="guided-selection">
+                  <span id="guidedSelectionSummary">No worksheet cells selected.</span>
+                  <button class="tb-btn" onclick="useCurrentSelectionForGuided()" data-guided-i18n="useSelection">Use selection</button>
+                </div>
+                <div class="guided-actions">
+                  <button class="tb-btn" onclick="previewGuidedCalculation()" style="flex:1;justify-content:center" data-guided-i18n="previewButton">Preview</button>
+                  <button class="tb-btn primary" onclick="applyGuidedCalculation()" style="flex:1;justify-content:center" data-guided-i18n="applyButton">Apply result</button>
+                </div>
+              </div>
+              <div>
+                <div class="guided-card">
+                  <h4 data-guided-i18n="previewTitle">Explainable preview</h4>
+                  <p class="guided-subtitle" data-guided-i18n="previewSubtitle">The engine shows exactly what was used and what was excluded.</p>
+                  <div id="guidedPreview" class="guided-preview"></div>
+                </div>
+                <div class="guided-card" style="margin-top:14px">
+                  <h4 data-guided-i18n="suggestionsTitle">Smart recommendations</h4>
+                  <p class="guided-subtitle" data-guided-i18n="suggestionsSubtitle">Local rules inspect your data and suggest useful next actions. No data leaves this device.</p>
+                  <div id="guidedSuggestions" class="smart-list"></div>
+                  <div id="guidedHistory" class="guided-history"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Apply Tab -->
+          <div id="fs-tab-quick" class="fs-tab-content">
+            <div style="margin-bottom: 16px;">
+              <label style="font-weight: 600; margin-bottom: 6px; display: block; font-size: 12px; color: var(--text-primary);">Select Target Column / कॉलम चुनें:</label>
+              <select id="formulasTargetCol" onchange="onFormulasTargetColChange()" style="width: 100%; height: 36px; padding: 0 8px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--card-bg); color: var(--text-primary); font-family: inherit; font-size: 13px;"></select>
+              <div id="formulasColTypeBadge" style="margin-top: 6px; font-size: 11px; color: var(--text-secondary);"></div>
+            </div>
+            <div id="quickFormulasList" class="fc-cards-list">
+              <!-- Cards populated dynamically -->
+            </div>
+          </div>
+          
+          <!-- Library Tab -->
+          <div id="fs-tab-library" class="fs-tab-content">
+            <div style="margin-bottom: 12px;">
+              <input type="text" id="formulaSearchInput" placeholder="Search formulas / सूत्र खोजें..." oninput="onFormulaSearch()" style="width: 100%; height: 36px; padding: 0 12px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--card-bg); color: var(--text-primary); font-family: inherit; font-size: 13px;">
+            </div>
+            <div class="fc-library-layout">
+              <div class="fc-category-rail" id="libraryCategoryRail">
+                <!-- Categories populated dynamically -->
+              </div>
+              <div class="fc-cards-list" id="libraryFormulasList">
+                <!-- Cards populated dynamically -->
+              </div>
+            </div>
+          </div>
+          
+          <!-- Guide Tab -->
+          <div id="fs-tab-guide" class="fs-tab-content">
+            <div class="guide-accordion" id="guideAccordion">
+              <!-- Accordion populated dynamically -->
+            </div>
+            
+            <div class="welcome-footer" style="margin-top: 30px; text-align: center; font-size: 11px; color: var(--text-muted); opacity: 0.85; border-top: 1px solid var(--border); padding-top: 15px;">
+              <span class="developer-signature">Developed By - Neeraj Purohit, purohitneeraj87@gmail.com</span><br>
+              Email- <a href="mailto:rjjo200924001769@rajasthan.in" style="color: var(--accent); text-decoration: none;">rjjo200924001769@rajasthan.in</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── REPORT GENERATOR PANEL (Patch 10) ── -->
+      <div class="panel" id="report-panel" style="width:480px">
+        <div class="panel-header">
+          <h3>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Report Generator / रिपोर्ट बनाएं
+          </h3>
+          <button class="panel-close" onclick="closePanel('report')">&#215;</button>
+        </div>
+        <div class="panel-body" style="padding:0;overflow-y:auto">
+
+          <!-- Batch 10: Smart Dashboard launcher -->
+          <div class="panel-section" style="padding:14px 16px 12px">
+            <button class="tb-btn primary" style="width:100%;height:38px;font-size:12px;font-weight:700;justify-content:center;gap:7px" onclick="_ddSmartDashboard()" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+              Smart Dashboard / स्मार्ट डैशबोर्ड
+            </button>
+            <p style="font-size:10px;color:var(--text-muted);text-align:center;margin-top:6px;line-height:1.4">One-click auto KPIs &amp; charts / एक-क्लिक डैशबोर्ड</p>
+          </div>
+
+          <!-- Section 1: Branding -->
+          <div class="panel-section" style="padding:14px 16px 12px">
+            <div class="panel-section-title">🏢 Organization / संगठन</div>
+            <label style="display:block;font-size:10.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Logo (optional)</label>
+            <div class="report-logo-zone" onclick="document.getElementById('reportLogoFile').click()" id="reportLogoZone">
+              <img id="reportLogoPreview" style="display:none;max-height:56px;max-width:120px;object-fit:contain;margin-bottom:5px">
+              <div id="reportLogoHint">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" style="color:var(--accent)"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-top:3px">Click to upload logo</div>
+                <div style="font-size:10px;color:var(--text-muted)">PNG, JPG • Max 2 MB</div>
+              </div>
+              <input type="file" id="reportLogoFile" accept="image/*" style="display:none" onchange="reportHandleLogoUpload(event)">
+            </div>
+            <button id="reportLogoClearBtn" class="tb-btn" style="display:none;margin-top:5px;font-size:11px;height:26px" onclick="clearReportLogo()">✕ Remove Logo</button>
+
+            <label style="display:block;font-size:10.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-top:10px;margin-bottom:5px">Department / Company Name</label>
+            <input type="text" id="reportCompany" placeholder="e.g. Rajasthan Police, District Collectorate..." oninput="updateReportCoverPreview()" style="margin-bottom:0">
+          </div>
+
+          <!-- Section 2: Report Details -->
+          <div class="panel-section" style="padding:0 16px 12px">
+            <div class="panel-section-title">📋 Report Details / विवरण</div>
+            <label style="display:block;font-size:10.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Report Title / शीर्षक</label>
+            <input type="text" id="reportTitle" placeholder="Data Analysis Report" oninput="updateReportCoverPreview()">
+            <label style="display:block;font-size:10.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Prepared For / किसके लिए</label>
+            <input type="text" id="reportPreparedFor" placeholder="e.g. District Magistrate, SP Office..." oninput="updateReportCoverPreview()">
+            <label style="display:block;font-size:10.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Report Description / विवरण</label>
+            <textarea id="reportDescription" style="height:64px;resize:vertical;margin-bottom:0" placeholder="Brief purpose and scope of this report..." oninput="updateReportCoverPreview()"></textarea>
+          </div>
+
+          <!-- Section 3: Options -->
+          <div class="panel-section" style="padding:0 16px 12px">
+            <div class="panel-section-title">⚙️ Options / विकल्प</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
+              <div>
+                <label style="display:block;font-size:10.5px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Language / भाषा</label>
+                <select id="reportLanguage" style="margin-bottom:0">
+                  <option value="en">English</option>
+                  <option value="hi">हिंदी</option>
+                </select>
+              </div>
+              <div style="padding-top:20px">
+                <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                  <input type="checkbox" id="reportIncludeAI" style="width:14px;height:14px;accent-color:var(--accent);margin-top:2px" disabled>
+                  <span>
+                    <span style="font-size:12px;color:var(--text-secondary);font-weight:600;display:block">AI Insights</span>
+                    <span style="font-size:10px;color:var(--text-muted)" id="reportAIStatus">Checking Ollama...</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 3.5: Template Presets (Batch 9) -->
+          <div class="panel-section" style="padding:0 16px 12px">
+            <div class="panel-section-title">Template / टेम्पलेट</div>
+            <div class="dd-rpt-cards">
+              <div class="dd-rpt-card" data-template="exec" onclick="_ddRptTemplate('exec')">
+                <div class="dd-rpt-card-name">Executive Summary / कार्यकारी सारांश</div>
+                <div class="dd-rpt-card-desc">Key metrics + AI summary for senior officers</div>
+              </div>
+              <div class="dd-rpt-card" data-template="monthly" onclick="_ddRptTemplate('monthly')">
+                <div class="dd-rpt-card-name">Department Monthly / मासिक रिपोर्ट</div>
+                <div class="dd-rpt-card-desc">Monthly performance review and recommendations</div>
+              </div>
+              <div class="dd-rpt-card" data-template="quality" onclick="_ddRptTemplate('quality')">
+                <div class="dd-rpt-card-name">Data Quality Audit / डेटा गुणवत्ता ऑडिट</div>
+                <div class="dd-rpt-card-desc">Completeness, outliers, and integrity check</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 4: Cover Preview -->
+          <div class="panel-section" style="padding:0 16px 12px">
+            <div class="panel-section-title">Cover Preview / पूर्वावलोकन</div>
+            <div id="reportCoverPreview" class="report-cover-preview">
+              <div class="rcp-bar"></div>
+              <div class="rcp-inner">
+                <div class="rcp-logo-ph">📊</div>
+                <div class="rcp-title">Data Analysis Report</div>
+                <div class="rcp-divider"></div>
+                <div class="rcp-meta">No data loaded</div>
+                <div class="rcp-brand">Stellura — स्टेल्यूरा</div>
+              </div>
+              <div class="rcp-foot"></div>
+            </div>
+          </div>
+
+          <!-- Generate Button -->
+          <div style="padding:10px 16px 20px">
+            <button id="generateReportBtn" class="tb-btn primary" style="width:100%;height:42px;font-size:13px;font-weight:700;justify-content:center;gap:8px" onclick="generateReport()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+              Generate PDF Report / PDF रिपोर्ट
+            </button>
+            <p style="font-size:10.5px;color:var(--text-muted);text-align:center;margin-top:7px;line-height:1.5">
+              10-page professional PDF: Cover · Executive Summary · Data Overview · Statistics · Top Records · Findings · Recommendations · Disclaimer
+            </p>
+          </div>
+
+        </div>
+      </div>
+
+    </div><!-- /content -->
+
+    <aside id="live-inspector" class="glass-panel" aria-label="Live Cell Intelligence" style="border-radius:0;border-top:none;border-bottom:none;border-right:none">
+      <div class="inspector-header">
+        <div>
+          <div class="inspector-kicker">Live analysis</div>
+          <div class="inspector-title">Cell Intelligence</div>
+        </div>
+        <button class="panel-close" onclick="toggleLiveInspector()" title="Hide inspector">&times;</button>
+      </div>
+      <div class="inspector-body">
+        <div class="inspector-card">
+          <div class="inspector-row"><span class="inspector-label">Selection</span><span class="inspector-value" id="inspectorSelection">No selection</span></div>
+          <div class="inspector-row"><span class="inspector-label">Selection type</span><span class="inspector-value" id="inspectorSelectionType">None</span></div>
+          <div class="inspector-row"><span class="inspector-label">Active cell</span><span class="inspector-value" id="inspectorActiveCell">-</span></div>
+          <div class="inspector-row"><span class="inspector-label">Formula</span><span class="inspector-value formula" id="inspectorFormula">No formula</span></div>
+          <div class="inspector-row"><span class="inspector-label">Source cells</span><span class="inspector-value" id="inspectorSource">-</span></div>
+          <div class="inspector-row"><span class="inspector-label">Result</span><span class="inspector-value result" id="inspectorResult">-</span></div>
+        </div>
+
+        <div class="intel-toggle-card">
+          <div>
+            <div class="intel-toggle-title">Cursor Intelligence</div>
+            <div class="intel-toggle-copy">Explain calculated cells when the pointer moves over them.</div>
+          </div>
+          <div class="switch-control on" id="cursorIntelligenceSwitch" role="switch" aria-checked="true" tabindex="0" onclick="toggleCursorIntelligence()"></div>
+        </div>
+
+        <div class="inspector-section-title">Calculation provenance</div>
+        <div id="provenanceFlow">
+          <div class="provenance-step">
+            <div class="provenance-icon">1</div>
+            <div class="provenance-label">Source range</div>
+            <div class="provenance-value" id="provenanceSource">Select a calculated cell</div>
+            <div class="provenance-note" id="provenanceSourceNote">The input cells will appear here.</div>
+          </div>
+          <div class="provenance-step">
+            <div class="provenance-icon">2</div>
+            <div class="provenance-label">Formula</div>
+            <div class="provenance-value" id="provenanceFormula">No formula selected</div>
+            <div class="provenance-note" id="provenanceFormulaNote">Calculation method</div>
+          </div>
+          <div class="provenance-step">
+            <div class="provenance-icon">3</div>
+            <div class="provenance-label">Result</div>
+            <div class="provenance-value" id="provenanceResult">-</div>
+            <div class="provenance-note">Current worksheet value</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+    </div><!-- /workspace-stage -->
+
+    <!-- Status Bar -->
+    <div id="statusbar">
+      <span id="statusRows">0 rows</span>
+      <span id="statusCols">0 columns</span>
+      <span id="statusFilter" class="status-accent"></span>
+      <span id="statusFormat" class="status-accent"></span>
+      <span id="statusSelection" class="status-accent"></span>
+      <span class="status-stat hidden" id="statSum" title="Sum of selected cells">&Sigma; <span id="statSumVal">0</span></span>
+      <span class="status-stat hidden" id="statAvg" title="Average of selected cells">Avg <span id="statAvgVal">0</span></span>
+      <span class="status-stat hidden" id="statCount" title="Count of selected cells">Count <span id="statCountVal">0</span></span>
+      <span class="status-stat hidden" id="statMin" title="Min of selected cells">Min <span id="statMinVal">0</span></span>
+      <span class="status-stat hidden" id="statMax" title="Max of selected cells">Max <span id="statMaxVal">0</span></span>
+      <span id="dqBadge" style="display:none"></span>
+      <span class="status-credit developer-signature" style="font-family:'Outfit',sans-serif;font-weight:650;font-size:11px;color:#4338ca;letter-spacing:0.02em;">&#9670; Developed by Neeraj Purohit, purohitneeraj87@gmail.com &#9670;</span>
+      <div class="status-zoom">
+        <button class="zoom-btn" onclick="changeWorksheetZoom(-10)" title="Zoom out">-</button>
+        <span class="zoom-value" id="zoomValue">100%</span>
+        <button class="zoom-btn" onclick="changeWorksheetZoom(10)" title="Zoom in">+</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div id="context-menu">
+  <div class="ctx-item" onclick="ctxCopyCell()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span data-i18n="copyCell">Copy Cell</span></div>
+  <div class="ctx-item" onclick="ctxPasteCell()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg><span data-i18n="pasteCell">Paste</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxInsertRowAbove()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg><span data-i18n="insertRowAbove">Insert Row Above</span></div>
+  <div class="ctx-item" onclick="ctxInsertRowBelow()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg><span data-i18n="insertRowBelow">Insert Row Below</span></div>
+  <div class="ctx-item danger" onclick="ctxDeleteRow()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg><span data-i18n="deleteRow">Delete Row</span></div>
+  <div class="ctx-item" onclick="_pvCtxLineage()" style="border-top:1px solid rgba(221,184,255,.1);margin-top:3px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2m-3.22-6.78l-1.42 1.42M6.64 17.36l-1.42 1.42M17.36 17.36l-1.42-1.42M6.64 6.64L5.22 5.22"/></svg><span data-i18n="showLineage">Show Lineage / वंशावली देखें</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxSortAsc()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg><span data-i18n="sortAsc">Sort Ascending</span></div>
+  <div class="ctx-item" onclick="ctxSortDesc()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg><span data-i18n="sortDesc">Sort Descending</span></div>
+  <div class="ctx-item" onclick="ctxFilterValue()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg><span data-i18n="filterValue">Filter This Value</span></div>
+</div>
+
+<!-- Column Header Context Menu -->
+<div id="col-context-menu" style="display:none; position:absolute; background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius-md); box-shadow:0 8px 25px rgba(0,0,0,.12); z-index:2000; min-width:160px; padding:4px 0;">
+  <div class="ctx-item" onclick="ctxColSortAsc()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right:8px;vertical-align:middle;display:inline-block"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg><span data-i18n="sortAsc">Sort Ascending</span></div>
+  <div class="ctx-item" onclick="ctxColSortDesc()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right:8px;vertical-align:middle;display:inline-block"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg><span data-i18n="sortDesc">Sort Descending</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxColRename()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right:8px;vertical-align:middle;display:inline-block"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 113 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span data-i18n="renameCol">Rename Column</span></div>
+  <div class="ctx-item danger" onclick="ctxColHide()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right:8px;vertical-align:middle;display:inline-block"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/></svg><span data-i18n="hideCol">Hide Column</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxColFilter()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right:8px;vertical-align:middle;display:inline-block"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg><span data-i18n="openFilter">Open Filter Panel</span></div>
+</div>
+
+<!-- Column Statistics Tooltip -->
+<div id="col-stats-tooltip" style="display:none; position:absolute; background:#1e293b; color:#f8fafc; padding:8px 12px; border-radius:var(--radius-md); font-size:11px; z-index:3000; max-width:240px; box-shadow:0 10px 25px rgba(0,0,0,.25); pointer-events:none; border:1px solid #334155; line-height: 1.4;"></div>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+<div id="cursorFormulaTooltip" class="cursor-tooltip"></div>
+
+<!-- ===== MODALS ===== -->
+
+<!-- Sheet Selector Modal -->
+<div class="modal-overlay" id="sheetModal">
+  <div class="modal">
+    <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>Select Sheet</h3>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">This workbook has multiple sheets. Choose one to import:</p>
+    <div id="sheetList"></div>
+    <div class="modal-actions">
+      <button class="tb-btn" onclick="closeModal('sheetModal')">Cancel</button>
+      <button class="tb-btn primary" onclick="importSelectedSheet()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Shortcuts Modal -->
+<div class="modal-overlay" id="shortcutsModal">
+  <div class="modal">
+    <h3>⌨ Keyboard Shortcuts</h3>
+    <div class="shortcut-row"><span>Undo</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>Z</kbd></span></div>
+    <div class="shortcut-row"><span>Save State</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>S</kbd></span></div>
+    <div class="shortcut-row"><span>Search</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>F</kbd></span></div>
+    <div class="shortcut-row"><span>Import File</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>O</kbd></span></div>
+    <div class="shortcut-row"><span>Export Excel</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>E</kbd></span></div>
+    <div class="shortcut-row"><span>Toggle Dark Mode</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>D</kbd></span></div>
+    <div class="shortcut-row"><span>Toggle Formula Bar</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>`</kbd></span></div>
+    <div class="shortcut-row"><span>Show Shortcuts</span><span class="shortcut-key"><kbd>Ctrl</kbd>+<kbd>/</kbd></span></div>
+    <div class="shortcut-row"><span>Close Panel</span><span class="shortcut-key"><kbd>Escape</kbd></span></div>
+    <div class="modal-actions"><button class="tb-btn primary" onclick="closeModal('shortcutsModal')">Close</button></div>
+  </div>
+</div>
+
+<!-- PDF Export Modal -->
+<div class="modal-overlay" id="pdfModal">
+  <div class="modal">
+    <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Export PDF</h3>
+    <label>Title</label>
+    <input type="text" id="pdfTitle" value="Data Report">
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div>
+        <label>Paper Size</label>
+        <select id="pdfPaperSize">
+          <option value="a4" selected>A4</option>
+          <option value="legal">Legal</option>
+          <option value="letter">Letter</option>
+        </select>
+      </div>
+      <div>
+        <label>Orientation</label>
+        <select id="pdfOrientation">
+          <option value="landscape" selected>Landscape</option>
+          <option value="portrait">Portrait</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px">
+      <div>
+        <label>Margins</label>
+        <select id="pdfMargins">
+          <option value="normal" selected>Normal (12mm)</option>
+          <option value="narrow">Narrow (6mm)</option>
+          <option value="wide">Wide (20mm)</option>
+        </select>
+      </div>
+      <div>
+        <label>Watermark</label>
+        <select id="pdfWatermark" onchange="document.getElementById('pdfWatermarkCustomWrap').style.display=this.value==='custom'?'block':'none'">
+          <option value="" selected>None</option>
+          <option value="CONFIDENTIAL">CONFIDENTIAL</option>
+          <option value="DRAFT">DRAFT</option>
+          <option value="custom">Custom Text...</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="pdfWatermarkCustomWrap" style="display:none;margin-top:6px">
+      <label>Custom Watermark Text</label>
+      <input type="text" id="pdfWatermarkCustom" placeholder="e.g. FOR INTERNAL USE ONLY">
+    </div>
+
+    <label style="margin-top:8px">Options</label>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="pdfIncludeFormat" checked> Include conditional formatting
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="pdfIncludeLogo" checked> Include app logo header
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="pdfIncludeProfile" checked> Include my profile footer
+      </label>
+    </div>
+
+    <label>Max Rows to Export</label>
+    <input type="number" id="pdfMaxRows" value="500" min="1" max="10000" style="margin-bottom:12px">
+
+    <div class="modal-actions">
+      <button class="tb-btn" onclick="closeModal('pdfModal')">Cancel</button>
+      <button class="tb-btn primary" onclick="executePDFExport()">Export PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- Excel Export Modal -->
+<div class="modal-overlay" id="excelModal">
+  <div class="modal">
+    <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Export Excel</h3>
+    <label>Filename</label>
+    <input type="text" id="excelFilename" value="data_export">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+      <div>
+        <label>Paper Size</label>
+        <select id="excelPaperSize">
+          <option value="a4" selected>A4</option>
+          <option value="legal">Legal</option>
+          <option value="letter">Letter</option>
+        </select>
+      </div>
+      <div>
+        <label>Orientation</label>
+        <select id="excelOrientation">
+          <option value="landscape" selected>Landscape</option>
+          <option value="portrait">Portrait</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Options</label>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="excelFreezeHeader" checked> Freeze header row
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="excelIncludeFormat" checked> Include conditional formatting colors
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="excelIncludeLogo" checked> Include app logo header
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin:0">
+        <input type="checkbox" id="excelIncludeProfile" checked> Include my profile footer
+      </label>
+    </div>
+
+    <div class="modal-actions">
+      <button class="tb-btn" onclick="closeModal('excelModal')">Cancel</button>
+      <button class="tb-btn primary" onclick="executeExcelExport()">Export Excel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Documentation Modal -->
+<div class="modal-overlay" id="docsModal">
+  <div class="modal" style="max-width:700px;width:95vw;max-height:85vh;overflow:hidden;display:flex;flex-direction:column">
+    <h3>📖 Documentation & Help</h3>
+    <div class="docs-tabs">
+      <div class="docs-tab active" onclick="switchDocsTab('intro', this)">Introduction</div>
+      <div class="docs-tab" onclick="switchDocsTab('analysis', this)">Data Analysis</div>
+      <div class="docs-tab" onclick="switchDocsTab('intel', this)">Intelligence Engine</div>
+      <div class="docs-tab" onclick="switchDocsTab('hindi', this)">Hindi Support</div>
+      <div class="docs-tab" onclick="switchDocsTab('export', this)">Exporting</div>
+      <div class="docs-tab" onclick="switchDocsTab('shortcuts', this)">Shortcuts</div>
+      <div class="docs-tab" onclick="switchDocsTab('privacy', this)">Privacy Policy</div>
+      <div class="docs-tab" onclick="switchDocsTab('terms', this)">Terms of Service</div>
+    </div>
+    <div class="docs-content" id="docsContent" style="flex:1;overflow-y:auto;font-size:13px;line-height:1.6">
+      <!-- Content populated dynamically in JS -->
+    </div>
+    <div class="modal-actions" style="margin-top:12px;flex-shrink:0">
+      <button class="tb-btn" onclick="window.open('/static/guide/guide.html','_blank')">📘 Open the full user guide · पूरी उपयोग गाइड</button>
+      <button class="tb-btn primary" onclick="closeModal('docsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Print Preview Modal -->
+<div class="modal-overlay" id="printPreviewModal">
+  <div class="modal" style="max-width:800px;width:95vw">
+    <h3>Print Layout</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <label>Paper Size</label>
+        <select id="printPaperSize" onchange="showPrintPreview()">
+          <option value="a4" selected>A4</option>
+          <option value="legal">Legal</option>
+          <option value="letter">Letter</option>
+        </select>
+      </div>
+      <div>
+        <label>Orientation</label>
+        <select id="printOrientation" onchange="showPrintPreview()">
+          <option value="landscape" selected>Landscape</option>
+          <option value="portrait">Portrait</option>
+        </select>
+      </div>
+    </div>
+    <div class="print-preview-page" id="printPreviewContent" style="background:#fff;border:1px solid #ccc;box-shadow:0 2px 8px rgba(0,0,0,.1);padding:20px;margin:0 auto;font-size:10px;line-height:1.4;overflow:auto;max-height:400px;color:#000">
+      <!-- Dynamic Preview -->
+    </div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="tb-btn" onclick="closeModal('printPreviewModal')">Close</button>
+      <button class="tb-btn primary" onclick="executePrint()">Print / Save PDF</button>
+    </div>
+  </div>
+</div>
+
