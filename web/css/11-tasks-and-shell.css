@@ -1,0 +1,80 @@
+/* ===== TASK-FIRST WORKSPACE: fixer, combine files, steps, palette, home tiles, Simple/Pro ===== */
+.stl-box{width:min(640px,94vw)}
+.stl-box.wide{width:min(860px,95vw)}
+.stl-overlay{z-index:210}
+.stl-ok{padding:18px;border:1px solid var(--accent);border-radius:10px;font-size:14px}
+.stl-fix{display:flex;gap:10px;align-items:flex-start;padding:10px 4px;border-bottom:1px solid var(--border);cursor:pointer}
+.stl-fix input{margin-top:4px;width:16px;height:16px;accent-color:var(--accent);flex:none}
+.stl-fix-t{display:flex;justify-content:space-between;gap:10px;font-size:13.5px}
+.stl-count{background:var(--accent);color:#fff;border-radius:999px;padding:0 9px;font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stl-ex{font-size:12px;margin-top:3px;color:var(--text-secondary);overflow-wrap:anywhere}
+.stl-ex span{background:rgba(127,127,127,.14);border-radius:4px;padding:0 5px}
+.stl-ex b{color:var(--accent);font-weight:600}
+.stl-banner{display:none;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--accent);background:var(--bg-secondary);font-size:12.5px;flex-wrap:wrap}
+.stl-banner-t{flex:1;min-width:200px}
+.stl-drop{display:flex;align-items:center;gap:12px;border:2px dashed var(--border);border-radius:10px;padding:12px 14px;font-size:13px;color:var(--text-muted)}
+.stl-drop.over{border-color:var(--accent);background:rgba(127,127,127,.08)}
+.stl-file{border:1px solid var(--border);border-radius:10px;margin:6px 0;padding:6px 10px;background:var(--bg-primary)}
+.stl-file summary{cursor:pointer;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.stl-file-a{margin-left:auto;display:flex;gap:6px;align-items:center}
+.stl-ic{border:1px solid var(--border);background:transparent;color:var(--text-primary);border-radius:6px;width:26px;height:26px;cursor:pointer}
+.stl-map td{padding:3px 6px}
+.stl-map select{width:100%}
+.stl-b{font-size:11px;white-space:nowrap}
+.lvl-review .stl-b,.stl-warn{color:#d97706;font-weight:600}
+.lvl-new .stl-b{color:var(--accent)}
+.lvl-manual .stl-b{color:#2563eb}
+.stl-opts{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0 2px;font-size:13px}
+/* steps drawer */
+.stl-steps{position:fixed;top:0;right:0;bottom:0;width:min(360px,94vw);z-index:150;background:var(--bg-secondary);border-left:1px solid var(--border);transform:translateX(105%);transition:transform .2s;display:flex;flex-direction:column;color:var(--text-primary)}
+.stl-steps.open{transform:none}
+.stl-steps-h{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)}
+.stl-steps-h button{background:none;border:0;color:var(--text-muted);font-size:22px;cursor:pointer}
+.stl-steps-b{padding:12px 14px;overflow:auto;flex:1}
+.stl-step{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.stl-step-n{flex:none;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font-size:11px}
+.stl-recipe-save{margin-top:12px}
+.stl-badge{background:var(--accent);color:#fff;border-radius:999px;padding:0 6px;font-size:10.5px}
+/* command palette */
+.stl-pal{align-items:flex-start;padding-top:12vh;z-index:260}
+.stl-pal .stl-box{width:min(620px,94vw);padding:10px}
+.stl-pal-in{width:100%;font-size:15px;padding:11px 13px;box-sizing:border-box}
+.stl-pal-list{max-height:50vh;overflow:auto;margin-top:6px}
+.stl-pal-i{display:flex;justify-content:space-between;gap:10px;padding:8px 11px;border-radius:8px;cursor:pointer;font-size:13.5px}
+.stl-pal-i em{font-style:normal;color:var(--text-muted);font-size:11px}
+.stl-pal-i.sel{background:var(--accent);color:#fff}.stl-pal-i.sel em{color:rgba(255,255,255,.8)}
+.stl-pal-foot{padding:8px 11px 2px;font-size:11px;color:var(--text-muted)}
+/* home tiles */
+.stl-home{width:100%;max-width:760px;margin:6px auto 14px}
+.stl-home-t{font-size:15px;font-weight:700;margin-bottom:10px;text-align:center}
+.stl-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.stl-tile{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;padding:13px 14px;border:1px solid var(--border);border-radius:12px;background:var(--bg-secondary);color:var(--text-primary);cursor:pointer;font:inherit}
+.stl-tile:hover{border-color:var(--accent);transform:translateY(-2px)}
+.stl-tile b{font-size:14px}.stl-tile span:last-child{font-size:12px;color:var(--text-muted)}
+.stl-tile-i{font-size:20px}
+/* Simple / Pro */
+.stl-mode{font-weight:700;min-width:54px;justify-content:center}
+.stl-insights{position:relative;display:inline-block}
+.stl-ins-menu{display:none;position:absolute;top:100%;left:0;margin-top:6px;z-index:90;background:var(--bg-secondary);border:1px solid var(--border);border-radius:10px;padding:5px;min-width:180px;box-shadow:0 12px 30px rgba(0,0,0,.3)}
+.stl-ins-menu.open{display:block}
+.stl-ins-menu button{display:block;width:100%;text-align:left;padding:8px 11px;background:none;border:0;border-radius:7px;color:var(--text-primary);cursor:pointer;font:inherit;font-size:13px}
+.stl-ins-menu button:hover{background:var(--accent);color:#fff}
+html[data-stel-mode="simple"] #fmt-toolbar,
+html[data-stel-mode="simple"] #formula-bar{display:none !important}
+html[data-stel-mode="simple"] .dd-view-btn[data-view="agents"],
+html[data-stel-mode="simple"] .dd-view-btn[data-view="xray"],
+html[data-stel-mode="simple"] .dd-view-btn[data-view="whatif"],
+html[data-stel-mode="simple"] .dd-view-btn[data-view="audit"]{display:none}
+html[data-stel-mode="pro"] #stlInsights{display:none}
+.stl-home .stl-tile:focus-visible,.stl-pal-i:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.stl-steps{transition:none}.stl-tile:hover{transform:none}}
+/* Simple mode: keep the screen calm. The live inspector is a Pro tool. */
+html[data-stel-mode="simple"] #live-inspector{display:none !important}
+.stl-fix > div{flex:1;min-width:0}
+/* never more than the two newest messages: a pile of old ones covered dialog buttons */
+#toast-container .toast:nth-last-child(n+3){display:none}
+/* light theme: messages need dark text on a light card (they were near-white on white) */
+html[data-theme="light"] .toast{background:#ffffff !important;color:#1e293b !important;box-shadow:0 8px 24px rgba(30,41,59,.18) !important;border-top-color:#cbd5e1 !important;border-right-color:#cbd5e1 !important;border-bottom-color:#cbd5e1 !important}
+html[data-theme="light"] .toast *{color:inherit !important}
+html[data-theme="light"] .tb-btn.primary,html[data-theme="light"] .tb-btn.primary:hover,html[data-theme="light"] .tb-btn.primary:focus,html[data-theme="light"] .tb-btn.primary:active{color:#fff !important}
+.stl-guide-link{text-align:center;margin:12px 0 2px;font-size:13px}.stl-guide-link a{color:var(--accent);text-decoration:none;font-weight:600}.stl-guide-link a:hover{text-decoration:underline}

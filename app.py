@@ -48,14 +48,31 @@ except ImportError:
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_FONTS_DIR = BASE_DIR / "static" / "fonts"
-DOWNLOAD_DIR = BASE_DIR / "download"
+DIST_DIR = BASE_DIR / "dist"
+APP_HTML = "Stellura.html"
 
 app = Flask(__name__, static_folder="static")
-CORS(app)
 
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB upload limit
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("STELLURA_MAX_UPLOAD_MB", 1024)) * 1024 * 1024  # default 1 GB
 
 PORT = int(os.environ.get("PORT", 5000))
+
+# Security: listen on this PC only. Set STELLURA_HOST=0.0.0.0 only if you
+# deliberately want other PCs on the office network to reach the app.
+HOST = os.environ.get("STELLURA_HOST", "127.0.0.1")
+
+# The app is served from the same origin, so CORS is only needed for local dev
+# tools. Never allow arbitrary websites to call the local API.
+from engine_api import bp as engine_bp  # noqa: E402
+app.register_blueprint(engine_bp)
+from office_api import bp as office_bp  # noqa: E402
+app.register_blueprint(office_bp)
+
+CORS(app, origins=[
+    f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}",
+])
+
+PID_FILE = BASE_DIR / "runtime" / "stellura.pid"
 
 # ---------------------------------------------------------------------------
 # Async Export Job Store
@@ -90,25 +107,79 @@ def _safe_value(val):
             return None
         return val
     if isinstance(val, datetime):
-        return val.isoformat()
+        if val.hour == 0 and val.minute == 0 and val.second == 0:
+            return val.date().isoformat()
+        return val.isoformat(sep=" ")
     return str(val)
 
 
+_NUM_PLAIN = re.compile(r"^-?(0|[1-9]\d{0,14})(\.\d+)?$")
+_NUM_GROUPED = re.compile(r"^-?[1-9]\d{0,2}(,\d{3})+(\.\d+)?$")
+
+
+def _excel_value(v):
+    """The editor holds every cell as text; in the .xlsx a number must be a number (so SUM, sorting and charts work in Excel).
+    Codes with a leading zero (0123), very long digit strings (phone, Aadhaar, IDs) and anything else stay text."""
+    if isinstance(v, str):
+        s = v.strip()
+        if _NUM_PLAIN.match(s):
+            return float(s) if "." in s else int(s)
+        if _NUM_GROUPED.match(s):
+            s2 = s.replace(",", "")
+            return float(s2) if "." in s2 else int(s2)
+    return v
+
+
+_XLSX_CACHE = {}                    # sha1 of the file -> {"sheets": [names], "rows": {name: [tuple, ...]}}; the newest two workbooks
+_XLSX_CACHE_ORDER = []
+_XLSX_CACHE_MAX_CELLS = 8_000_000
+
+
+def _read_workbook(file_bytes):
+    """Read every sheet once (read-only mode: several times faster than the full mode, and light on memory) and keep the
+    values for a while, so choosing a sheet, switching sheets or adding the same workbook again does not read it again."""
+    import hashlib
+    key = hashlib.sha1(file_bytes).hexdigest()
+    if key in _XLSX_CACHE:
+        return _XLSX_CACHE[key]
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    try:
+        names = list(wb.sheetnames)
+        rows = {}
+        for n in names:
+            data = [tuple(r) for r in wb[n].iter_rows(values_only=True)]
+            while data and all(v is None for v in data[-1]):                   # blank rows at the end (formatted but empty)
+                data.pop()
+            rows[n] = data
+        active = wb.active.title if wb.active is not None else names[0]
+    finally:
+        wb.close()
+    entry = {"sheets": names, "rows": rows, "active": active if active in names else names[0]}
+    cells = sum(len(r) * (len(r[0]) if r else 0) for r in rows.values())
+    if cells <= _XLSX_CACHE_MAX_CELLS:
+        _XLSX_CACHE[key] = entry
+        _XLSX_CACHE_ORDER.append(key)
+        while len(_XLSX_CACHE_ORDER) > 2:
+            _XLSX_CACHE.pop(_XLSX_CACHE_ORDER.pop(0), None)
+    return entry
+
+
 def _parse_excel(file_bytes, filename, sheet_name=None):
-    """Parse an Excel file and return headers, rows, and sheet names."""
-    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
-    sheet_names = wb.sheetnames
+    """Parse an .xlsx workbook: return headers, rows, sheet names and per-sheet size."""
+    book = _read_workbook(file_bytes)
+    sheet_names = book["sheets"]
+    sheet_info = [
+        {"name": n, "rows": max(len(book["rows"][n]) - 1, 0), "cols": max((len(r) for r in book["rows"][n][:50]), default=0)}
+        for n in sheet_names
+    ]
 
-    # Select the requested sheet (default: first)
-    if sheet_name and sheet_name in sheet_names:
-        ws = wb[sheet_name]
-    else:
-        ws = wb.active
-        sheet_name = ws.title
-
-    rows = list(ws.iter_rows(values_only=True))
+    # Select the requested sheet (default: the one the workbook opens on)
+    if not (sheet_name and sheet_name in sheet_names):
+        sheet_name = book["active"]
+    rows = book["rows"][sheet_name]
     if not rows:
-        return {"headers": [], "data": [], "sheets": sheet_names, "activeSheet": sheet_name}
+        return {"headers": [], "data": [], "sheets": sheet_names,
+                "sheetInfo": sheet_info, "activeSheet": sheet_name}
 
     headers = [str(h) if h is not None else f"Column {i+1}" for i, h in enumerate(rows[0])]
     data = [[_safe_value(cell) for cell in row] for row in rows[1:]]
@@ -117,6 +188,7 @@ def _parse_excel(file_bytes, filename, sheet_name=None):
         "headers": headers,
         "data": data,
         "sheets": sheet_names,
+        "sheetInfo": sheet_info,
         "activeSheet": sheet_name,
     }
 
@@ -334,7 +406,7 @@ __DD_CHARTJS__
     </div>
     <div class="tbl-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
   </div>
-  <div class="foot">__DD_FOOTER_HTML__Generated by <strong>Stellura</strong> (\u0938\u094D\u091F\u0947\u0932\u094D\u092F\u0942\u0930\u093E) &nbsp;&bull;&nbsp; Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police &nbsp;&bull;&nbsp; __DD_DATE__</div>
+  <div class="foot">__DD_FOOTER_HTML__Generated by <strong>Stellura</strong> (\u0938\u094D\u091F\u0947\u0932\u094D\u092F\u0942\u0930\u093E) &nbsp;&bull;&nbsp; Developed by Neeraj Purohit, purohitneeraj87@gmail.com &nbsp;&bull;&nbsp; __DD_DATE__</div>
 </div>
 <script>
 var H=__DD_HEADERS__,D=__DD_DATA__,KPIS=__DD_KPIS__,CF=__DD_CF__,CHC=__DD_CHART_CFG__;
@@ -455,19 +527,28 @@ def _build_dashboard_html(title, accent, row_count, col_count, gen_date,
 # Routes
 # ---------------------------------------------------------------------------
 
+def _ensure_built():
+    """Rebuild dist/Stellura.html from web/ when the sources are newer (development).
+    In a packaged install web/ is absent and the shipped dist/ file is used as-is."""
+    if not (BASE_DIR / "web" / "manifest.txt").exists():
+        return
+    try:
+        from tools import build
+        if build.is_stale():
+            build.build()
+    except Exception as exc:  # never block the app on a build problem if a build exists
+        print(f"  [WARN] Could not rebuild the web app: {exc}")
+
+
 @app.route("/")
 def serve_index():
-    """Serve the main Single-Page Application HTML file."""
-    html_path = DOWNLOAD_DIR / "Simple-Data-Analyser.html"
-    if not html_path.exists():
-        abort(404, description="Simple-Data-Analyser.html not found in /download folder.")
-    return send_from_directory(str(DOWNLOAD_DIR), "Simple-Data-Analyser.html")
-
-
-@app.route("/download/<path:filename>")
-def serve_download(filename):
-    """Serve static files from the download directory."""
-    return send_from_directory(str(DOWNLOAD_DIR), filename)
+    """Serve the main single-page application."""
+    _ensure_built()
+    if not (DIST_DIR / APP_HTML).exists():
+        abort(404, description="Web app not built. Run: python tools/build.py")
+    resp = send_from_directory(str(DIST_DIR), APP_HTML)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +572,10 @@ def upload_file():
     file_bytes = file.read()
 
     try:
-        if filename.endswith((".xlsx", ".xls")):
+        if filename.endswith(".xls"):
+            return jsonify({"error": "legacy_xls",
+                            "message": "Legacy .xls is read in the browser."}), 415
+        if filename.endswith(".xlsx"):
             sheet = request.form.get("sheet") or request.args.get("sheet")
             result = _parse_excel(file_bytes, file.filename, sheet_name=sheet)
         elif filename.endswith(".csv"):
@@ -594,7 +678,7 @@ def _build_excel(payload):
         excel_row = row_idx_0 + header_row_idx + 1
         for col_idx_0, value in enumerate(row):
             col_idx = col_idx_0 + 1
-            cell = ws.cell(row=excel_row, column=col_idx, value=value)
+            cell = ws.cell(row=excel_row, column=col_idx, value=_excel_value(value))
             cell.border = thin_border
 
             cf_key = f"{row_idx_0}:{col_idx_0}"
@@ -622,7 +706,7 @@ def _build_excel(payload):
                 cell.fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
 
             # Alignment
-            align = cell_alignments.get(cf_key, "left")
+            align = cell_alignments.get(cf_key, "right" if isinstance(cell.value, (int, float)) else "left")
             wrap = bool(cell_wraps.get(cf_key))
             cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=wrap)
 
@@ -925,7 +1009,7 @@ def _build_pdf(payload):
 
     elements.append(Spacer(1, 3 * mm))
     elements.append(Paragraph(
-        "Generated by Stellura (स्टेल्यूरा)  |  Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police",
+        "Generated by Stellura (स्टेल्यूरा)  |  Developed by Neeraj Purohit, purohitneeraj87@gmail.com",
         footer_style,
     ))
 
@@ -1179,7 +1263,7 @@ def ollama_status():
         r = req.get(f"{OLLAMA_BASE}/api/tags", timeout=3)
         if r.status_code == 200:
             models = [m["name"] for m in r.json().get("models", [])]
-            active = next((m for m in models if "gemma" in m.lower()), models[0] if models else OLLAMA_MODEL)
+            active = OLLAMA_MODEL if OLLAMA_MODEL in models else (models[0] if models else OLLAMA_MODEL)
             return jsonify({"status": "running", "model": active, "models": models})
         return jsonify({"status": "error"}), 502
     except Exception:
@@ -1990,7 +2074,7 @@ def _build_report_pdf(payload):
         cv.setFont(BF, 7.5)
         cv.drawCentredString(PW / 2, 8 * mm,
             "Generated by Stellura (स्टेल्यूरा)  •  "
-            "Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police")
+            "Developed by Neeraj Purohit, purohitneeraj87@gmail.com")
         cv.drawCentredString(PW / 2, 3.5 * mm,
                              f"Report Generated: {gen_date}, {gen_time}")
 
@@ -2111,7 +2195,7 @@ def _build_report_pdf(payload):
         cv.setFillColor(RC.HexColor(MUTED))
         cv.drawCentredString(PW / 2, MG + 2 * mm,
             "Stellura (स्टेल्यूरा)  •  "
-            "Developed by Neeraj Purohit, Senior Assistant, Rajasthan Police")
+            "Developed by Neeraj Purohit, purohitneeraj87@gmail.com")
         cv.drawRightString(PW - MG, MG + 2 * mm,
                            f"{'पृष्ठ' if is_hi else 'Page'} {doc.page}")
 
@@ -2475,8 +2559,8 @@ def _build_report_pdf(payload):
                    ParagraphStyle("BS", fontName=BF, fontSize=9,
                                   textColor=RC.HexColor(MUTED))),
          ""],
-        [Paragraph("Developed by: Neeraj Purohit, Senior Assistant,"
-                   " Rajasthan Police",
+        [Paragraph("Developed by: Neeraj Purohit, "
+                   "purohitneeraj87@gmail.com",
                    ParagraphStyle("BD", fontName=BF, fontSize=9,
                                   textColor=RC.HexColor(DARK))),
          ""],
@@ -2536,8 +2620,8 @@ def health_check():
     """Simple health-check endpoint."""
     return jsonify({
         "status": "ok",
-        "server": "Stellura — Data Vision Studio v2.1",
-        "version": "2.1.0",
+        "server": "Stellura — Data Vision Studio v2.3",
+        "version": "2.3.0",
         "port": PORT,
         "timestamp": datetime.now().isoformat(),
         "features": ["excel_export", "pdf_export", "dashboard_html_export", "async_export", "hindi_support", "watermarks", "cell_formatting"]
@@ -2645,7 +2729,7 @@ def not_found(e):
 
 @app.errorhandler(413)
 def too_large(e):
-    return jsonify({"error": "File too large. Maximum upload size is 50 MB."}), 413
+    return jsonify({"error": "File too large for this PC setting (STELLURA_MAX_UPLOAD_MB)."}), 413
 
 
 @app.errorhandler(500)
@@ -2691,12 +2775,12 @@ def _open_browser():
 if __name__ == "__main__":
     print()
     print("  +------------------------------------------------------+")
-    print("  |   Stellura (स्टेल्यूरा) v2.2 - Backend          |")
+    print("  |   Stellura (स्टेल्यूरा) v2.3 - Backend          |")
     print("  |   Intelligent Data Analyzer — Made in India          |")
     print("  +------------------------------------------------------+")
-    print(f"  |  Server  : http://localhost:{PORT}                      |")
+    print(f"  |  Server  : http://localhost:{PORT}  (this PC only)       |")
     print(f"  |  AI Model: {OLLAMA_MODEL} (local, offline)        |")
-    print("  |  Dev: Neeraj Purohit, Sr. Asst, Rajasthan Police     |")
+    print("  |  Dev: Neeraj Purohit, purohitneeraj87@gmail.com      |")
     print("  |  Press Ctrl+C to stop                                |")
     print("  +------------------------------------------------------+")
     print()
@@ -2707,4 +2791,13 @@ if __name__ == "__main__":
     # Open browser in background thread
     threading.Thread(target=_open_browser, daemon=True).start()
 
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    # Record our own PID so stop.bat stops only this app, never other programs.
+    try:
+        PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError as exc:
+        print(f"  [WARN] Could not write PID file: {exc}")
+    import atexit
+    atexit.register(lambda: PID_FILE.unlink(missing_ok=True))
+
+    app.run(host=HOST, port=PORT, debug=False)

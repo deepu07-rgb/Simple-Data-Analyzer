@@ -1,0 +1,289 @@
+// =====================================================================
+//  MERGE ANYTHING  /  सभी फ़ाइलें एक करें
+//  Stacks many files whose column names differ slightly ("थाना", "Police Station", "PS Name").
+//  Matching is rule-based and explainable: exact name, Hindi-English office glossary, then spelling
+//  similarity. Every match carries a confidence; weak ones are shown for review, never silently used.
+//
+//    STL.merge.plan(files)                 -> { headers, maps:[[{src,tgt,score,level,reason}]] }
+//    STL.merge.build(files, plan, opts)    -> { headers, rows, report }
+//    STL.merge.parseDelimited(text)        -> grid
+// =====================================================================
+(function (root) {
+  'use strict';
+  var STL = root.STL = root.STL || {};
+  var M = STL.merge = {};
+
+  function s(v) { return v == null ? '' : String(v); }
+
+  // ---------------------------------------------------------------- names
+  function normalize(h) {
+    var t = s(h).normalize ? s(h).normalize('NFC') : s(h);
+    t = t.replace(/[​-‍﻿]/g, '').toLowerCase();
+    t = t.replace(/[०-९]/g, function (c) { return String(c.charCodeAt(0) - 0x0966); });
+    t = t.replace(/['\u2019\u2018`\u00B4]/g, '');                       // father's -> fathers
+    t = t.replace(/[._\-\/\\()\[\]:;,|*#]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return t.split(' ').map(function (w) { return ABBR[w] || w; }).join(' ');          // "Reg. No" and "Registration Number" are the same
+  }
+  var ABBR = { reg: 'registration', regn: 'registration', dt: 'date', amt: 'amount', dept: 'department', no: 'number', nos: 'number', ref: 'reference', mob: 'mobile', addr: 'address', desig: 'designation', qty: 'quantity', nm: 'name' };
+
+  // Groups of names that mean the same thing in an Indian government office.
+  var GLOSSARY = [
+    ['sr no', 'serial no', 'serial number', 's no', 'sl no', 'sno', 'क्र सं', 'क्रसं', 'क्रमांक', 'क्रम संख्या', 'क्र', 'सीरियल नंबर'],
+    ['district', 'dist', 'जिला', 'जिले का नाम', 'जिला नाम', 'ज़िला', 'district name'],
+    ['police station', 'ps', 'p s', 'ps name', 'thana', 'थाना', 'थाने का नाम', 'थाना नाम', 'पुलिस थाना', 'police station name'],
+    ['date', 'dt', 'दिनांक', 'तारीख', 'तिथि', 'दिनाँक'],
+    ['name', 'नाम', 'नाम का विवरण', 'full name', 'पूरा नाम'],
+    ['father name', 'father s name', 'fathers name', 'पिता का नाम', 'पिता नाम', 'पिता', 's o', 'father', 'fathers husbands name', 'father husband name', 'father husband', 'father or husband name', 'पिता पति का नाम'],
+    ['age', 'आयु', 'उम्र', 'उमर'],
+    ['gender', 'sex', 'लिंग'],
+    ['amount', 'amt', 'राशि', 'रकम', 'धनराशि', 'रुपये', 'rs', 'rupees', 'amount involved', 'amount involved rs', 'amount claimed', 'claim amount', 'विवादित राशि'],
+    ['total', 'कुल', 'योग', 'जोड़', 'grand total', 'कुल योग'],
+    ['case no', 'case number', 'प्रकरण संख्या', 'प्रकरण क्रमांक', 'मुकदमा संख्या', 'fir no', 'fir number', 'एफआईआर संख्या', 'एफआईआर नंबर', 'एफ आई आर संख्या'],
+    ['status', 'स्थिति', 'वर्तमान स्थिति', 'current status', 'case status', 'stage', 'state of case', 'progress', 'प्रगति', 'वर्तमान अवस्था', 'अवस्था'],
+    ['address', 'पता', 'पते', 'addr'],
+    ['mobile', 'mobile no', 'mobile number', 'phone', 'phone no', 'contact', 'contact no', 'मोबाइल', 'मोबाइल नंबर', 'मोबाइल संख्या', 'फोन', 'फ़ोन', 'संपर्क', 'दूरभाष'],
+    ['designation', 'post', 'rank', 'पद', 'पदनाम', 'पद नाम'],
+    ['department', 'dept', 'विभाग', 'विभाग का नाम'],
+    ['salary', 'pay', 'वेतन', 'मासिक वेतन', 'basic pay', 'मूल वेतन'],
+    ['village', 'gram', 'ग्राम', 'गाँव', 'गांव'],
+    ['tehsil', 'tahsil', 'तहसील', 'taluka', 'taluk', 'तालुका'],
+    ['block', 'ब्लॉक', 'खंड', 'विकास खंड', 'panchayat samiti', 'पंचायत समिति', 'development block'],
+    ['remarks', 'action taken', 'action taken report', 'atr', 'reply', 'response', 'disposal remarks', 'कृत कार्यवाही', 'की गई कार्यवाही', 'उत्तर', 'remark', 'टिप्पणी', 'रिमार्क', 'विशेष', 'अभ्युक्ति', 'नोट', 'note', 'notes'],
+    ['year', 'वर्ष', 'साल'],
+    ['month', 'माह', 'महीना', 'मास'],
+    ['pending', 'लंबित', 'लम्बित', 'पेंडिंग', 'pendency'],
+    ['disposed', 'disposed off', 'निस्तारित', 'निस्तारण', 'निपटारा'],
+    ['registered', 'दर्ज', 'पंजीकृत', 'registered cases'],
+    ['male', 'पुरुष'], ['female', 'महिला'],
+    ['category', 'श्रेणी', 'वर्ग', 'cat'],
+    ['section', 'धारा', 'sections', 'ipc section'],
+    ['complainant', 'परिवादी', 'शिकायतकर्ता', 'प्रार्थी', 'applicant', 'petitioner', 'grievant', 'informant', 'name of complainant', 'complainant name', 'आवेदक', 'आवेदक का नाम', 'applicant name', 'name of applicant', 'citizen', 'नागरिक का नाम'],
+    ['accused', 'आरोपी', 'अभियुक्त'],
+    ['beneficiary', 'लाभार्थी', 'हितग्राही'],
+    ['scheme', 'योजना', 'yojana'],
+    ['email', 'e mail', 'ईमेल', 'mail id'],
+    ['employee id', 'emp id', 'emp no', 'employee no', 'कर्मचारी क्रमांक', 'कर्मचारी आईडी', 'पीपीओ संख्या'],
+    ['quarter', 'तिमाही', 'qtr'],
+    ['budget', 'बजट', 'स्वीकृत राशि', 'sanctioned amount'],
+    ['expenditure', 'व्यय', 'खर्च', 'expense', 'व्यय राशि'],
+    ['balance', 'शेष', 'शेष राशि'],
+    ['aadhaar', 'aadhar', 'आधार', 'आधार संख्या', 'आधार नंबर'],
+    ['pan', 'pan no', 'पैन'],
+    ['registration number', 'registration', 'पंजीयन संख्या', 'पंजीकरण क्रमांक', 'पंजीयन क्रमांक', 'reg number', 'complaint number', 'application number'],
+    ['date of registration', 'registration date', 'पंजीयन दिनांक', 'पंजीकरण दिनांक', 'date of filing', 'filing date'],
+    ['date of disposal', 'disposal date', 'निस्तारण दिनांक', 'निस्तारण की तिथि', 'date of closure', 'closure date'],
+    ['officer', 'handled by', 'dealing officer', 'dealing assistant', 'concerned official', 'official', 'pointer', 'attended by', 'officer assigned', 'in charge', 'incharge', 'प्रभारी', 'कार्यवाहक अधिकारी', 'assigned officer', 'concerned officer', 'अधिकारी', 'संबंधित अधिकारी'],
+    ['rating', 'satisfaction', 'feedback rating', 'संतुष्टि', 'रेटिंग', 'citizen rating', 'feedback score', 'score'],
+    ['subject', 'nature of complaint', 'nature of grievance', 'grievance type', 'complaint type', 'issue', 'topic', 'विषय', 'शिकायत का प्रकार', 'शिकायत का विषय', 'category of grievance'],
+    ['ward', 'वार्ड', 'locality', 'mohalla', 'मोहल्ला', 'colony', 'कॉलोनी'],
+    ['cost', 'estimated cost', 'project cost', 'लागत', 'अनुमानित लागत']
+  ];
+  var ALIAS = {};
+  GLOSSARY.forEach(function (g, i) { g.forEach(function (a) { var n = normalize(a); if (n && ALIAS[n] === undefined) ALIAS[n] = i; }); });
+  function groupOf(norm) {
+    if (ALIAS[norm] !== undefined) return ALIAS[norm];
+    return null;
+  }
+
+  // ---------------------------------------------------------------- similarity
+  function trigrams(t) { var p = ' ' + t + ' ', set = {}, n = 0; for (var i = 0; i < p.length - 2; i++) { var g = p.substr(i, 3); if (!set[g]) { set[g] = 1; n++; } } return { set: set, n: n }; }
+  function jaccardTri(a, b) {
+    var A = trigrams(a), B = trigrams(b), inter = 0;
+    Object.keys(A.set).forEach(function (g) { if (B.set[g]) inter++; });
+    var uni = A.n + B.n - inter; return uni ? inter / uni : 0;
+  }
+  function lev(a, b) {
+    if (a === b) return 0; if (!a.length) return b.length; if (!b.length) return a.length;
+    var prev = [], cur = [], i, j;
+    for (j = 0; j <= b.length; j++) prev[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      cur[0] = i;
+      for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      var t = prev; prev = cur; cur = t;
+    }
+    return prev[b.length];
+  }
+  function tokenOverlap(a, b) {
+    var ta = a.split(' ').filter(Boolean), tb = b.split(' ').filter(Boolean);
+    if (!ta.length || !tb.length) return 0;
+    var inter = ta.filter(function (x) { return tb.indexOf(x) >= 0; }).length;
+    return inter / Math.max(ta.length, tb.length);
+  }
+
+  function numericShare(values) {
+    var n = 0, num = 0;
+    for (var i = 0; i < values.length && n < 200; i++) {
+      var v = s(values[i]).trim(); if (!v) continue; n++;
+      if (!isNaN(Number(v.replace(/,/g, '')))) num++;
+    }
+    return n ? num / n : null;
+  }
+
+  // score two column names (and optionally their sample values) -> {score, reason}
+  function score(nameA, nameB, valsA, valsB) {
+    var a = normalize(nameA), b = normalize(nameB);
+    if (!a || !b) return { score: 0, reason: 'blank' };
+    var out;
+    if (a === b) out = { score: 1, reason: 'same' };
+    else {
+      var ga = groupOf(a), gb = groupOf(b);
+      if (ga !== null && ga === gb) out = { score: 0.95, reason: 'glossary' };
+      else if (ga !== null && gb !== null && ga !== gb) {                                            // known, different meanings
+        var wa = a.split(' '), wb = b.split(' '), sh = wa.length <= wb.length ? wa : wb, lo = wa.length <= wb.length ? wb : wa;
+        out = (sh.length === 1 && sh.length < lo.length && lo.indexOf(sh[0]) >= 0 && sh[0].length >= 4) ? { score: 0.72, reason: 'part' } : { score: 0, reason: 'different' };   // "Date" may be "Date of Registration"
+      }
+      else {
+        var sim = Math.max(jaccardTri(a, b), 1 - lev(a, b) / Math.max(a.length, b.length), 0.9 * tokenOverlap(a, b));
+        if (a.indexOf(b) >= 0 || b.indexOf(a) >= 0) sim = Math.max(sim, 0.72);
+        out = { score: Math.min(sim, 0.93), reason: 'similar' };
+      }
+    }
+    // values must be compatible: a number column does not become a name column
+    if (valsA && valsB && out.score > 0) {
+      var na = numericShare(valsA), nb = numericShare(valsB);
+      if (na !== null && nb !== null && Math.abs(na - nb) > 0.7) { out.score *= 0.4; out.reason += '+type'; }
+    }
+    return out;
+  }
+  M.normalize = normalize; M.score = score; M.groupOf = groupOf;
+
+  // ---------------------------------------------------------------- what is inside the column
+  // Two columns with no word in common can still hold the same thing: the same registration-number pattern, the same set of
+  // values (Status: Pending / Disposed), dates in the same period, numbers of the same size. Used only when the names do not decide.
+  function shapeOf(v) { return s(v).trim().replace(/[A-Za-z]+/g, 'A').replace(/[०-९0-9]+/g, '9').replace(/\s+/g, ' '); }
+  var DATE_RE = /^(\d{4}-\d{2}-\d{2}|\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}|\d{1,2}[ \-][A-Za-z]{3,9}[ \-,]+\d{2,4})/;
+  function profile(vals) {
+    var nz = vals.map(function (v) { return s(v).trim(); }).filter(Boolean), n = nz.length, p = { n: n };
+    if (n < 5) return p;
+    var distinct = {}, shapes = {}, dates = 0, nums = 0, letters = 0, dev = 0, k = 0, d = 0;
+    nz.forEach(function (v) { if (!distinct[v]) { distinct[v] = 1; d++; } var sh = shapeOf(v); shapes[sh] = (shapes[sh] || 0) + 1; if (DATE_RE.test(v)) dates++; else if (!isNaN(Number(v.replace(/,/g, '')))) nums++; if (/[A-Za-z]/.test(v)) letters++; if (/[ऀ-ॿ]/.test(v)) dev++; });
+    p.d = d; p.dates = dates / n; p.nums = nums / n; p.text = letters / n; p.dev = dev / n; p.cat = d <= Math.max(30, n * 0.1) ? Object.keys(distinct) : null;
+    var best = ''; Object.keys(shapes).forEach(function (x) { if (!best || shapes[x] > shapes[best]) best = x; }); p.shape = best; p.shapeShare = shapes[best] / n; p.unique = d / n;
+    if (p.nums > 0.8) { var xs = nz.map(function (v) { return Number(v.replace(/,/g, '')); }).filter(function (x) { return isFinite(x); }).sort(function (a, b) { return a - b; }); p.med = xs[Math.floor(xs.length / 2)]; p.lo = xs[Math.floor(xs.length * 0.05)]; p.hi = xs[Math.floor(xs.length * 0.95)]; }
+    if (p.dates > 0.8) { var ts = nz.map(function (v) { var m = /^(\d{4})-(\d{2})/.exec(v); return m ? +m[1] * 12 + +m[2] : null; }).filter(function (x) { return x !== null; }).sort(function (a, b) { return a - b; }); if (ts.length) { p.t0 = ts[0]; p.t1 = ts[ts.length - 1]; } }
+    return p;
+  }
+  function conceptKey(v) { var L = STL.lex; return L ? L.concept(s(v).toLowerCase().replace(/\s+/g, ' ').trim()) : s(v).toLowerCase().trim(); }
+  // -> { score, reason } or null.  Never above 0.88: a match from content alone is shown for checking, not applied silently.
+  function byValues(pa, pb) {
+    if (!pa || !pb || pa.n < 5 || pb.n < 5) return null;
+    if (pa.shapeShare >= 0.8 && pb.shapeShare >= 0.8 && pa.shape === pb.shape && pa.unique > 0.7 && pb.unique > 0.7 && /[A-Za-z]/.test(pa.shape) && /9/.test(pa.shape) && pa.shape.length >= 5) return { score: 0.86, reason: 'values:code' };   // GRV/2025/00012
+    if (pa.cat && pb.cat && pa.cat.length >= 2 && pb.cat.length >= 2) {
+      var A = {}, B = {}; pa.cat.forEach(function (v) { A[conceptKey(v)] = 1; }); pb.cat.forEach(function (v) { B[conceptKey(v)] = 1; });
+      var ka = Object.keys(A), kb = Object.keys(B), inter = ka.filter(function (k) { return B[k]; }).length, small = Math.min(ka.length, kb.length);
+      if (small >= 2 && inter / small >= 0.6 && inter / (ka.length + kb.length - inter) >= 0.4) return { score: 0.8 + 0.06 * (inter / small), reason: 'values:set' };
+    }
+    if (pa.dates > 0.8 && pb.dates > 0.8 && pa.t0 !== undefined && pb.t0 !== undefined && Math.abs(pa.t0 - pb.t0) <= 24 && Math.abs(pa.t1 - pb.t1) <= 24) return { score: 0.72, reason: 'values:dates' };
+    if (pa.nums > 0.8 && pb.nums > 0.8 && pa.med > 0 && pb.med > 0 && pa.d > 12 && pb.d > 12) { var r = pa.med / pb.med; if (r > 0.6 && r < 1.67 && pa.hi / pb.hi > 0.5 && pa.hi / pb.hi < 2) return { score: 0.72, reason: 'values:numbers' }; }
+    return null;
+  }
+  M.profile = profile; M.byValues = byValues;
+
+  // ---------------------------------------------------------------- planning
+  var AUTO = 0.9, REVIEW = 0.7;
+  // "Location / Department / Block": the group words are not part of the name. Use the last part when it is unique in its file.
+  function scoringNames(headers) {
+    var grouped = headers.filter(function (h) { return /\s[\/▸>|]\s/.test(s(h)); }).length;
+    if (grouped < 0.5 * headers.length) return headers.map(s);                         // "Father's / Husband's Name" is not a group; a two-row header makes most names grouped
+    var leaves = headers.map(function (h) { var p = s(h).split(/\s+[\/▸>|]\s+/); return p.length > 1 ? p[p.length - 1].trim() : s(h); }), cnt = {};
+    leaves.forEach(function (l) { var k = normalize(l); cnt[k] = (cnt[k] || 0) + 1; });
+    return headers.map(function (h, i) { return cnt[normalize(leaves[i])] === 1 && leaves[i] ? leaves[i] : s(h); });
+  }
+  function column(file, i, max) { var v = [], n = Math.min(file.rows.length, max || 200), step = Math.max(1, Math.floor(file.rows.length / n)); for (var r = 0; r < file.rows.length && v.length < n; r += (max ? step : 1)) v.push(file.rows[r][i]); return v; }
+
+  // files: [{name, headers, rows}] (already cleaned: header row first). Returns the combined header list and,
+  // for every file, which of its columns goes where.
+  M.plan = function (files) {
+    var headers = [], tnames = [], samples = [], maps = [], profs = [];
+    files.forEach(function (f, fi) {
+      var pairs = [], sn = scoringNames(f.headers), fp = f.headers.map(function (h, i) { return fi ? profile(column(f, i, 1500)) : null; });
+      f.headers.forEach(function (h, i) {
+        headers.forEach(function (t, j) {
+          var sc = score(sn[i], tnames[j], column(f, i), samples[j]), L = STL.lex;
+          if (sc.score < REVIEW && L && L.columnLearned(sn[i], tnames[j])) sc = { score: 0.95, reason: 'learned' };           // the person said so once
+          else if (sc.score < REVIEW && fp[i] && profs[j] && sc.reason !== 'different' && sc.reason.indexOf('+type') < 0) {
+            var bv = byValues(fp[i], profs[j]); if (bv && bv.score > sc.score) sc = bv;
+          }
+          if (sc.score >= REVIEW) pairs.push({ src: i, tgt: j, score: sc.score, reason: sc.reason });
+        });
+      });
+      pairs.sort(function (x, y) { return y.score - x.score; });
+      var usedSrc = {}, usedTgt = {}, chosen = {};
+      pairs.forEach(function (p) {
+        if (usedSrc[p.src] || usedTgt[p.tgt]) return;
+        usedSrc[p.src] = usedTgt[p.tgt] = true; chosen[p.src] = p;
+      });
+      var map = [];
+      f.headers.forEach(function (h, i) {
+        if (isBlankHeader(h) && !hasData(f, i)) return;                         // empty column: skip
+        var p = chosen[i];
+        if (p) {
+          map.push({ src: i, tgt: p.tgt, score: p.score, level: p.score >= AUTO ? 'auto' : 'review', reason: p.reason });
+        } else {
+          headers.push(isBlankHeader(h) ? 'Column ' + (headers.length + 1) : s(sn[i]).trim());
+          tnames.push(isBlankHeader(h) ? 'Column ' + (headers.length) : sn[i]);
+          samples.push(column(f, i)); profs.push(profile(column(f, i, 1500)));
+          map.push({ src: i, tgt: headers.length - 1, score: fi === 0 ? 1 : 0, level: fi === 0 ? 'first' : 'new', reason: fi === 0 ? 'first' : 'new' });
+        }
+      });
+      maps.push(map);
+    });
+    return { headers: headers, maps: maps };
+  };
+  function isBlankHeader(h) { return s(h).trim() === '' || /^Column \d+$/.test(s(h)); }
+  function hasData(f, i) { for (var r = 0; r < f.rows.length; r++) if (s(f.rows[r][i]).trim() !== '') return true; return false; }
+
+  // ---------------------------------------------------------------- building
+  // opts: { sourceColumn: 'Source file', dropDuplicates: bool }
+  M.build = function (files, plan, opts) {
+    opts = opts || {};
+    var headers = plan.headers.slice(), out = [], report = { files: [], duplicates: 0, rows: 0 };
+    var seen = {}, srcCol = opts.sourceColumn ? headers.length : -1;
+    if (srcCol >= 0) headers.push(opts.sourceColumn);
+    files.forEach(function (f, fi) {
+      var map = plan.maps[fi], n = 0, dup = 0, unmatched = [];
+      f.headers.forEach(function (h, i) { if (!map.some(function (m) { return m.src === i && m.tgt >= 0; }) && !isBlankHeader(h)) unmatched.push(s(h)); });
+      f.rows.forEach(function (row) {
+        var o = new Array(headers.length);
+        for (var k = 0; k < o.length; k++) o[k] = '';
+        map.forEach(function (m) { if (m.tgt >= 0) o[m.tgt] = s(row[m.src]); });
+        if (opts.dropDuplicates) {
+          var key = o.slice(0, plan.headers.length).join('\u0001');
+          if (seen[key]) { dup++; report.duplicates++; return; }
+          seen[key] = 1;
+        }
+        if (srcCol >= 0) o[srcCol] = f.name;
+        out.push(o); n++;
+      });
+      report.files.push({ name: f.name, rows: n, duplicatesDropped: dup, unmatched: unmatched,
+                          matched: map.filter(function (m) { return m.tgt >= 0; }).length,
+                          review: map.filter(function (m) { return m.level === 'review'; }).length });
+    });
+    report.rows = out.length;
+    return { headers: headers, rows: out, report: report };
+  };
+
+  // ---------------------------------------------------------------- delimited text
+  M.parseDelimited = function (text) {
+    text = s(text).replace(/^﻿/, '');
+    var first = text.split(/\r?\n/, 1)[0] || '';
+    var counts = { ',': 0, '\t': 0, ';': 0, '|': 0 };
+    Object.keys(counts).forEach(function (d) { counts[d] = first.split(d).length - 1; });
+    var sep = ',', best = counts[','];
+    Object.keys(counts).forEach(function (d) { if (counts[d] > best) { best = counts[d]; sep = d; } });
+    var rows = [], row = [], cell = '', q = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === sep) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); cell = ''; rows.push(row); row = [];
+      } else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows.filter(function (r) { return r.some(function (c) { return c.trim() !== ''; }); });
+  };
+})(typeof window !== 'undefined' ? window : globalThis);

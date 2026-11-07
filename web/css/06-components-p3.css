@@ -1,0 +1,349 @@
+/* ===== end P2 ============================================================ */
+/* ===== P3 — Component Design-System Pass ================================ */
+
+/* --- Token aliases for P3 (vars used below, fallbacks for browsers
+       that didn't inherit from the Batch-1 cosmic block) --- */
+:root{
+  --p3-primary:var(--dd-primary,#ddb8ff);
+  --p3-secondary:var(--dd-secondary,#4cd7f6);
+  --p3-glass:var(--glass-bg,rgba(22,17,27,.62));
+  --p3-border:var(--glass-border,rgba(255,255,255,.10));
+  --p3-surface:var(--on-surface,#eadfed);
+  --p3-muted:var(--on-surface-muted,#b6a9c4);
+  --p3-radius-input:10px;
+  --p3-radius-card:16px;
+  --p3-radius-modal:18px;
+  --p3-focus-shadow:0 0 0 3px rgba(221,184,255,.20);
+  --p3-focus-border:var(--dd-primary,#ddb8ff)
+}
+
+/* ── Modals: unified glass shell ─────────────────────────────────────── */
+.modal-overlay{
+  background:rgba(5,8,22,.70);
+  backdrop-filter:blur(18px) saturate(120%);
+  -webkit-backdrop-filter:blur(18px) saturate(120%)
+}
+.modal{
+  background:var(--p3-glass)!important;
+  backdrop-filter:blur(40px) saturate(180%)!important;
+  -webkit-backdrop-filter:blur(40px) saturate(180%)!important;
+  border:1px solid rgba(221,184,255,.22)!important;
+  border-radius:var(--p3-radius-modal)!important;
+  box-shadow:0 32px 80px rgba(0,0,0,.55),
+             0 0 0 1px rgba(221,184,255,.06),
+             inset 0 1px 0 rgba(255,255,255,.06)!important;
+  color:var(--p3-surface)!important
+}
+.modal h3{
+  font-family:'Sora','Inter',sans-serif!important;
+  font-size:16px!important;font-weight:700!important;
+  color:var(--p3-surface)!important;letter-spacing:-.2px
+}
+.modal h3 svg{color:var(--p3-primary)!important}
+.modal .modal-actions{
+  border-top:1px solid rgba(221,184,255,.10)!important;
+  padding-top:14px!important;margin-top:18px!important
+}
+.modal label{color:var(--p3-muted)!important;font-family:'Inter',sans-serif!important}
+
+/* ── Panels: glass right-drawer ─────────────────────────────────────── */
+.panel{
+  background:var(--p3-glass)!important;
+  backdrop-filter:blur(36px) saturate(160%)!important;
+  -webkit-backdrop-filter:blur(36px) saturate(160%)!important;
+  border-left:1px solid rgba(221,184,255,.18)!important;
+  box-shadow:-8px 0 48px rgba(0,0,0,.40),
+             0 0 0 1px rgba(221,184,255,.05)!important
+}
+.panel-header{
+  background:transparent!important;
+  border-bottom:1px solid rgba(221,184,255,.12)!important;
+  padding:12px 16px!important
+}
+.panel-header h3{
+  font-family:'Sora','Inter',sans-serif!important;
+  font-size:14px!important;color:var(--p3-surface)!important
+}
+.panel-header h3 svg{color:var(--p3-primary)!important}
+.panel-close{
+  border-radius:8px!important;
+  color:var(--p3-muted)!important;border:1px solid transparent!important
+}
+.panel-close:hover{
+  background:rgba(244,114,182,.12)!important;
+  color:#f472b6!important;border-color:rgba(244,114,182,.25)!important
+}
+.panel-close:focus-visible{outline:2px solid var(--p3-primary)!important;outline-offset:2px}
+.panel-body{padding:14px!important}
+.panel-section-title{
+  font-family:'Inter',sans-serif!important;
+  color:var(--p3-muted)!important
+}
+.panel-body label{
+  font-family:'Inter',sans-serif!important;
+  color:var(--p3-muted)!important
+}
+
+/* ── Inputs, selects, textareas: glass style (panel + modal + guided) ── */
+.panel-body select,
+.panel-body input[type="text"],
+.panel-body input[type="number"],
+.panel-body input[type="email"],
+.panel-body input[type="password"],
+.panel-body textarea,
+.modal select,
+.modal input[type="text"],
+.modal input[type="number"],
+.guided-field input,
+.guided-field select,
+.table-header select,
+.table-header input{
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(221,184,255,.18)!important;
+  border-radius:var(--p3-radius-input)!important;
+  color:var(--p3-surface)!important;
+  font-family:'Inter',sans-serif!important;
+  transition:border-color .15s,box-shadow .15s!important
+}
+.panel-body select:focus,
+.panel-body input:focus,
+.panel-body textarea:focus,
+.modal select:focus,
+.modal input:focus,
+.guided-field input:focus,
+.guided-field select:focus,
+.table-header select:focus,
+.table-header input:focus{
+  outline:none!important;
+  border-color:var(--p3-focus-border)!important;
+  box-shadow:var(--p3-focus-shadow)!important;
+  background:rgba(221,184,255,.06)!important
+}
+[data-theme="light"] .panel-body select,
+[data-theme="light"] .panel-body input,
+[data-theme="light"] .panel-body textarea,
+[data-theme="light"] .modal select,
+[data-theme="light"] .modal input,
+[data-theme="light"] .guided-field input,
+[data-theme="light"] .guided-field select{
+  background:rgba(255,255,255,.7)!important;
+  border-color:rgba(126,34,206,.18)!important;
+  color:#102033!important
+}
+
+/* ── Toasts: cosmic glass ──────────────────────────────────────────── */
+#toast-container{z-index:9999}
+.toast{
+  background:var(--p3-glass)!important;
+  backdrop-filter:blur(36px) saturate(160%)!important;
+  -webkit-backdrop-filter:blur(36px) saturate(160%)!important;
+  border:1px solid rgba(221,184,255,.18)!important;
+  border-radius:12px!important;
+  color:var(--p3-surface)!important;
+  font-family:'Inter',sans-serif!important;
+  font-size:12.5px!important;
+  box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px rgba(221,184,255,.06)!important
+}
+.toast.success{border-left:3px solid var(--success,#34d399)!important}
+.toast.error{border-left:3px solid #f472b6!important}
+.toast.info{border-left:3px solid var(--p3-secondary)!important}
+.toast.warning{border-left:3px solid #fbbf24!important}
+
+/* ── Fmt-buttons: cosmic hover/active ──────────────────────────────── */
+.fmt-btn{
+  border-radius:7px!important;
+  color:var(--p3-muted)!important;
+  font-family:'Inter',sans-serif!important;
+  transition:background .13s,border-color .13s,color .13s,box-shadow .13s!important
+}
+.fmt-btn:hover{
+  background:rgba(221,184,255,.10)!important;
+  border-color:rgba(221,184,255,.22)!important;
+  color:var(--p3-primary)!important;
+  box-shadow:none!important
+}
+.fmt-btn.active{
+  background:linear-gradient(120deg,rgba(221,184,255,.22),rgba(76,215,246,.12))!important;
+  color:var(--p3-primary)!important;
+  border-color:rgba(221,184,255,.40)!important;
+  box-shadow:0 0 8px rgba(221,184,255,.20)!important
+}
+.fmt-btn:focus-visible{outline:2px solid var(--p3-primary)!important;outline-offset:2px}
+
+/* ── Fmt-selects ───────────────────────────────────────────────────── */
+.fmt-select{
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(221,184,255,.14)!important;
+  border-radius:8px!important;
+  color:var(--p3-surface)!important;
+  font-family:'Inter',sans-serif!important;
+  transition:border-color .13s,box-shadow .13s!important
+}
+.fmt-select:hover{border-color:rgba(221,184,255,.30)!important}
+.fmt-select:focus{
+  outline:none!important;
+  border-color:var(--p3-primary)!important;
+  box-shadow:var(--p3-focus-shadow)!important
+}
+[data-theme="light"] .fmt-select{
+  background:rgba(255,255,255,.7)!important;
+  border-color:rgba(126,34,206,.18)!important;
+  color:#102033!important
+}
+
+/* ── Formula bar: cosmic ───────────────────────────────────────────── */
+#formula-bar label{
+  font-family:'Sora',Georgia,serif!important;
+  font-style:normal!important;font-size:15px!important;
+  color:var(--p3-secondary)!important;
+  background:rgba(76,215,246,.08)!important;
+  border:1px solid rgba(76,215,246,.20)!important;
+  border-radius:7px!important;
+  padding:0 8px!important;height:26px!important
+}
+#formula-bar input{
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(221,184,255,.15)!important;
+  border-radius:var(--p3-radius-input)!important;
+  color:var(--p3-surface)!important;
+  font-family:'Consolas','Courier New',monospace!important;
+  transition:border-color .15s,box-shadow .15s!important
+}
+#formula-bar input:focus{
+  border-color:var(--p3-primary)!important;
+  box-shadow:var(--p3-focus-shadow)!important;
+  background:rgba(221,184,255,.05)!important;
+  outline:none!important
+}
+[data-theme="light"] #formula-bar input{
+  background:rgba(255,255,255,.7)!important;
+  border-color:rgba(126,34,206,.18)!important;
+  color:#102033!important
+}
+
+/* ── Status bar: slim cosmic ───────────────────────────────────────── */
+#statusbar{
+  height:26px!important;
+  font-family:'Inter',sans-serif!important;
+  font-size:10.5px!important;
+  padding:0 16px!important;
+  border-top:1px solid rgba(221,184,255,.10)!important
+}
+#statusbar .status-credit{
+  font-family:'Inter',sans-serif!important;
+  font-size:10px!important;
+  opacity:.55!important;
+  color:var(--p3-muted)!important
+}
+[data-theme="dark"] #statusbar .status-credit{color:var(--p3-muted)!important}
+
+/* ── Context menu: glass ───────────────────────────────────────────── */
+#context-menu{
+  background:var(--p3-glass)!important;
+  backdrop-filter:blur(32px) saturate(160%)!important;
+  -webkit-backdrop-filter:blur(32px) saturate(160%)!important;
+  border:1px solid rgba(221,184,255,.18)!important;
+  border-radius:12px!important;
+  box-shadow:0 16px 48px rgba(0,0,0,.45),0 0 0 1px rgba(221,184,255,.06)!important;
+  padding:6px!important
+}
+#context-menu .ctx-item{
+  border-radius:8px!important;
+  font-family:'Inter',sans-serif!important;
+  font-size:12px!important;
+  color:var(--p3-surface)!important;
+  padding:7px 12px!important
+}
+#context-menu .ctx-item:hover{
+  background:rgba(221,184,255,.12)!important;
+  color:var(--p3-primary)!important
+}
+#context-menu .ctx-item:focus-visible{
+  outline:2px solid var(--p3-primary)!important;outline-offset:-2px
+}
+#context-menu .ctx-sep{
+  background:rgba(221,184,255,.10)!important;
+  margin:4px 6px!important
+}
+
+/* ── Col-draggable chips ───────────────────────────────────────────── */
+.col-draggable{
+  background:rgba(221,184,255,.07)!important;
+  border:1px solid rgba(221,184,255,.16)!important;
+  border-radius:8px!important;
+  color:var(--p3-surface)!important;
+  font-family:'Inter',sans-serif!important;
+  font-size:11.5px!important;
+  transition:background .13s,border-color .13s!important
+}
+.col-draggable:hover{
+  background:rgba(221,184,255,.14)!important;
+  border-color:rgba(221,184,255,.30)!important
+}
+
+/* ── Numfmt dropdown menu ──────────────────────────────────────────── */
+.numfmt-menu{
+  background:var(--p3-glass)!important;
+  backdrop-filter:blur(32px)!important;
+  -webkit-backdrop-filter:blur(32px)!important;
+  border:1px solid rgba(221,184,255,.18)!important;
+  border-radius:12px!important;
+  box-shadow:0 12px 36px rgba(0,0,0,.45)!important;
+  padding:5px!important
+}
+.numfmt-item{
+  border-radius:7px!important;
+  font-family:'Inter',sans-serif!important;
+  font-size:11.5px!important;
+  color:var(--p3-surface)!important;
+  padding:6px 11px!important
+}
+.numfmt-item:hover{
+  background:rgba(221,184,255,.12)!important;
+  color:var(--p3-primary)!important
+}
+
+/* ── Segmented lang-select ─────────────────────────────────────────── */
+#uiLanguageSelect{
+  height:26px!important;padding:0 8px!important;
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(221,184,255,.16)!important;
+  border-radius:8px!important;
+  color:var(--p3-surface)!important;
+  font:600 11px/1 'Inter',sans-serif!important;
+  cursor:pointer!important;
+  transition:border-color .13s!important
+}
+#uiLanguageSelect:hover{border-color:rgba(221,184,255,.30)!important}
+#uiLanguageSelect:focus{
+  outline:none!important;
+  border-color:var(--p3-primary)!important;
+  box-shadow:var(--p3-focus-shadow)!important
+}
+[data-theme="light"] #uiLanguageSelect{
+  background:rgba(255,255,255,.7)!important;
+  border-color:rgba(126,34,206,.18)!important;
+  color:#102033!important
+}
+
+/* ── Name-box (cell ref) ───────────────────────────────────────────── */
+.name-box{
+  min-width:64px!important;padding:0 10px!important;
+  height:26px!important;border-radius:8px!important;
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(221,184,255,.14)!important;
+  font:600 11.5px/26px 'Inter',sans-serif!important;
+  color:var(--p3-muted)!important;
+  display:flex!important;align-items:center!important;
+  white-space:nowrap!important;overflow:hidden!important;
+  text-overflow:ellipsis!important
+}
+
+/* ── Scrollbar: slim cosmic ───────────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:rgba(221,184,255,.18);border-radius:99px
+}
+::-webkit-scrollbar-thumb:hover{background:rgba(221,184,255,.32)}
+
