@@ -86,6 +86,7 @@
     smartOut: /\b(unusual|outliers?|anomal\w*|abnormal|suspicious|fishy)\b|असामान्य|संदिग्ध/i,
     smartFc: /\b(forecast|predict(ion)?|next (few )?(month|year|quarter)s?|projection)\b|पूर्वानुमान|अगले (कुछ )?महीने/i,
     smartCl: /\b(cluster(s|ing)?|segments?|segmentation|kinds of (customers|people|rows))\b|मिलते-जुलते समूह|समूहों में बाँट/i,
+    smartTag: /\b(sentiment|feelings?|tag(ging)?|categori[sz]e|classify)\b.*\b(comments?|text|feedback|complaints?|reviews?|remarks?)\b|\b(comments?|text|feedback|complaints?|reviews?)\b.*\b(sentiment|positive or negative|tag|categori[sz]e)\b|\bsentiment\b|भावना|टिप्पणी.*टैग/i,
     smartFn: /\b(summary of (the|this) (file|data)|what does (the|this) (file|data) say|key findings|insights?|overview of (the|this) (file|data))\b|फ़ाइल का सार|मुख्य निष्कर्ष/i,
     summary: /\bone row (for|per) (each|every)\b|\b(summari[sz]e|roll up)\b.*\b(per|by|for each)\b|\bper (person|customer|applicant|id)\b.*\b(summary|total|history)\b|हर (व्यक्ति|आईडी) की एक/i,
     merge: /\b(combine|merge|join|stack)\b.*\b(files?|sheets?|tables?)\b|फ़ाइलें जोड़/i,
@@ -158,6 +159,7 @@
     if (RX.smartOut.test(q)) return done({ intent: 'tool', tool: 'outliers', conf: 0.9, say: 'You want to find unusual values.' });
     if (RX.smartFc.test(q)) return done({ intent: 'tool', tool: 'forecast', conf: 0.9, say: 'You want a forecast of the next months.' });
     if (RX.smartCl.test(q)) return done({ intent: 'tool', tool: 'clusters', conf: 0.9, say: 'You want groups of similar rows.' });
+    if (RX.smartTag.test(q)) return done({ intent: 'tool', tool: 'tagging', conf: 0.9, say: 'You want to tag comments by topic and feeling.' });
     if (RX.smartFn.test(q)) return done({ intent: 'tool', tool: 'findings', conf: 0.9, say: 'You want the file described in words.' });
     if (RX.dups.test(q)) return done({ intent: 'tool', tool: 'dups', conf: 0.9, say: 'You want to find rows entered twice.' });
     if (RX.clean.test(q) && !cols.length) return done({ intent: 'tool', tool: 'clean', conf: 0.85, say: 'You want to tidy the file.' });
@@ -357,7 +359,7 @@
       } else if (I.intent === 'trend') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'line', spec: { x: I.x, ys: [{ col: I.y, fn: I.fn }], time: S.cat[I.x].date ? 'month' : undefined, sort: 'label' } }); });
       else if (I.intent === 'corr') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'scatter', spec: { xnum: I.x, ynum: I.y, trend: true } }); });
       else if (I.intent === 'dist') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'histogram', spec: { xnum: I.x } }); });
-      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: (S.big && STL.openRepeats ? STL.openRepeats : STL.openDuplicates), clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary, words: STL.openWords, outliers: STL.openOutliers, forecast: STL.openForecast, clusters: STL.openClusters, findings: STL.openFindings }[I.tool] || function () {})(); });
+      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: (S.big && STL.openRepeats ? STL.openRepeats : STL.openDuplicates), clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary, words: STL.openWords, outliers: STL.openOutliers, forecast: STL.openForecast, clusters: STL.openClusters, findings: STL.openFindings, tagging: STL.openTagging }[I.tool] || function () {})(); });
       else if (I.intent === 'missing') open(T('Show the checks', 'जाँच दिखाएँ'), function () { close(); STL.openDrivers({}); });
       else if (I.intent === 'pick_value') (I.choices || []).forEach(function (v) { open(v, function () { run(q + ' ' + v); }); });
       else if (I.intent === 'ask_y' && I.choices) I.choices.forEach(function (c) { open(c, function () { run(q + ' ' + c); }); });

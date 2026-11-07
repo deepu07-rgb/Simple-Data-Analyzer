@@ -1255,8 +1255,9 @@ class Engine:
         i me my mine we our us you your he she him her his hers it its they them their this that these those there here what which who whom when where why how
         not no nor can could will would shall should may might must just than then too very also about into over under again more most some any all each
         only own same such up down out off s t don im ive id ill dont didnt doesnt isnt wasnt cant couldnt wont wouldnt thats youre theyre one
-        because while after before during through between until though although both few other another many much even still yet ever get got let""".split())
-    WORDS_SQL = "list_distinct(string_split(trim(regexp_replace(lower({c}), '[^\\p{{L}}\\p{{N}}'']+', ' ', 'g')), ' '))"
+        because while after before during through between until though although both few other another many much even still yet ever get got let
+        है हैं था थी थे हो ही का की के को में से पर और भी एक यह वह कि जो तो ने भी है। हूँ हूं रहा रही रहे गया गई गए कर करें करना लिए इस उस जा जी""".split())
+    WORDS_SQL = "list_distinct(string_split(trim(regexp_replace(lower({c}), '[^\\p{{L}}\\p{{M}}\\p{{N}}'']+', ' ', 'g')), ' '))"
 
     # ------------------------------------------------------------------ unusual values
     def outliers(self, ds_id, col, by=None, k=3.5, limit=40, min_group=8, search=None, filters=None):
@@ -1331,6 +1332,90 @@ class Engine:
                         [f"length(trim(COALESCE({c}, ''))) AS s{len(have)}",
                          f"CASE WHEN trim(COALESCE({c}, '')) = '' THEN 0 ELSE len(string_split(regexp_replace(trim({c}), '\\s+', ' ', 'g'), ' ')) END AS s{len(have) + 1}"])
         return self._register_select(f"SELECT {sel} FROM {d['table']} ORDER BY __rid", [], names, name or d["name"])
+
+    # ------------------------------------------------------------------ tags and feeling of a text column
+    @staticmethod
+    def _lit(s):
+        return "'" + str(s).replace("'", "''") + "'"
+
+    def tag_text(self, ds_id, col, tags=None, whole=True, sentiment=False, extra_pos=None, extra_neg=None, name=None):
+        """Up to two new columns for a text column (every row is read, nothing is sampled):
+          * <col>_topic   - the names of the tags whose words the text contains ('a; b' if several, 'Other' if none, blank if the text is blank)
+          * <col>_feeling - Positive / Negative / Neutral from the built-in word lists (lexicon.py), 'not' turning a word round.
+        whole=True matches whole words only ('late' does not match 'plate'); False matches the letters anywhere (for Hindi word endings)."""
+        import re as _re
+        from lexicon import table as lex_table, NEGATORS, POST_NEGATORS
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        have = list(d["headers"])
+        n = len(have)
+        c = "t." + _col(ci)
+        tags = [t for t in (tags or []) if str(t.get("name", "")).strip() and [w for w in t.get("words", []) if str(w).strip()]]
+        if not tags and not sentiment:
+            raise EngineError("Add at least one tag (a name with some words), or choose the feeling of the comments.")
+        if len(tags) > 40:
+            raise EngineError("Use at most 40 tags.")
+        newh, extras, ctes = [], [], []
+        base = have[ci]
+        text = f"lower(COALESCE({c}, ''))"
+        nonblank = f"trim(COALESCE({c}, '')) <> ''"
+        conds = []
+        L = r"[^\p{L}\p{M}\p{N}]"
+        if tags:
+            for t in tags:
+                ws = [str(w).strip().lower() for w in t["words"] if str(w).strip()][:200]
+                if whole:
+                    cond = " OR ".join(f"regexp_matches({text}, {self._lit('(^|' + L + ')' + _re.escape(w) + '($|' + L + ')')})" for w in ws)
+                else:
+                    cond = " OR ".join(f"contains({text}, {self._lit(w)})" for w in ws)
+                conds.append((str(t["name"]).strip(), cond))
+            case = ", ".join(f"CASE WHEN {cd} THEN {self._lit(nm)} END" for nm, cd in conds)
+            extras.append(f"CASE WHEN NOT ({nonblank}) THEN '' ELSE COALESCE(NULLIF(concat_ws('; ', {case}), ''), 'Other') END")
+            newh.append(f"{base}_topic")
+        if sentiment:
+            lex = lex_table(extra_pos or [], extra_neg or [])
+            vals = ", ".join(f"({self._lit(w)}, {v})" for w, v in lex.items())
+            neg = ", ".join(self._lit(w) for w in NEGATORS)
+            post = ", ".join(self._lit(w) for w in POST_NEGATORS)
+            splitter = r"[^\p{L}\p{M}\p{N}'|]+"
+            lexlist = ", ".join(self._lit(w) for w in lex)
+            # a full stop, comma, etc. becomes a '|' token: a "not" never reaches across it
+            clean = f"regexp_replace(replace(lower(COALESCE(t.{_col(ci)}, '')), '’', ''''), '[.,;:!?।…()]+', ' | ', 'g')"
+            toks = f"string_split(trim(regexp_replace({clean}, {self._lit(splitter)}, ' ', 'g')), ' ')"
+            ctes.append(f"lex(w, v) AS (VALUES {vals})")
+            ctes.append(f"tk AS (SELECT __rid, {toks} AS toks FROM {d['table']} t)")
+            ctes.append("u AS (SELECT __rid, toks, unnest(toks) AS w, unnest(range(1, len(toks) + 1)) AS i FROM tk)")
+            ctes.append(f"sc AS (SELECT __rid, sum(v * CASE WHEN (i > 1 AND list_contains([{neg}], toks[i-1])) "
+                        f"OR (i > 2 AND list_contains([{neg}], toks[i-2]) AND toks[i-1] <> '|' AND NOT list_contains([{lexlist}], toks[i-1])) "
+                        f"OR (i < len(toks) AND list_contains([{post}], toks[i+1])) THEN -1 ELSE 1 END) AS s FROM u JOIN lex ON u.w = lex.w GROUP BY __rid)")
+            extras.append(f"CASE WHEN NOT ({nonblank}) THEN '' WHEN sc.s > 0 THEN 'Positive' WHEN sc.s < 0 THEN 'Negative' ELSE 'Neutral' END")
+            newh.append(f"{base}_feeling")
+        names = unique_headers(have + newh)
+        sel = ", ".join([f"t.{_col(i)} AS s{i}" for i in range(n)] + [f"({x}) AS s{n + k}" for k, x in enumerate(extras)])
+        withs = ("WITH " + ", ".join(ctes) + " ") if ctes else ""
+        join = " LEFT JOIN sc ON sc.__rid = t.__rid" if sentiment else ""
+        info = self._register_select(f"{withs}SELECT {sel} FROM {d['table']} t{join} ORDER BY t.__rid", [], names, name or d["name"])
+        tbl = self.datasets[info["id"]]["table"]
+        cur = self.db.cursor()
+        res = {"info": info, "columns": names[n:], "counts": {}, "other": 0, "feeling": {}, "examples": {}, "tag_examples": {}}
+        if tags:
+            k = _col(n)
+            for nm, _ in conds:
+                res["tag_examples"][nm] = [r[0] for r in cur.execute(
+                    f"SELECT {_col(ci)} FROM {tbl} WHERE ({k} = ? OR {k} LIKE ? OR {k} LIKE ? OR {k} LIKE ?) ORDER BY __rid LIMIT 3",
+                    [nm, nm + "; %", "%; " + nm, "%; " + nm + "; %"]).fetchall()]
+            for nm, _ in conds:
+                res["counts"][nm] = cur.execute(
+                    f"SELECT count(*) FROM {tbl} WHERE {k} = ? OR {k} LIKE ? OR {k} LIKE ? OR {k} LIKE ?",
+                    [nm, nm + "; %", "%; " + nm, "%; " + nm + "; %"]).fetchone()[0]
+            res["other"] = cur.execute(f"SELECT count(*) FROM {tbl} WHERE {k} = 'Other'").fetchone()[0]
+        if sentiment:
+            k = _col(n + len(newh) - 1)
+            for lab, cnt in cur.execute(f"SELECT {k}, count(*) FROM {tbl} WHERE {k} <> '' GROUP BY 1").fetchall():
+                res["feeling"][lab] = cnt
+            for lab in ("Positive", "Negative"):
+                res["examples"][lab] = [r[0] for r in cur.execute(f"SELECT {_col(ci)} FROM {tbl} WHERE {k} = ? ORDER BY __rid LIMIT 4", [lab]).fetchall()]
+        return res
 
     def word_counts(self, ds_id, col, by=None, top=25, stand=12, ignore_common=True, min_rows=30, search=None, filters=None):
         """Which words a text column uses, and (with `by`) which words stand out for each group of another column.

@@ -122,6 +122,13 @@ def textstats(ds):
     return jsonify(get_engine().add_text_stats(ds, b.get("col"), b.get("name")))
 
 
+@bp.route("/api/engine/<ds>/tags", methods=["POST"])
+def tags(ds):
+    b = _body()
+    return jsonify(json_safe(get_engine().tag_text(ds, b.get("col"), b.get("tags"), bool(b.get("whole", True)), bool(b.get("sentiment", False)),
+                                                    b.get("extraPos"), b.get("extraNeg"), b.get("name"))))
+
+
 @bp.route("/api/engine/<ds>/outliers", methods=["POST"])
 def outliers(ds):
     b = _body()

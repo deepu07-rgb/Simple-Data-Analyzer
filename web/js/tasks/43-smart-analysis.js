@@ -318,10 +318,92 @@
         .catch(function (e) { var out = $('fnOut'); if (out) out.innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; });
     });
   };
+  // ================================================================= 5. tag comments (topics by words, and feeling)
+  STL.openTagging = function (preset) {
+    var XT = STL.textTools; U.busy(T('Preparing…', 'तैयारी…'));
+    ET.current().then(function (cur) {
+      return ET.get('/api/engine/' + cur.id + '/profile').then(function (p) {
+        U.busy(null); p.columns.rows = p.rows; var tc = preset && preset.text >= 0 ? preset.text : (XT ? XT.pickText(cur.headers, p.columns) : -1);
+        if (tc < 0) { var bd = 0; p.columns.forEach(function (c, i) { if (c.type !== 'number' && (c.distinct || 0) > bd) { bd = c.distinct; tc = i; } }); }  // a short column of comments: the one with most different texts
+        if (tc < 0) { ET.drop(cur); toast(T('This file has no column of free text.', 'इस फ़ाइल में खुले टेक्स्ट का कोई कॉलम नहीं है।'), 'info'); return; }
+        var S = { cur: cur, cols: p.columns, text: tc, tags: [{ name: '', words: '' }], whole: true, feeling: true, pos: '', neg: '', res: null, err: '' };
+        drawT(S);
+      });
+    }).catch(function (e) { U.busy(null); if (e.message) toast(e.message, 'info'); });
+  };
+  function textCols(S) { return S.cur.headers.map(function (h, i) { return { index: i, name: h }; }).filter(function (x) { return S.cols[x.index] && S.cols[x.index].type !== 'number'; }); }
+  function splitWords(s) { return String(s || '').split(/[,\n;،]+/).map(function (w) { return w.trim(); }).filter(Boolean); }
+  function dropPreview(S) { if (S.res && S.res.info) ET.api('/api/engine/' + S.res.info.id + '/drop').catch(function () {}); S.res = null; }
+  function closeT(S) { dropPreview(S); ET.drop(S.cur); var o = $('tagDialog'); if (o) o.remove(); }
+  function drawT(S) {
+    var o = $('tagDialog'); if (o) o.remove();
+    var html = '<div class="prj-h"><b>🏷 ' + T('Tag comments', 'टिप्पणियों को टैग करें') + '</b><button id="tgX" aria-label="close">×</button></div>' +
+      '<div class="big-note">' + T('Adds a column that names the <b>topic</b> of each comment from words you choose (“Delay: late, pending, delay”), and/or a column with its <b>feeling</b> (Positive / Negative / Neutral) from built-in English and Hindi word lists. Every row is read. It follows the words, not the meaning: sarcasm or a word used in another sense is not understood — so check the examples before you keep it.', 'आपके चुने शब्दों से हर टिप्पणी का <b>विषय</b> बताने वाला कॉलम जोड़ता है (“देरी: late, pending, देरी”), और/या उसकी <b>भावना</b> (सकारात्मक / नकारात्मक / तटस्थ) का कॉलम, अंग्रेज़ी और हिंदी की अंतर्निहित शब्द-सूचियों से। हर पंक्ति पढ़ी जाती है। यह शब्दों को देखता है, अर्थ को नहीं: व्यंग्य या दूसरे अर्थ में शब्द समझे नहीं जाते — इसलिए रखने से पहले उदाहरण देखें।') + '</div>' +
+      '<label class="rp-field"><span>' + T('Text column', 'टेक्स्ट कॉलम') + '</span><select id="tgCol" class="big-select">' + textCols(S).map(function (x) { return '<option value="' + x.index + '"' + (x.index === S.text ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="prj-sub">' + T('Topics (a name, and the words that show it — separate words with commas)', 'विषय (एक नाम, और उसे दर्शाने वाले शब्द — शब्दों को कॉमा से अलग करें)') + '</div><div id="tgRows"></div>' +
+      '<div class="prj-row" style="margin:6px 0"><button class="tb-btn" id="tgAdd">➕ ' + T('Another topic', 'एक और विषय') + '</button> <button class="tb-btn" id="tgSug">✨ ' + T('Suggest topics from the commonest words', 'सबसे आम शब्दों से विषय सुझाएँ') + '</button></div>' +
+      '<label class="rp-inline"><input type="checkbox" id="tgWhole"' + (S.whole ? ' checked' : '') + '> ' + T('Match whole words only (so “late” does not match “plate”). Switch off for Hindi word endings.', 'केवल पूरे शब्द मिलाएँ (ताकि “late” “plate” से न मिले)। हिंदी के शब्द-अंत के लिए बंद करें।') + '</label><br>' +
+      '<label class="rp-inline"><input type="checkbox" id="tgFeel"' + (S.feeling ? ' checked' : '') + '> ' + T('Also add the feeling (Positive / Negative / Neutral)', 'भावना भी जोड़ें (सकारात्मक / नकारात्मक / तटस्थ)') + '</label>' +
+      '<div id="tgFeelBox" style="' + (S.feeling ? '' : 'display:none;') + 'margin:4px 0 0 22px"><small>' + T('Words of your own (optional), separated by commas:', 'अपने शब्द (वैकल्पिक), कॉमा से अलग:') + '</small><div class="fr-form"><label class="rp-field"><span>' + T('Count as positive', 'सकारात्मक मानें') + '</span><input id="tgPos" class="big-select" value="' + esc(S.pos) + '"></label><label class="rp-field"><span>' + T('Count as negative', 'नकारात्मक मानें') + '</span><input id="tgNeg" class="big-select" value="' + esc(S.neg) + '"></label></div></div>' +
+      '<div class="prj-row" style="margin-top:10px"><button class="tb-btn primary" id="tgGo">' + T('Check it', 'जाँचें') + '</button></div><div id="tgOut"></div>';
+    var ov = U.overlay('tagDialog', html, true); ov.querySelector('.stl-box').classList.add('fr-box');
+    var rows = function () {
+      $('tgRows').innerHTML = S.tags.map(function (t, i) { return '<div class="fr-form" style="align-items:flex-end"><label class="rp-field" style="max-width:190px"><span>' + T('Name', 'नाम') + '</span><input class="big-select tgN" data-i="' + i + '" value="' + esc(t.name) + '"></label><label class="rp-field" style="flex:1"><span>' + T('Words', 'शब्द') + '</span><input class="big-select tgW" data-i="' + i + '" value="' + esc(t.words) + '"></label>' + (S.tags.length > 1 ? '<button class="tb-btn tgD" data-i="' + i + '" aria-label="remove">×</button>' : '') + '</div>'; }).join('');
+      ov.querySelectorAll('.tgN').forEach(function (e) { e.oninput = function () { S.tags[+e.dataset.i].name = e.value; }; });
+      ov.querySelectorAll('.tgW').forEach(function (e) { e.oninput = function () { S.tags[+e.dataset.i].words = e.value; }; });
+      ov.querySelectorAll('.tgD').forEach(function (e) { e.onclick = function () { S.tags.splice(+e.dataset.i, 1); rows(); }; });
+    };
+    rows();
+    $('tgX').onclick = function () { closeT(S); };
+    $('tgCol').onchange = function () { S.text = +this.value; };
+    $('tgWhole').onchange = function () { S.whole = this.checked; };
+    $('tgFeel').onchange = function () { S.feeling = this.checked; $('tgFeelBox').style.display = this.checked ? '' : 'none'; };
+    $('tgPos').oninput = function () { S.pos = this.value; }; $('tgNeg').oninput = function () { S.neg = this.value; };
+    $('tgAdd').onclick = function () { if (S.tags.length < 40) { S.tags.push({ name: '', words: '' }); rows(); } };
+    $('tgSug').onclick = function () {
+      U.busy(T('Reading the comments…', 'टिप्पणियाँ पढ़ी जा रही हैं…'));
+      ET.api('/api/engine/' + S.cur.id + '/words', { col: S.text, by: -1, top: 8 }).then(function (r) {
+        U.busy(null); var sug = r.common.slice(0, 8).map(function (x) { return { name: x.w, words: x.w }; });
+        S.tags = S.tags.filter(function (t) { return t.name || t.words; }).concat(sug).slice(0, 40); rows();
+        toast(T('Added the commonest words as topics. Rename them and add similar words.', 'सबसे आम शब्द विषय के रूप में जोड़े गए। उनके नाम बदलें और मिलते-जुलते शब्द जोड़ें।'), 'info');
+      }).catch(function (e) { U.busy(null); toast(e.message, 'error'); });
+    };
+    $('tgGo').onclick = function () {
+      var tags = S.tags.map(function (t) { return { name: t.name.trim(), words: splitWords(t.words) }; }).filter(function (t) { return t.name && t.words.length; });
+      var out = $('tgOut'); dropPreview(S);
+      if (!tags.length && !S.feeling) { out.innerHTML = '<div class="big-err">' + T('Add a topic (a name and some words), or tick the feeling.', 'एक विषय (नाम और कुछ शब्द) जोड़ें, या भावना चुनें।') + '</div>'; return; }
+      out.innerHTML = '<div class="big-note">' + T('Reading every comment…', 'हर टिप्पणी पढ़ी जा रही है…') + '</div>';
+      ET.api('/api/engine/' + S.cur.id + '/tags', { col: S.text, tags: tags, whole: S.whole, sentiment: S.feeling, extraPos: splitWords(S.pos), extraNeg: splitWords(S.neg) }).then(function (r) { S.res = r; showT(S, tags); })
+        .catch(function (e) { out.innerHTML = '<div class="big-err">' + esc(e.message) + '</div>'; });
+    };
+  }
+  function showT(S, tags) {
+    var r = S.res, n = r.info.rows, out = $('tgOut'), pcs = function (k, tot) { return tot ? (Math.round(k / tot * 1000) / 10) + '%' : '–'; }, html = '';
+    if (tags.length) {
+      var named = n - (r.other || 0); html += '<div class="prj-sub">' + T('Topics', 'विषय') + '</div><table class="big-tbl"><tr><th>' + T('Topic', 'विषय') + '</th><th>' + T('Comments', 'टिप्पणियाँ') + '</th><th>%</th><th>' + T('Examples', 'उदाहरण') + '</th></tr>' +
+        tags.map(function (t) { return '<tr><td><b>' + esc(t.name) + '</b></td><td class="num">' + f(r.counts[t.name] || 0) + '</td><td class="num">' + pcs(r.counts[t.name] || 0, n) + '</td><td><small>' + ((r.tag_examples[t.name] || []).map(function (x) { return '“' + esc(String(x).slice(0, 90)) + '”'; }).join('<br>') || '–') + '</small></td></tr>'; }).join('') +
+        '<tr><td><i>' + T('Other (no topic word)', 'अन्य (कोई विषय-शब्द नहीं)') + '</i></td><td class="num">' + f(r.other) + '</td><td class="num">' + pcs(r.other, n) + '</td><td></td></tr></table>' +
+        '<div class="big-note">' + T('A comment with words of two topics is counted in both, so the topic counts can add up to more than the rows. If “Other” is large, look at some of its comments and add their words.', 'दो विषयों के शब्द वाली टिप्पणी दोनों में गिनी जाती है, इसलिए विषयों की गिनती पंक्तियों से अधिक हो सकती है। “अन्य” बड़ा हो तो उसकी कुछ टिप्पणियाँ देखकर उनके शब्द जोड़ें।') + '</div>';
+    }
+    if (S.feeling) {
+      var P = r.feeling.Positive || 0, N = r.feeling.Negative || 0, Z = r.feeling.Neutral || 0, tot = P + N + Z;
+      html += '<div class="prj-sub">' + T('Feeling', 'भावना') + '</div><table class="big-tbl"><tr><th></th><th>' + T('Comments', 'टिप्पणियाँ') + '</th><th>%</th><th>' + T('Examples', 'उदाहरण') + '</th></tr>' +
+        [['Positive', T('Positive', 'सकारात्मक'), P], ['Negative', T('Negative', 'नकारात्मक'), N], ['Neutral', T('Neutral (no feeling words, or they cancel)', 'तटस्थ (भावना-शब्द नहीं, या कट गए)'), Z]].map(function (x) { return '<tr><td><b>' + x[1] + '</b></td><td class="num">' + f(x[2]) + '</td><td class="num">' + pcs(x[2], tot) + '</td><td><small>' + ((r.examples[x[0]] || []).map(function (e) { return '“' + esc(String(e).slice(0, 90)) + '”'; }).join('<br>')) + '</small></td></tr>'; }).join('') + '</table>' +
+        '<div class="big-note">' + T('Based on a list of about 230 English and Hindi feeling words; “not good” counts as negative. Comments with none of these words are Neutral — that does not mean the writer felt nothing.', 'लगभग 230 अंग्रेज़ी और हिंदी भावना-शब्दों की सूची पर आधारित; “not good” नकारात्मक गिना जाता है। जिन टिप्पणियों में ये शब्द नहीं, वे तटस्थ हैं — इसका मतलब यह नहीं कि लिखने वाले को कुछ महसूस नहीं हुआ।') + '</div>';
+    }
+    html += '<div class="prj-row" style="margin-top:8px"><button class="tb-btn primary" id="tgKeep">✔ ' + T('Add the column(s) to my file', 'कॉलम मेरी फ़ाइल में जोड़ें') + '</button></div>';
+    out.innerHTML = html;
+    $('tgKeep').onclick = function () {
+      var info = r.info, cur = S.cur, nm = cur.name, cols = r.columns.join(', '); S.res = null; var o = $('tagDialog'); if (o) o.remove(); U.busy(T('Adding the columns…', 'कॉलम जोड़े जा रहे हैं…'));
+      ET.open(info, nm, { en: 'Comments tagged', hi: 'टिप्पणियाँ टैग की गईं' }, { en: cur.headers[S.text] + ': ' + cols, hi: cur.headers[S.text] }, [cur]);
+    };
+  }
+
   (STL.actions || []).push({ en: 'Unusual values (rows far from what is usual for their group)', hi: 'असामान्य मान (अपने समूह के सामान्य से बहुत दूर पंक्तियाँ)', kw: 'unusual outlier anomaly abnormal suspicious odd extreme fraud check mistakes values asamanya', run: function () { STL.openOutliers(); }, group: 'Analyse' });
   (STL.actions || []).push({ en: 'Forecast the next months', hi: 'अगले महीनों का पूर्वानुमान', kw: 'forecast predict future next month trend projection purvanumaan', run: function () { STL.openForecast(); }, group: 'Analyse' });
   (STL.actions || []).push({ en: 'Groups of similar rows (clusters, kinds of customers)', hi: 'मिलती-जुलती पंक्तियों के समूह', kw: 'cluster group segment similar kinds types customers kmeans samuh', run: function () { STL.openClusters(); }, group: 'Analyse' });
   (STL.actions || []).push({ en: 'What this file says (summary in words)', hi: 'यह फ़ाइल क्या कहती है (शब्दों में सार)', kw: 'summary findings insights overview describe saransh', run: function () { STL.openFindings(); }, group: 'Analyse' });
+  (STL.actions || []).push({ en: 'Tag comments by topic and feeling', hi: 'टिप्पणियों को विषय और भावना से टैग करें', kw: 'tag tagging sentiment feeling positive negative topic category comments feedback complaints text classify label tipanni bhavna', run: function () { STL.openTagging(); }, group: 'Analyse' });
   STL.extraTiles = STL.extraTiles || [];
   [['🔎', 'Unusual values', 'असामान्य मान', 'Rows far from the usual', 'सामान्य से दूर पंक्तियाँ', 'openOutliers'], ['📈', 'Forecast', 'पूर्वानुमान', 'The next months', 'अगले महीने', 'openForecast'], ['📝', 'File summary', 'फ़ाइल का सार', 'Findings in words', 'शब्दों में निष्कर्ष', 'openFindings'], ['🧩', 'Similar groups', 'मिलते-जुलते समूह', 'Kinds of rows, in words', 'पंक्तियों के प्रकार', 'openClusters']].forEach(function (t) { STL.extraTiles.push([t[0], t[1], t[2], t[3], t[4], function () { if (!U.hasData() && !big()) { toast(T('Open a file first', 'पहले फ़ाइल खोलें'), 'info'); return; } STL[t[5]](); }]); });
 })(typeof window !== 'undefined' ? window : globalThis);
