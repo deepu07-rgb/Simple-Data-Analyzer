@@ -122,6 +122,18 @@ def textstats(ds):
     return jsonify(get_engine().add_text_stats(ds, b.get("col"), b.get("name")))
 
 
+@bp.route("/api/engine/<ds>/outliers", methods=["POST"])
+def outliers(ds):
+    b = _body()
+    return jsonify(json_safe(get_engine().outliers(ds, b.get("col"), b.get("by"), b.get("k", 3.5), b.get("limit", 40), b.get("minGroup", 8), b.get("search") or None, b.get("filters"))))
+
+
+@bp.route("/api/engine/<ds>/series", methods=["POST"])
+def monthly_series(ds):
+    b = _body()
+    return jsonify(json_safe(get_engine().monthly_series(ds, b.get("date"), b.get("y"), b.get("fn", "sum"), b.get("search") or None, b.get("filters"))))
+
+
 @bp.route("/api/engine/<ds>/repeats", methods=["POST"])
 def repeats(ds):
     b = _body()

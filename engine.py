@@ -1258,6 +1258,67 @@ class Engine:
         because while after before during through between until though although both few other another many much even still yet ever get got let""".split())
     WORDS_SQL = "list_distinct(string_split(trim(regexp_replace(lower({c}), '[^\\p{{L}}\\p{{N}}'']+', ' ', 'g')), ' '))"
 
+    # ------------------------------------------------------------------ unusual values
+    def outliers(self, ds_id, col, by=None, k=3.5, limit=40, min_group=8, search=None, filters=None):
+        """Rows whose number is far from what is usual FOR THEIR OWN GROUP (or for the whole column when `by` is empty).
+        'Far' = more than k robust deviations from the median (modified z-score: 0.6745 * (x - median) / MAD, the Iglewicz-Hoaglin rule).
+        Every row is tested; a group with fewer than `min_group` numbers, or with no spread (MAD = 0), is not judged."""
+        d = self._ds(ds_id)
+        ci = self._check_col(d, col)
+        where, params = self._where(d, search, filters)
+        gx = f"COALESCE(NULLIF(trim({_col(self._check_col(d, by))}), ''), '(blank)')" if by is not None and int(by) >= 0 else "'all'"
+        x = _num(ci)
+        cur = self.db.cursor()
+        base = (f"WITH s AS (SELECT __rid, {gx} AS g, {x} AS x FROM {d['table']}{where}), v AS (SELECT * FROM s WHERE x IS NOT NULL), "
+                f"m AS (SELECT g, count(*) AS n, quantile_cont(x, 0.5) AS med FROM v GROUP BY g), "
+                f"a AS (SELECT v.__rid, v.g, v.x, m.n, m.med, abs(v.x - m.med) AS ad FROM v JOIN m USING (g)), "
+                f"mad AS (SELECT g, quantile_cont(ad, 0.5) AS mad FROM a GROUP BY g), "
+                f"z AS (SELECT a.__rid, a.g, a.x, a.n, a.med, mad.mad, 0.6745 * (a.x - a.med) / mad.mad AS z FROM a JOIN mad USING (g) WHERE a.n >= {int(min_group)} AND mad.mad > 0)")
+        tested = cur.execute(base + " SELECT count(*), count(DISTINCT g) FROM z", params).fetchone()
+        flagged = cur.execute(base + f" SELECT count(*), count(*) FILTER (WHERE z > 0) FROM z WHERE abs(z) > {float(k)!r}", params).fetchone()
+        top = cur.execute(base + f" SELECT __rid, g, x, med, mad, z FROM z WHERE abs(z) > {float(k)!r} ORDER BY abs(z) DESC, __rid LIMIT {int(limit)}", params).fetchall()
+        cols = ", ".join(_col(i) for i in range(len(d["headers"])))
+        rows = []
+        for rid, g, xv, med, mad, z in top:
+            cells = cur.execute(f"SELECT {cols} FROM {d['table']} WHERE __rid = ?", [rid]).fetchone()
+            rows.append({"rid": rid, "group": g, "value": xv, "median": med, "mad": mad, "z": z, "cells": list(cells)})
+        return {"tested": tested[0], "groups": tested[1], "flagged": flagged[0], "high": flagged[1], "low": flagged[0] - flagged[1],
+                "k": float(k), "headers": d["headers"], "rows": rows}
+
+    def monthly_series(self, ds_id, date_col, y=None, fn="sum", search=None, filters=None):
+        """One value per calendar month (a date column in any common format): the sum, average or count of a number, from every row.
+        Months with no row are not invented; the result says which months are missing between the first and the last."""
+        d = self._ds(ds_id)
+        di = self._check_col(d, date_col)
+        where, params = self._where(d, search, filters)
+        expr = self._date_expr(_col(di))
+        if y is None or int(y) < 0 or fn == "count":
+            val, xin = "count(*)", "1"
+        else:
+            if fn not in ("sum", "avg"):
+                raise EngineError("Unknown calculation.")
+            val, xin = f"{fn}(x)", _num(self._check_col(d, y))
+        cur = self.db.cursor()
+        rows = cur.execute(
+            f"SELECT strftime(date_trunc('month', dt), '%Y-%m') AS m, {val} AS v, count(*) AS n FROM (SELECT {expr} AS dt, {xin} AS x FROM {d['table']}{where}) "
+            f"WHERE dt IS NOT NULL GROUP BY 1 ORDER BY 1", params).fetchall()
+        undated = cur.execute(f"SELECT count(*) FROM (SELECT {expr} AS dt FROM {d['table']}{where}) WHERE dt IS NULL", params).fetchone()[0]
+        series = [{"month": m, "value": v, "rows": n} for m, v, n in rows]
+        missing = []
+        if series:
+            y0, m0 = int(series[0]["month"][:4]), int(series[0]["month"][5:])
+            y1, m1 = int(series[-1]["month"][:4]), int(series[-1]["month"][5:])
+            have = {s["month"] for s in series}
+            yy, mm = y0, m0
+            while (yy, mm) <= (y1, m1):
+                key = f"{yy:04d}-{mm:02d}"
+                if key not in have:
+                    missing.append(key)
+                mm += 1
+                if mm > 12:
+                    yy, mm = yy + 1, 1
+        return {"series": series, "missing": missing, "undated": undated}
+
     def add_text_stats(self, ds_id, col, name=None):
         """A new dataset with two more columns for a text column: its length in characters and its number of words (blank text = 0)."""
         d = self._ds(ds_id)

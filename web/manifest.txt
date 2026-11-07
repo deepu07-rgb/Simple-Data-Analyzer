@@ -62,6 +62,7 @@
 @file js/tasks/39-link-files.js
 @file js/tasks/40-text-tools.js
 @file js/tasks/41-column-roles.js
+@file js/tasks/42-download.js
 @file js/reports/40-name-match.js
 @file js/reports/41-pendency-radar.js
 @file js/reports/42-change-radar.js
@@ -77,4 +78,5 @@
 @file js/charts/65-fair-compare.js
 @file js/charts/66-drivers.js
 @file js/charts/67-column-checks.js
+@file js/tasks/43-smart-analysis.js
 @file html/90-tail.html

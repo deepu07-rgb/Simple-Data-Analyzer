@@ -83,6 +83,10 @@
     words: /\b(commonest|common|frequent|most used|top)\s+words\b|\bkey ?words\b|\bword (count|frequency|cloud)\b|\bwhich words\b|\bwords?\b.*\b(go with|stand out|differ between)|शब्द/i,
     contain: /\b(contain|contains|containing|mention|mentions|mentioning|include|includes|including|with the word|has the word|having the word|word)\s+(?:the\s+)?(?:words?\s+)?["“']?([A-Za-z0-9ऀ-ॿ']+)/i,
     link: /\b(link|lookup|vlookup|match|attach|bring)\b.*\b(files?|sheets?|tables?|columns?)\b|\bvlookup\b|दो फ़ाइलें ID|आईडी से जोड़/i,
+    smartOut: /\b(unusual|outliers?|anomal\w*|abnormal|suspicious|fishy)\b|असामान्य|संदिग्ध/i,
+    smartFc: /\b(forecast|predict(ion)?|next (few )?(month|year|quarter)s?|projection)\b|पूर्वानुमान|अगले (कुछ )?महीने/i,
+    smartCl: /\b(cluster(s|ing)?|segments?|segmentation|kinds of (customers|people|rows))\b|मिलते-जुलते समूह|समूहों में बाँट/i,
+    smartFn: /\b(summary of (the|this) (file|data)|what does (the|this) (file|data) say|key findings|insights?|overview of (the|this) (file|data))\b|फ़ाइल का सार|मुख्य निष्कर्ष/i,
     summary: /\bone row (for|per) (each|every)\b|\b(summari[sz]e|roll up)\b.*\b(per|by|for each)\b|\bper (person|customer|applicant|id)\b.*\b(summary|total|history)\b|हर (व्यक्ति|आईडी) की एक/i,
     merge: /\b(combine|merge|join|stack)\b.*\b(files?|sheets?|tables?)\b|फ़ाइलें जोड़/i,
     missing: /missing|blank|empty|null|कमी|खाली|रिक्त/i,
@@ -151,6 +155,10 @@
     if (RX.summary.test(q)) return done({ intent: 'tool', tool: 'summary', conf: 0.9, say: 'You want one row for each person or ID.' });
     if (RX.link.test(q) && !RX.merge.test(q)) return done({ intent: 'tool', tool: 'link', conf: 0.9, say: 'You want to bring columns from another file, matched by a shared column.' });
     if (RX.merge.test(q)) return done({ intent: 'tool', tool: 'merge', conf: 0.9, say: 'You want to combine files.' });
+    if (RX.smartOut.test(q)) return done({ intent: 'tool', tool: 'outliers', conf: 0.9, say: 'You want to find unusual values.' });
+    if (RX.smartFc.test(q)) return done({ intent: 'tool', tool: 'forecast', conf: 0.9, say: 'You want a forecast of the next months.' });
+    if (RX.smartCl.test(q)) return done({ intent: 'tool', tool: 'clusters', conf: 0.9, say: 'You want groups of similar rows.' });
+    if (RX.smartFn.test(q)) return done({ intent: 'tool', tool: 'findings', conf: 0.9, say: 'You want the file described in words.' });
     if (RX.dups.test(q)) return done({ intent: 'tool', tool: 'dups', conf: 0.9, say: 'You want to find rows entered twice.' });
     if (RX.clean.test(q) && !cols.length) return done({ intent: 'tool', tool: 'clean', conf: 0.85, say: 'You want to tidy the file.' });
     if (RX.missing.test(q) && /how many|which|where|any|find|check|कितने|कौन/i.test(q) && !RX.why.test(q)) return done({ intent: 'missing', conf: 0.8, say: cols.length ? 'You want to know what is missing in ' + sayList(cols.map(H)) + '.' : 'You want to know what is missing in the file.', f: cols[0] ? cols[0].i : -1 });
@@ -349,7 +357,7 @@
       } else if (I.intent === 'trend') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'line', spec: { x: I.x, ys: [{ col: I.y, fn: I.fn }], time: S.cat[I.x].date ? 'month' : undefined, sort: 'label' } }); });
       else if (I.intent === 'corr') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'scatter', spec: { xnum: I.x, ynum: I.y, trend: true } }); });
       else if (I.intent === 'dist') open(T('Show me', 'दिखाएँ'), function () { close(); STL.openChartStudio({ type: 'histogram', spec: { xnum: I.x } }); });
-      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: (S.big && STL.openRepeats ? STL.openRepeats : STL.openDuplicates), clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary, words: STL.openWords }[I.tool] || function () {})(); });
+      else if (I.intent === 'tool') open(T('Open it', 'खोलें'), function () { close(); ({ merge: STL.openMerge, dups: (S.big && STL.openRepeats ? STL.openRepeats : STL.openDuplicates), clean: STL.openFixer, link: STL.openLink, summary: STL.openSummary, words: STL.openWords, outliers: STL.openOutliers, forecast: STL.openForecast, clusters: STL.openClusters, findings: STL.openFindings }[I.tool] || function () {})(); });
       else if (I.intent === 'missing') open(T('Show the checks', 'जाँच दिखाएँ'), function () { close(); STL.openDrivers({}); });
       else if (I.intent === 'pick_value') (I.choices || []).forEach(function (v) { open(v, function () { run(q + ' ' + v); }); });
       else if (I.intent === 'ask_y' && I.choices) I.choices.forEach(function (c) { open(c, function () { run(q + ' ' + c); }); });

@@ -71,6 +71,11 @@ function executePDFExport() {
   const maxRows = parseInt(document.getElementById('pdfMaxRows').value) || 5000;
   const includeFormat = document.getElementById('pdfIncludeFormat').checked;
 
+  if (window.STL && STL.dl && typeof html2canvas !== 'undefined') {                                  // the browser draws the pages: Hindi is exact
+    const _ix = getDisplayData(), _rows = _ix.map(ri => headers.map((_, ci) => String(rawData[ri][ci] == null ? '' : rawData[ri][ci])));
+    STL.dl.tablePdf(headers.slice(), _rows, title, null, Math.min(maxRows, 2000));
+    return;
+  }
   const indices = getDisplayData().slice(0, maxRows);
   const tableData = indices.map(ri => headers.map((_, ci) => String(rawData[ri][ci] != null ? rawData[ri][ci] : '')));
 
